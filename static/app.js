@@ -415,7 +415,8 @@ document.getElementById('btn-add-node').addEventListener('click', () => editNode
 document.getElementById('btn-import-nodes').addEventListener('click', () => {
     const html = `
         <div class="form-group full-width">
-            <label>粘贴包含 proxies 列表的 YAML 文本</label>
+            <label>选择包含 proxies 的 YAML 文件，或在下方直接粘贴</label>
+            <input type="file" id="m-nodes-file" accept=".yaml,.yml,.txt,.json" style="margin-bottom: 10px; cursor: pointer;">
             <textarea id="m-nodes-import" style="min-height:250px;" placeholder="proxies:\n  - name: node1..."></textarea>
         </div>
     `;
@@ -428,6 +429,16 @@ document.getElementById('btn-import-nodes').addEventListener('click', () => {
             saveNodesObj();
             showToast(`成功导入 ${toAdd.length} 个节点`);
         } catch(e) { alert('YAML 解析失败'); }
+    });
+
+    document.getElementById('m-nodes-file').addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            document.getElementById('m-nodes-import').value = ev.target.result;
+        };
+        reader.readAsText(file);
     });
 });
 
@@ -528,7 +539,8 @@ if (globalImportBtn) {
     globalImportBtn.addEventListener('click', () => {
         const html = `
             <div class="form-group full-width">
-                <label>粘贴完整的 YAML 配置 (包含 proxies, proxy-groups, rules 等)</label>
+                <label>选择 YAML 文件上传，或在下方直接粘贴</label>
+                <input type="file" id="m-global-file" accept=".yaml,.yml,.txt" style="margin-bottom: 10px; cursor: pointer;">
                 <textarea id="m-global-yaml" style="min-height:300px; font-family:monospace;" placeholder="proxies: ...\nproxy-groups: ...\nrules: ..."></textarea>
                 <span class="hint">系统会自动提取 proxies 合并到您的“自建节点”，并将 proxy-groups 和 rules 等覆盖到“底层配置”。</span>
             </div>
@@ -572,6 +584,16 @@ if (globalImportBtn) {
                 closeModal();
                 showToast(`全局导入成功！提取 ${nodeCount} 个节点，更新底层配置。`);
             } catch (e) { alert('解析或保存失败: ' + e.message); }
+        });
+
+        document.getElementById('m-global-file').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                document.getElementById('m-global-yaml').value = ev.target.result;
+            };
+            reader.readAsText(file);
         });
     });
 }
