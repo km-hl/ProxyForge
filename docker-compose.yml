@@ -6,7 +6,7 @@ services:
     container_name: proxyforge
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${WEB_PORT:-8000}:8000"
     # 将配置文件挂载到容器内部，以便实时修改生效
     volumes:
       - ./custom_nodes.yaml:/app/custom_nodes.yaml
