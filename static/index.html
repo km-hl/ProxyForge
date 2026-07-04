@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ProxyForge - 专属订阅中心</title>
+    <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -27,7 +28,7 @@
         <header class="header">
             <div class="logo">
                 <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-                ProxyForge 控制中心
+                ProxyForge
             </div>
             <div class="header-actions">
                 <button class="btn btn-success" id="copy-btn">📝 复制订阅链接</button>
@@ -42,11 +43,17 @@
                 <div class="sidebar-item active" data-panel="panel-overview">
                     ⚙️ <span>概览设置</span>
                 </div>
+                <div class="sidebar-item" data-panel="panel-groups">
+                    📁 <span>代理组</span>
+                </div>
                 <div class="sidebar-item" data-panel="panel-nodes">
                     🌐 <span>自建节点</span>
                 </div>
                 <div class="sidebar-item" data-panel="panel-rules">
                     📏 <span>路由规则</span>
+                </div>
+                <div class="sidebar-item" data-panel="panel-raw">
+                    🛠️ <span>底层配置</span>
                 </div>
             </nav>
 
@@ -93,29 +100,57 @@
                     </div>
                 </div>
 
-                <!-- 自建节点 -->
-                <div class="section-panel" id="panel-nodes">
-                    <div class="card" style="flex: 1; display: flex; flex-direction: column;">
-                        <div class="card-title">🌐 自建节点池 (YAML/JSON 数组)</div>
-                        <div class="form-group" style="flex: 1;">
-                            <label>请在此处填写您的自定义节点，它们将与机场节点一起合并下发给客户端。</label>
-                            <textarea id="nodes-editor" spellcheck="false" style="min-height: 400px;"></textarea>
-                            <div style="margin-top: 10px; text-align: right;">
-                                <button id="save-nodes-btn" class="btn btn-primary">保存自定义节点</button>
-                            </div>
-                        </div>
+                <!-- 代理组 (Proxy Groups) -->
+                <div class="section-panel" id="panel-groups">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <h2 style="font-size:1.2rem; font-weight:600;">📁 代理组管理 (Proxy Groups)</h2>
+                        <button class="btn btn-primary" id="btn-add-group">➕ 添加代理组</button>
+                    </div>
+                    <div id="groups-list">
+                        <!-- Rendered by JS -->
+                        <div class="empty-state">加载中...</div>
                     </div>
                 </div>
 
-                <!-- 路由规则 -->
+                <!-- 自建节点 (Custom Nodes) -->
+                <div class="section-panel" id="panel-nodes">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <h2 style="font-size:1.2rem; font-weight:600;">🌐 自建节点管理</h2>
+                        <div>
+                            <button class="btn btn-primary" id="btn-add-node" style="margin-right:8px;">➕ 添加节点</button>
+                            <button class="btn btn-success" id="btn-import-nodes">📥 YAML/JSON导入</button>
+                        </div>
+                    </div>
+                    <div id="nodes-list">
+                        <!-- Rendered by JS -->
+                        <div class="empty-state">加载中...</div>
+                    </div>
+                </div>
+
+                <!-- 路由规则 (Rules) -->
                 <div class="section-panel" id="panel-rules">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <h2 style="font-size:1.2rem; font-weight:600;">📏 路由规则管理 (Rules)</h2>
+                        <div>
+                            <button class="btn btn-primary" id="btn-add-rule" style="margin-right:8px;">➕ 添加规则</button>
+                            <button class="btn btn-success" id="btn-import-rules">📥 批量导入</button>
+                        </div>
+                    </div>
+                    <div id="rules-list">
+                        <!-- Rendered by JS -->
+                        <div class="empty-state">加载中...</div>
+                    </div>
+                </div>
+
+                <!-- 底层配置 (Raw Template) -->
+                <div class="section-panel" id="panel-raw">
                     <div class="card" style="flex: 1; display: flex; flex-direction: column;">
-                        <div class="card-title">📏 核心路由规则 (Template.yaml)</div>
+                        <div class="card-title">🛠️ 底层配置兜底 (Raw Template)</div>
                         <div class="form-group" style="flex: 1;">
-                            <label>此处用于定义 Clash 的全局规则（如 proxy-groups, rules, dns 等）。系统会自动将所有节点注入到对应的 proxy-groups 中。</label>
-                            <textarea id="rules-editor" spellcheck="false" style="min-height: 500px;"></textarea>
+                            <label>包含不被可视化界面直接支持的高级/冷门字段。修改这里会直接影响整个系统的运作，保存时会自动格式化可视化面板中已有的配置。</label>
+                            <textarea id="rules-editor" spellcheck="false" style="min-height: 600px; font-family: monospace;"></textarea>
                             <div style="margin-top: 10px; text-align: right;">
-                                <button id="save-rules-btn" class="btn btn-primary">保存模板配置</button>
+                                <button id="save-rules-btn" class="btn btn-primary">覆盖保存</button>
                             </div>
                         </div>
                     </div>
@@ -127,6 +162,23 @@
 
     <!-- Toast -->
     <div id="toast" class="toast toast-success"></div>
+
+    <!-- Generic Modal Container -->
+    <div class="modal-overlay" id="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <span id="modal-title">标题</span>
+                <span class="modal-close" id="modal-close">&times;</span>
+            </div>
+            <div class="modal-body" id="modal-body">
+                <!-- Injected via JS -->
+            </div>
+            <div class="modal-footer" id="modal-footer">
+                <button class="btn" id="modal-cancel">取消</button>
+                <button class="btn btn-primary" id="modal-confirm">确认</button>
+            </div>
+        </div>
+    </div>
 
     <script src="/static/app.js"></script>
 </body>
