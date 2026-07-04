@@ -1,0 +1,9 @@
+# 在 VPS 上部署时，请复制此文件并重命名为 custom_nodes.yaml
+# 然后在下面填入您的真实节点信息，由于我们在 .gitignore 忽略了该文件，它将不会被上传到 GitHub。
+
+- name: "🇺🇸 示例自建 US-1"
+  type: "ss"
+  server: "1.2.3.4"
+  port: 8388
+  cipher: "aes-256-gcm"
+  password: "password"

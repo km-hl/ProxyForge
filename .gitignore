@@ -7,6 +7,10 @@ ENV/
 env.bak/
 venv.bak/
 
+# Custom Data
+custom_nodes.yaml
+data/
+
 # Python
 __pycache__/
 *.py[cod]

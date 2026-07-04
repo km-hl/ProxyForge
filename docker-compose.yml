@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  proxyforge:
+    build: .
+    container_name: proxyforge
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    # 将配置文件挂载到容器内部，以便实时修改生效
+    volumes:
+      - ./custom_nodes.yaml:/app/custom_nodes.yaml
+      - ./template.yaml:/app/template.yaml
+      - ./data:/app/data
+    # 加载环境变量文件
+    env_file:
+      - .env

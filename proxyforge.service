@@ -1,0 +1,19 @@
+[Unit]
+Description=ProxyForge Backend Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+# 【注意】请修改为您的实际项目克隆路径
+WorkingDirectory=/root/ProxyForge
+
+# 【注意】请确保使用您 VPS 环境中实际的 uvicorn 路径（例如虚拟环境或全局）
+ExecStart=/usr/local/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+
+# 崩溃自动重启
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
