@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ProxyForge - Control Panel</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- Login Overlay -->
+    <div id="login-overlay" class="overlay active">
+        <div class="glass-card login-card">
+            <div class="logo">🛡️ ProxyForge</div>
+            <h2>身份验证</h2>
+            <p style="color: var(--text-muted); margin-bottom: 20px;">请输入您的 Secret Token</p>
+            <input type="password" id="token-input" placeholder="Enter Token...">
+            <button id="login-btn" class="primary-btn">进入控制台</button>
+            <div id="login-error" class="error-text hidden">Token 错误，请重试</div>
+        </div>
+    </div>
+
+    <!-- Dashboard -->
+    <div id="dashboard" class="dashboard hidden">
+        <nav class="sidebar glass-card">
+            <div class="logo">🛡️ ProxyForge</div>
+            <ul class="nav-links">
+                <li class="active" data-tab="tab-overview">概览 & 设置</li>
+                <li data-tab="tab-nodes">自建节点管理</li>
+                <li data-tab="tab-rules">代理规则 (YAML)</li>
+            </ul>
+            <div class="nav-footer" style="margin-top: auto;">
+                <button id="logout-btn" class="secondary-btn">退出登录</button>
+            </div>
+        </nav>
+
+        <main class="content">
+            <!-- Overview Tab -->
+            <section id="tab-overview" class="tab-content active glass-card">
+                <h2>概览 & 设置</h2>
+                <div class="copy-box">
+                    <p style="margin-bottom: 10px;"><strong>您的专属订阅链接:</strong></p>
+                    <div class="input-group">
+                        <input type="text" id="sub-link" readonly>
+                        <button id="copy-btn" class="primary-btn">一键复制</button>
+                    </div>
+                </div>
+
+                <h3>核心配置 (.env)</h3>
+                <div class="form-group" style="margin-top: 15px;">
+                    <label>机场订阅链接 (AIRPORT_SUB_URL)</label>
+                    <input type="text" id="airport-url">
+                </div>
+                <div class="form-group">
+                    <label>安全密钥 (SECRET_TOKEN)</label>
+                    <input type="text" id="secret-token">
+                </div>
+                <button id="save-config-btn" class="primary-btn" style="width: 200px;">保存配置</button>
+            </section>
+
+            <!-- Custom Nodes Tab -->
+            <section id="tab-nodes" class="tab-content glass-card hidden">
+                <h2>自建节点管理</h2>
+                <p>编辑 custom_nodes.yaml 中的自定义代理节点（JSON 数组格式）。</p>
+                <div class="editor-container">
+                    <textarea id="nodes-editor" spellcheck="false"></textarea>
+                </div>
+                <button id="save-nodes-btn" class="primary-btn" style="width: 200px;">保存节点</button>
+            </section>
+
+            <!-- Rules Tab -->
+            <section id="tab-rules" class="tab-content glass-card hidden">
+                <h2>代理规则 & 策略组</h2>
+                <p>编辑 template.yaml，控制下发的全局规则。系统会自动将节点名称注入到 proxies 列表。</p>
+                <div class="editor-container">
+                    <textarea id="rules-editor" spellcheck="false"></textarea>
+                </div>
+                <button id="save-rules-btn" class="primary-btn" style="width: 200px;">保存规则</button>
+            </section>
+        </main>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast hidden">操作成功</div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
