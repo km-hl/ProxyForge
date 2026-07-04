@@ -134,7 +134,7 @@ def fetch_airport_proxies() -> List[Dict[str, Any]]:
         logger.warning("未配置机场订阅链接，跳过拉取。")
         return []
         
-    headers = {"User-Agent": "ClashForWindows/0.18.0"}
+    headers = {"User-Agent": "clash-verge/v1.6.0 clash-meta/1.18.3"}
     all_proxies = []
     
     for item in urls_data:
@@ -184,7 +184,7 @@ def fetch_single_airport_info(item) -> dict:
     if not url: return info
     
     try:
-        headers = {"User-Agent": "ClashForWindows/0.18.0"}
+        headers = {"User-Agent": "clash-verge/v1.6.0 clash-meta/1.18.3"}
         res = requests.get(url, headers=headers, timeout=10)
         res.raise_for_status()
         
