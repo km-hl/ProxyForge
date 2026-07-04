@@ -323,14 +323,28 @@ def get_subscription(token: str = Query(..., description="安全验证 Token")):
                         if re.search(filter_regex, name) and name not in existing_proxies:
                             existing_proxies.append(name)
                     except: pass
-            elif group.get("include-all", False) or (not existing_proxies and group.get("type") != "select"):
+                    
+            if "use" in group and isinstance(group["use"], list):
+                # Convert 'use' to airport tags filtering
                 for name in proxy_names:
-                    if name not in existing_proxies:
-                        existing_proxies.append(name)
+                    for u in group["use"]:
+                        # if the node name contains [AirportName]
+                        if f"[{u}]" in name and name not in existing_proxies:
+                            existing_proxies.append(name)
+                            break
+                            
+            if not existing_proxies and group.get("type") != "select":
+                if group.get("include-all", False) or ("filter" not in group and "use" not in group):
+                    for name in proxy_names:
+                        if name not in existing_proxies:
+                            existing_proxies.append(name)
                         
             group["proxies"] = existing_proxies
-            if "include-all" in group:
-                del group["include-all"]
+            
+            # Remove proxyforge-specific or mihomo-incompatible fields from the final output
+            for field in ["include-all", "filter", "use"]:
+                if field in group:
+                    del group[field]
 
     return yaml.dump(template_config, allow_unicode=True, sort_keys=False)
 

@@ -311,7 +311,13 @@ function renderGroups() {
         else if (g.type === 'load-balance') badgeCls = 'badge-load-balance';
         
         let pCount = Array.isArray(g.proxies) ? g.proxies.length : 0;
-        let proxiesPreview = pCount > 0 ? g.proxies.slice(0, 8).join(', ') + (pCount > 8 ? '...' : '') : '无';
+        let uCount = Array.isArray(g.use) ? g.use.length : 0;
+        let proxiesPreview = '无';
+        if (pCount > 0) {
+            proxiesPreview = g.proxies.slice(0, 8).join(', ') + (pCount > 8 ? '...' : '');
+        } else if (uCount > 0) {
+            proxiesPreview = `[机场: ${g.use.join(', ')}]`;
+        }
         
         let displayName = getFlagEmoji(g.name);
 
@@ -592,6 +598,36 @@ window.editGroup = function(index) {
     
     let activeRegions = new Set();
     let activeSources = new Set();
+    
+    if (g.use && Array.isArray(g.use)) {
+        g.use.forEach(u => activeSources.add(`\\[${u}\\]`));
+        delete g.use; // We migrate it to filter
+        updateFilterInput(); // This sets the tags and filter field
+    }
+    
+    // Also try to reverse parse simple regions from filter to activeRegions
+    if (g.filter && !g.use) {
+        regions.forEach(r => {
+            if (g.filter.includes(r.key)) {
+                activeRegions.add(r.key);
+                // Highlight tag visually
+                let tag = document.querySelector(`#tags-regions .filter-tag[data-val="${r.key}"]`);
+                if (tag) tag.classList.add('active');
+            }
+        });
+        airportNames.forEach(name => {
+            if (g.filter.includes(`\\[${name}\\]`)) {
+                activeSources.add(`\\[${name}\\]`);
+                let tag = document.querySelector(`#tags-sources .filter-tag[data-val="\\[${name}\\]"]`);
+                if (tag) tag.classList.add('active');
+            }
+        });
+    }
+
+    // Refresh tags state
+    document.querySelectorAll('#tags-sources .filter-tag').forEach(tag => {
+        if (activeSources.has(tag.getAttribute('data-val'))) tag.classList.add('active');
+    });
     
     function updateFilterInput() {
         let parts = [];
@@ -895,6 +931,24 @@ if (globalImportBtn) {
                         }
                     }
                     delete parsed['proxy-providers'];
+                }
+                
+                // Convert 'use' to 'filter' during global import to avoid errors
+                if (parsed['proxy-groups'] && Array.isArray(parsed['proxy-groups'])) {
+                    parsed['proxy-groups'].forEach(g => {
+                        if (g.use && Array.isArray(g.use)) {
+                            let filterParts = g.use.map(u => `\\[${u}\\]`);
+                            if (filterParts.length > 0) {
+                                let regexStr = filterParts.join('|');
+                                if (g.filter) {
+                                    g.filter = `(?=.*(${regexStr}))(?=.*(${g.filter}))`;
+                                } else {
+                                    g.filter = regexStr;
+                                }
+                            }
+                            delete g.use; 
+                        }
+                    });
                 }
 
                 if (Object.keys(parsed).length > 0) {
