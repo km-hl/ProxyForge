@@ -341,6 +341,11 @@ def get_subscription(token: str = Query(..., description="安全验证 Token")):
                         
             group["proxies"] = existing_proxies
             
+            # Clash will fail to start if a proxy group has neither 'use' nor a non-empty 'proxies' array.
+            # Since we delete 'use' and 'filter', we must ensure 'proxies' is never empty.
+            if not group["proxies"]:
+                group["proxies"] = ["DIRECT"]
+            
             # Remove proxyforge-specific or mihomo-incompatible fields from the final output
             for field in ["include-all", "filter", "use"]:
                 if field in group:
