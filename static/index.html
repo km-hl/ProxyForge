@@ -46,16 +46,19 @@
                     </div>
                 </div>
 
-                <h3>核心配置 (.env)</h3>
+                <h3>安全验证 (.env)</h3>
                 <div class="form-group" style="margin-top: 15px;">
-                    <label>机场订阅链接 (AIRPORT_SUB_URL)</label>
-                    <input type="text" id="airport-url">
-                </div>
-                <div class="form-group">
-                    <label>安全密钥 (SECRET_TOKEN)</label>
+                    <label>Web 控制台 & 订阅拉取密钥 (SECRET_TOKEN)</label>
                     <input type="text" id="secret-token">
                 </div>
-                <button id="save-config-btn" class="primary-btn" style="width: 200px;">保存配置</button>
+                <button id="save-config-btn" class="primary-btn" style="width: 200px; margin-bottom: 30px;">保存密钥</button>
+
+                <h3>机场订阅列表</h3>
+                <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 10px;">一行一个机场链接，系统会自动并发拉取并合并所有机场的节点：</p>
+                <div class="editor-container" style="height: 150px;">
+                    <textarea id="airports-editor" spellcheck="false" placeholder="https://example-airport.com/api/v1/client/subscribe?token=xxx&#10;https://another-airport.com/sub"></textarea>
+                </div>
+                <button id="save-airports-btn" class="primary-btn" style="width: 200px;">保存机场列表</button>
             </section>
 
             <!-- Custom Nodes Tab -->

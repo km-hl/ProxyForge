@@ -15,9 +15,10 @@ const toast = document.getElementById('toast');
 // Form Elements
 const subLink = document.getElementById('sub-link');
 const copyBtn = document.getElementById('copy-btn');
-const airportUrl = document.getElementById('airport-url');
 const secretToken = document.getElementById('secret-token');
 const saveConfigBtn = document.getElementById('save-config-btn');
+const airportsEditor = document.getElementById('airports-editor');
+const saveAirportsBtn = document.getElementById('save-airports-btn');
 const nodesEditor = document.getElementById('nodes-editor');
 const saveNodesBtn = document.getElementById('save-nodes-btn');
 const rulesEditor = document.getElementById('rules-editor');
@@ -118,11 +119,14 @@ async function loadData() {
     try {
         const configRes = await fetchAuth('/config');
         const config = await configRes.json();
-        airportUrl.value = config.AIRPORT_SUB_URL;
         secretToken.value = config.SECRET_TOKEN;
         
         const host = window.location.origin;
         subLink.value = `${host}/sub?token=${config.SECRET_TOKEN}`;
+
+        const airportsRes = await fetchAuth('/airports');
+        const airportsData = await airportsRes.json();
+        airportsEditor.value = airportsData.urls.join('\n');
 
         const nodesRes = await fetchAuth('/nodes');
         const nodesData = await nodesRes.json();
@@ -145,14 +149,13 @@ copyBtn.addEventListener('click', () => {
 saveConfigBtn.addEventListener('click', async () => {
     try {
         const payload = {
-            AIRPORT_SUB_URL: airportUrl.value,
             SECRET_TOKEN: secretToken.value
         };
         await fetchAuth('/config', {
             method: 'POST',
             body: JSON.stringify(payload)
         });
-        showToast('配置已保存 (可能需要重新登录)');
+        showToast('密钥已保存');
         
         const host = window.location.origin;
         subLink.value = `${host}/sub?token=${payload.SECRET_TOKEN}`;
@@ -162,7 +165,20 @@ saveConfigBtn.addEventListener('click', async () => {
             localStorage.setItem('proxyforge_token', currentToken);
         }
     } catch (e) {
-        alert("保存失败");
+        alert("保存密钥失败");
+    }
+});
+
+saveAirportsBtn.addEventListener('click', async () => {
+    try {
+        const urls = airportsEditor.value.split('\n').map(u => u.trim()).filter(u => u);
+        await fetchAuth('/airports', {
+            method: 'POST',
+            body: JSON.stringify({ urls })
+        });
+        showToast('机场列表已保存 (系统将在下次访问时自动拉取)');
+    } catch (e) {
+        alert("保存机场列表失败");
     }
 });
 

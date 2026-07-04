@@ -17,17 +17,16 @@ ENV_FILE = ".env"
 def get_env_var(key, default=""):
     return os.environ.get(key) or os.getenv(key, default)
 
-# 全局变量
-AIRPORT_SUB_URL = get_env_var("AIRPORT_SUB_URL", "")
 SECRET_TOKEN = get_env_var("SECRET_TOKEN", "my_secret_token")
 
 TEMPLATE_PATH = "template.yaml"
 CUSTOM_NODES_PATH = "custom_nodes.yaml"
 DATA_DIR = "data"
 CACHE_FILE_PATH = os.path.join(DATA_DIR, "airport_cache.yaml")
+AIRPORTS_PATH = os.path.join(DATA_DIR, "airports.yaml")
 
 os.makedirs(DATA_DIR, exist_ok=True)
-os.makedirs("static", exist_ok=True) # 确保 static 目录存在
+os.makedirs("static", exist_ok=True) 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -37,6 +36,27 @@ app = FastAPI(title="ProxyForge", description="专属节点订阅聚合与配置
 subscription_cache = TTLCache(maxsize=1, ttl=12 * 60 * 60)
 
 # ================= 核心读写逻辑 =================
+
+def load_airports() -> List[str]:
+    # 兼容性迁移逻辑：如果还没创建 airports.yaml，但 .env 里有旧的 AIRPORT_SUB_URL
+    if not os.path.exists(AIRPORTS_PATH):
+        legacy_url = get_env_var("AIRPORT_SUB_URL", "")
+        if legacy_url:
+            save_airports([legacy_url])
+            return [legacy_url]
+        return []
+        
+    try:
+        with open(AIRPORTS_PATH, "r", encoding="utf-8") as f:
+            urls = yaml.safe_load(f)
+            return urls if isinstance(urls, list) else []
+    except Exception as e:
+        logger.error(f"读取机场列表失败: {e}")
+    return []
+
+def save_airports(urls: List[str]):
+    with open(AIRPORTS_PATH, "w", encoding="utf-8") as f:
+        yaml.dump(urls, f, allow_unicode=True, sort_keys=False)
 
 def load_custom_nodes() -> List[Dict[str, Any]]:
     if not os.path.exists(CUSTOM_NODES_PATH):
@@ -82,19 +102,34 @@ def load_cache_from_file() -> List[Dict[str, Any]]:
     return []
 
 def fetch_airport_proxies() -> List[Dict[str, Any]]:
-    if not AIRPORT_SUB_URL:
+    urls = load_airports()
+    if not urls:
+        logger.warning("未配置机场订阅链接，跳过拉取。")
         return []
+        
     headers = {"User-Agent": "ClashForWindows/0.18.0"}
-    try:
-        response = requests.get(AIRPORT_SUB_URL, headers=headers, timeout=10)
-        response.raise_for_status()
-        config = yaml.safe_load(response.text)
-        if config and "proxies" in config and isinstance(config["proxies"], list):
-            return config["proxies"]
-    except Exception as e:
-        logger.error(f"拉取机场订阅失败: {e}")
-        raise
-    return []
+    all_proxies = []
+    
+    for url in urls:
+        if not url.strip(): continue
+        logger.info(f"正在从机场拉取节点: {url.strip()}")
+        try:
+            response = requests.get(url.strip(), headers=headers, timeout=10)
+            response.raise_for_status()
+            config = yaml.safe_load(response.text)
+            if config and "proxies" in config and isinstance(config["proxies"], list):
+                proxies = config["proxies"]
+                logger.info(f"成功从 {url.strip()} 拉取到 {len(proxies)} 个节点")
+                all_proxies.extend(proxies)
+            else:
+                logger.warning(f"机场订阅内容解析成功，但未找到 proxies 字段: {url.strip()}")
+        except Exception as e:
+            logger.error(f"拉取机场订阅失败 {url.strip()}: {e}")
+            
+    if not all_proxies and len([u for u in urls if u.strip()]) > 0:
+        raise Exception("所有配置的机场订阅均拉取失败或无数据")
+        
+    return all_proxies
 
 @cached(cache=subscription_cache)
 def get_airport_proxies_cached() -> List[Dict[str, Any]]:
@@ -111,12 +146,22 @@ def get_subscription(token: str = Query(..., description="安全验证 Token")):
         airport_proxies = get_airport_proxies_cached()
         if airport_proxies:
             save_cache_to_file(airport_proxies)
-    except Exception:
+    except Exception as e:
+        logger.error(f"尝试使用本地持久化备份，原因: {e}")
         airport_proxies = load_cache_from_file()
 
     custom_proxies = load_custom_nodes()
     all_proxies = airport_proxies + custom_proxies
-    proxy_names = [p["name"] for p in all_proxies]
+    
+    # 节点去重，防止多个机场出现同名节点或手动重复添加（保留第一个）
+    seen_names = set()
+    unique_proxies = []
+    for p in all_proxies:
+        if p["name"] not in seen_names:
+            seen_names.add(p["name"])
+            unique_proxies.append(p)
+            
+    proxy_names = [p["name"] for p in unique_proxies]
 
     if not os.path.exists(TEMPLATE_PATH):
         raise HTTPException(status_code=500, detail="Template file not found")
@@ -124,7 +169,7 @@ def get_subscription(token: str = Query(..., description="安全验证 Token")):
     with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
         template_config = yaml.safe_load(f) or {}
 
-    template_config["proxies"] = all_proxies
+    template_config["proxies"] = unique_proxies
 
     if "proxy-groups" in template_config and isinstance(template_config["proxy-groups"], list):
         for group in template_config["proxy-groups"]:
@@ -157,28 +202,56 @@ def auth_login(token: str = Body(..., embed=True)):
 @app.get("/api/config", dependencies=[Depends(verify_api_token)])
 def get_config():
     return {
-        "AIRPORT_SUB_URL": AIRPORT_SUB_URL,
         "SECRET_TOKEN": SECRET_TOKEN
     }
 
 class ConfigModel(BaseModel):
-    AIRPORT_SUB_URL: str
     SECRET_TOKEN: str
 
 @app.post("/api/config", dependencies=[Depends(verify_api_token)])
 def update_config(config: ConfigModel):
-    global AIRPORT_SUB_URL, SECRET_TOKEN
-    # 为了简化，直接重写 .env 文件
-    env_content = f'AIRPORT_SUB_URL="{config.AIRPORT_SUB_URL}"\nSECRET_TOKEN="{config.SECRET_TOKEN}"\n'
-    with open(ENV_FILE, "w", encoding="utf-8") as f:
-        f.write(env_content)
+    global SECRET_TOKEN
     
-    AIRPORT_SUB_URL = config.AIRPORT_SUB_URL
+    # 因为去掉了机场链接，现在只需更新安全令牌和端口等（如果有）
+    # 为保留文件中其他设置，简单读取重写
+    lines = []
+    if os.path.exists(ENV_FILE):
+        with open(ENV_FILE, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    
+    new_lines = []
+    token_updated = False
+    for line in lines:
+        if line.startswith("SECRET_TOKEN="):
+            new_lines.append(f'SECRET_TOKEN="{config.SECRET_TOKEN}"\n')
+            token_updated = True
+        elif line.startswith("AIRPORT_SUB_URL="):
+            continue # 删除旧的环境变量
+        else:
+            new_lines.append(line)
+            
+    if not token_updated:
+        new_lines.append(f'SECRET_TOKEN="{config.SECRET_TOKEN}"\n')
+
+    with open(ENV_FILE, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
+    
     SECRET_TOKEN = config.SECRET_TOKEN
-    os.environ["AIRPORT_SUB_URL"] = AIRPORT_SUB_URL
     os.environ["SECRET_TOKEN"] = SECRET_TOKEN
     
-    # 清除缓存以便立即生效
+    return {"status": "ok"}
+
+@app.get("/api/airports", dependencies=[Depends(verify_api_token)])
+def get_airports():
+    return {"urls": load_airports()}
+
+class AirportsModel(BaseModel):
+    urls: List[str]
+
+@app.post("/api/airports", dependencies=[Depends(verify_api_token)])
+def update_airports(data: AirportsModel):
+    save_airports(data.urls)
+    # 更新了机场连接后，清空缓存
     subscription_cache.clear()
     return {"status": "ok"}
 
