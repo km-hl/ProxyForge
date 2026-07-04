@@ -8,8 +8,8 @@ const tokenInput = document.getElementById('token-input');
 const loginBtn = document.getElementById('login-btn');
 const loginError = document.getElementById('login-error');
 const logoutBtn = document.getElementById('logout-btn');
-const navLinks = document.querySelectorAll('.nav-links li');
-const tabContents = document.querySelectorAll('.tab-content');
+const sidebarItems = document.querySelectorAll('.sidebar-item');
+const sectionPanels = document.querySelectorAll('.section-panel');
 const toast = document.getElementById('toast');
 
 // Form Elements
@@ -24,11 +24,11 @@ const saveNodesBtn = document.getElementById('save-nodes-btn');
 const rulesEditor = document.getElementById('rules-editor');
 const saveRulesBtn = document.getElementById('save-rules-btn');
 
-function showToast(msg) {
+function showToast(msg, type = 'success') {
     toast.textContent = msg;
-    toast.classList.remove('hidden');
+    toast.className = `toast toast-${type} active`;
     setTimeout(() => {
-        toast.classList.add('hidden');
+        toast.classList.remove('active');
     }, 3000);
 }
 
@@ -60,13 +60,14 @@ async function login() {
             currentToken = token;
             localStorage.setItem('proxyforge_token', token);
             loginOverlay.classList.remove('active');
+            dashboard.style.display = 'flex';
             dashboard.classList.remove('hidden');
             loadData();
         } else {
             throw new Error('Invalid');
         }
     } catch (err) {
-        loginError.classList.remove('hidden');
+        loginError.style.display = 'block';
         document.querySelector('.login-card').classList.add('shake');
         setTimeout(() => {
             document.querySelector('.login-card').classList.remove('shake');
@@ -77,9 +78,10 @@ async function login() {
 function logout() {
     currentToken = '';
     localStorage.removeItem('proxyforge_token');
-    dashboard.classList.add('hidden');
+    dashboard.style.display = 'none';
     loginOverlay.classList.add('active');
     tokenInput.value = '';
+    loginError.style.display = 'none';
 }
 
 loginBtn.addEventListener('click', login);
@@ -87,6 +89,18 @@ tokenInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') login();
 });
 logoutBtn.addEventListener('click', logout);
+
+// Sidebar Logic
+sidebarItems.forEach(item => {
+    item.addEventListener('click', () => {
+        sidebarItems.forEach(i => i.classList.remove('active'));
+        sectionPanels.forEach(p => p.classList.remove('active'));
+        
+        item.classList.add('active');
+        const panelId = item.getAttribute('data-panel');
+        document.getElementById(panelId).classList.add('active');
+    });
+});
 
 if (currentToken) {
     fetch(`${API_BASE}/auth`, {
@@ -96,24 +110,14 @@ if (currentToken) {
     }).then(res => {
         if (res.ok) {
             loginOverlay.classList.remove('active');
+            dashboard.style.display = 'flex';
             dashboard.classList.remove('hidden');
             loadData();
         } else {
             logout();
         }
     }).catch(logout);
-} else {
-    loginOverlay.classList.add('active');
 }
-
-navLinks.forEach(link => {
-    link.addEventListener('click', () => {
-        navLinks.forEach(l => l.classList.remove('active'));
-        tabContents.forEach(t => t.classList.add('hidden'));
-        link.classList.add('active');
-        document.getElementById(link.dataset.tab).classList.remove('hidden');
-    });
-});
 
 async function loadData() {
     try {
@@ -148,9 +152,7 @@ copyBtn.addEventListener('click', () => {
 
 saveConfigBtn.addEventListener('click', async () => {
     try {
-        const payload = {
-            SECRET_TOKEN: secretToken.value
-        };
+        const payload = { SECRET_TOKEN: secretToken.value };
         await fetchAuth('/config', {
             method: 'POST',
             body: JSON.stringify(payload)
@@ -165,7 +167,7 @@ saveConfigBtn.addEventListener('click', async () => {
             localStorage.setItem('proxyforge_token', currentToken);
         }
     } catch (e) {
-        alert("保存密钥失败");
+        showToast('保存密钥失败', 'error');
     }
 });
 
@@ -176,9 +178,9 @@ saveAirportsBtn.addEventListener('click', async () => {
             method: 'POST',
             body: JSON.stringify({ urls })
         });
-        showToast('机场列表已保存 (系统将在下次访问时自动拉取)');
+        showToast('机场列表已保存');
     } catch (e) {
-        alert("保存机场列表失败");
+        showToast('保存机场列表失败', 'error');
     }
 });
 
@@ -191,7 +193,7 @@ saveNodesBtn.addEventListener('click', async () => {
         });
         showToast('自建节点已保存');
     } catch (e) {
-        alert("JSON 格式错误，请检查!");
+        showToast('JSON 格式错误，请检查!', 'error');
     }
 });
 
@@ -203,6 +205,6 @@ saveRulesBtn.addEventListener('click', async () => {
         });
         showToast('规则模板已保存');
     } catch (e) {
-        alert("保存失败");
+        showToast('保存模板失败', 'error');
     }
 });

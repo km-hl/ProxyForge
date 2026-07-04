@@ -3,88 +3,130 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ProxyForge - Control Panel</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <title>ProxyForge - 专属订阅中心</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+
     <!-- Login Overlay -->
-    <div id="login-overlay" class="overlay active">
-        <div class="glass-card login-card">
-            <div class="logo">🛡️ ProxyForge</div>
-            <h2>身份验证</h2>
-            <p style="color: var(--text-muted); margin-bottom: 20px;">请输入您的 Secret Token</p>
-            <input type="password" id="token-input" placeholder="Enter Token...">
-            <button id="login-btn" class="primary-btn">进入控制台</button>
-            <div id="login-error" class="error-text hidden">Token 错误，请重试</div>
+    <div class="login-overlay active" id="login-overlay">
+        <div class="login-card">
+            <h2>
+                <svg viewBox="0 0 24 24" fill="currentColor" width="28" height="28"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                ProxyForge
+            </h2>
+            <p style="color: var(--text-secondary); margin-bottom: 20px; font-size: 0.9rem;">安全访问拦截系统</p>
+            <input type="password" id="token-input" placeholder="请输入 SECRET_TOKEN">
+            <button class="btn btn-primary" id="login-btn">验证身份</button>
+            <p id="login-error" style="color: var(--danger); font-size: 0.85rem; margin-top: 15px; display: none;">密码错误，请重试</p>
         </div>
     </div>
 
-    <!-- Dashboard -->
-    <div id="dashboard" class="dashboard hidden">
-        <nav class="sidebar glass-card">
-            <div class="logo">🛡️ ProxyForge</div>
-            <ul class="nav-links">
-                <li class="active" data-tab="tab-overview">概览 & 设置</li>
-                <li data-tab="tab-nodes">自建节点管理</li>
-                <li data-tab="tab-rules">代理规则 (YAML)</li>
-            </ul>
-            <div class="nav-footer" style="margin-top: auto;">
-                <button id="logout-btn" class="secondary-btn">退出登录</button>
+    <div id="dashboard" class="hidden" style="display: none; width: 100%; height: 100%; flex-direction: column;">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                ProxyForge 控制中心
             </div>
-        </nav>
+            <div class="header-actions">
+                <button class="btn btn-success" id="copy-btn">📝 复制订阅链接</button>
+                <button class="btn btn-danger" id="logout-btn">🚪 退出登录</button>
+            </div>
+        </header>
 
-        <main class="content">
-            <!-- Overview Tab -->
-            <section id="tab-overview" class="tab-content active glass-card">
-                <h2>概览 & 设置</h2>
-                <div class="copy-box">
-                    <p style="margin-bottom: 10px;"><strong>您的专属订阅链接:</strong></p>
-                    <div class="input-group">
-                        <input type="text" id="sub-link" readonly>
-                        <button id="copy-btn" class="primary-btn">一键复制</button>
+        <!-- Main Container -->
+        <div class="main-container">
+            <!-- Sidebar -->
+            <nav class="sidebar" id="sidebar">
+                <div class="sidebar-item active" data-panel="panel-overview">
+                    ⚙️ <span>概览设置</span>
+                </div>
+                <div class="sidebar-item" data-panel="panel-nodes">
+                    🌐 <span>自建节点</span>
+                </div>
+                <div class="sidebar-item" data-panel="panel-rules">
+                    📏 <span>路由规则</span>
+                </div>
+            </nav>
+
+            <!-- Content -->
+            <div class="content-area" id="content-area">
+                
+                <!-- 概览设置 -->
+                <div class="section-panel active" id="panel-overview">
+                    <div class="card">
+                        <div class="card-title">🔗 最终订阅配置</div>
+                        <div class="form-grid">
+                            <div class="form-group full-width">
+                                <label>您的专属客户端订阅链接</label>
+                                <input type="text" id="sub-link" readonly style="background: #eef1ff; color: var(--primary); font-weight: 500;">
+                                <span class="hint">请将此链接复制并添加到您的 Clash / Mihomo 客户端中。</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-title">🔐 安全验证 (.env)</div>
+                        <div class="form-grid">
+                            <div class="form-group full-width">
+                                <label>Web 控制台 & 订阅拉取密钥 (SECRET_TOKEN)</label>
+                                <div style="display: flex; gap: 10px;">
+                                    <input type="text" id="secret-token" style="flex: 1;">
+                                    <button id="save-config-btn" class="btn btn-primary">保存密钥</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-title">✈️ 机场订阅列表</div>
+                        <div class="form-grid">
+                            <div class="form-group full-width">
+                                <label>一行一个机场链接，系统会自动并发拉取并合并所有机场的节点</label>
+                                <textarea id="airports-editor" spellcheck="false" placeholder="https://example-airport.com/api/v1/client/subscribe?token=xxx&#10;https://another-airport.com/sub"></textarea>
+                                <div style="margin-top: 10px; text-align: right;">
+                                    <button id="save-airports-btn" class="btn btn-primary">保存机场列表</button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                <h3>安全验证 (.env)</h3>
-                <div class="form-group" style="margin-top: 15px;">
-                    <label>Web 控制台 & 订阅拉取密钥 (SECRET_TOKEN)</label>
-                    <input type="text" id="secret-token">
+                <!-- 自建节点 -->
+                <div class="section-panel" id="panel-nodes">
+                    <div class="card" style="flex: 1; display: flex; flex-direction: column;">
+                        <div class="card-title">🌐 自建节点池 (YAML/JSON 数组)</div>
+                        <div class="form-group" style="flex: 1;">
+                            <label>请在此处填写您的自定义节点，它们将与机场节点一起合并下发给客户端。</label>
+                            <textarea id="nodes-editor" spellcheck="false" style="min-height: 400px;"></textarea>
+                            <div style="margin-top: 10px; text-align: right;">
+                                <button id="save-nodes-btn" class="btn btn-primary">保存自定义节点</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <button id="save-config-btn" class="primary-btn" style="width: 200px; margin-bottom: 30px;">保存密钥</button>
 
-                <h3>机场订阅列表</h3>
-                <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 10px;">一行一个机场链接，系统会自动并发拉取并合并所有机场的节点：</p>
-                <div class="editor-container" style="height: 150px;">
-                    <textarea id="airports-editor" spellcheck="false" placeholder="https://example-airport.com/api/v1/client/subscribe?token=xxx&#10;https://another-airport.com/sub"></textarea>
+                <!-- 路由规则 -->
+                <div class="section-panel" id="panel-rules">
+                    <div class="card" style="flex: 1; display: flex; flex-direction: column;">
+                        <div class="card-title">📏 核心路由规则 (Template.yaml)</div>
+                        <div class="form-group" style="flex: 1;">
+                            <label>此处用于定义 Clash 的全局规则（如 proxy-groups, rules, dns 等）。系统会自动将所有节点注入到对应的 proxy-groups 中。</label>
+                            <textarea id="rules-editor" spellcheck="false" style="min-height: 500px;"></textarea>
+                            <div style="margin-top: 10px; text-align: right;">
+                                <button id="save-rules-btn" class="btn btn-primary">保存模板配置</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <button id="save-airports-btn" class="primary-btn" style="width: 200px;">保存机场列表</button>
-            </section>
 
-            <!-- Custom Nodes Tab -->
-            <section id="tab-nodes" class="tab-content glass-card hidden">
-                <h2>自建节点管理</h2>
-                <p>编辑 custom_nodes.yaml 中的自定义代理节点（JSON 数组格式）。</p>
-                <div class="editor-container">
-                    <textarea id="nodes-editor" spellcheck="false"></textarea>
-                </div>
-                <button id="save-nodes-btn" class="primary-btn" style="width: 200px;">保存节点</button>
-            </section>
-
-            <!-- Rules Tab -->
-            <section id="tab-rules" class="tab-content glass-card hidden">
-                <h2>代理规则 & 策略组</h2>
-                <p>编辑 template.yaml，控制下发的全局规则。系统会自动将节点名称注入到 proxies 列表。</p>
-                <div class="editor-container">
-                    <textarea id="rules-editor" spellcheck="false"></textarea>
-                </div>
-                <button id="save-rules-btn" class="primary-btn" style="width: 200px;">保存规则</button>
-            </section>
-        </main>
+            </div>
+        </div>
     </div>
 
-    <!-- Toast Notification -->
-    <div id="toast" class="toast hidden">操作成功</div>
+    <!-- Toast -->
+    <div id="toast" class="toast toast-success"></div>
 
     <script src="/static/app.js"></script>
 </body>
