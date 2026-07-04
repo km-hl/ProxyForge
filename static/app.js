@@ -35,8 +35,6 @@ const subLink = document.getElementById('sub-link');
 const copyBtn = document.getElementById('copy-btn');
 const secretToken = document.getElementById('secret-token');
 const saveConfigBtn = document.getElementById('save-config-btn');
-const airportsEditor = document.getElementById('airports-editor');
-const saveAirportsBtn = document.getElementById('save-airports-btn');
 const rulesEditor = document.getElementById('rules-editor');
 const saveRulesBtn = document.getElementById('save-rules-btn');
 
@@ -147,8 +145,7 @@ async function loadData() {
         subLink.value = `${window.location.origin}/sub?token=${state.config.SECRET_TOKEN}`;
 
         const airportsRes = await fetchAuth('/airports');
-        state.airports = (await airportsRes.json()).urls;
-        airportsEditor.value = state.airports.join('\n');
+        state.airports = (await airportsRes.json()).urls || [];
 
         const nodesRes = await fetchAuth('/nodes');
         state.nodes = (await nodesRes.json()).nodes || [];
@@ -158,10 +155,10 @@ async function loadData() {
         try {
             state.templateObj = jsyaml.load(state.templateRaw) || {};
         } catch(e) {
-            console.error("YAML 解析错误", e);
             state.templateObj = {};
         }
 
+        renderAirports();
         renderNodes();
         renderGroups();
         renderRules();
@@ -169,6 +166,39 @@ async function loadData() {
     } catch (e) {
         console.error("Failed to load data", e);
     }
+}
+
+// Helper for checkboxes
+function getCheckboxHTML(cls, idx) {
+    return `<input type="checkbox" class="${cls}" data-idx="${idx}" style="margin-right:10px; width:16px; height:16px; cursor:pointer;">`;
+}
+
+function getCheckedIndices(cls) {
+    const checkboxes = document.querySelectorAll(`.${cls}:checked`);
+    let indices = Array.from(checkboxes).map(cb => parseInt(cb.getAttribute('data-idx')));
+    return indices.sort((a, b) => b - a); // Sort descending to splice safely
+}
+
+// === Render: Airports ===
+function renderAirports() {
+    const list = document.getElementById('airports-list');
+    if (!state.airports.length) {
+        list.innerHTML = `<div class="empty-state">暂无机场订阅，请点击上方按钮添加</div>`;
+        return;
+    }
+    let html = '';
+    state.airports.forEach((url, index) => {
+        html += `
+            <div class="list-item">
+                ${getCheckboxHTML('cb-airport', index)}
+                <div class="item-info" style="word-break:break-all;">${url}</div>
+                <div class="item-actions">
+                    <button class="btn btn-sm btn-danger" onclick="deleteAirport(${index})">删除</button>
+                </div>
+            </div>
+        `;
+    });
+    list.innerHTML = html;
 }
 
 // === Render: Proxy Groups ===
@@ -185,6 +215,7 @@ function renderGroups() {
         const proxies = Array.isArray(g.proxies) ? g.proxies.join(', ') : '无';
         html += `
             <div class="list-item">
+                ${getCheckboxHTML('cb-group', index)}
                 <span class="type-badge ${typeBadge}">${g.type || 'select'}</span>
                 <div class="item-info">
                     <div class="item-name">${g.name || 'Unnamed'}</div>
@@ -212,6 +243,7 @@ function renderNodes() {
         const typeBadge = `badge-node`;
         html += `
             <div class="list-item">
+                ${getCheckboxHTML('cb-node', index)}
                 <span class="type-badge ${typeBadge}">${n.type || 'unknown'}</span>
                 <div class="item-info">
                     <div class="item-name">${n.name || 'Unnamed'}</div>
@@ -239,6 +271,7 @@ function renderRules() {
     rules.forEach((r, index) => {
         html += `
             <div class="list-item">
+                ${getCheckboxHTML('cb-rule', index)}
                 <div class="item-info" style="font-family: monospace;">${r}</div>
                 <div class="item-actions">
                     <button class="btn btn-sm btn-danger" onclick="deleteRule(${index})">删除</button>
@@ -249,7 +282,50 @@ function renderRules() {
     list.innerHTML = html;
 }
 
-// === Action: Proxy Groups ===
+// === Actions: Airports ===
+document.getElementById('btn-add-airport').addEventListener('click', () => {
+    const html = `
+        <div class="form-group full-width">
+            <label>添加多个机场链接 (一行一个)</label>
+            <textarea id="m-airport-input" style="min-height:150px;" placeholder="https://..."></textarea>
+        </div>
+    `;
+    openModal('添加机场', html, async () => {
+        let urls = document.getElementById('m-airport-input').value.split('\n').map(s=>s.trim()).filter(s=>s);
+        if(urls.length) {
+            state.airports = state.airports.concat(urls);
+            closeModal();
+            await saveAirportsObj();
+        }
+    });
+});
+
+window.deleteAirport = async function(index) {
+    state.airports.splice(index, 1);
+    await saveAirportsObj();
+};
+
+document.getElementById('btn-bulk-delete-airports').addEventListener('click', async () => {
+    let indices = getCheckedIndices('cb-airport');
+    if(!indices.length) return alert('请先勾选要删除的项');
+    if(confirm(`确定删除这 ${indices.length} 项吗？`)) {
+        indices.forEach(i => state.airports.splice(i, 1));
+        await saveAirportsObj();
+    }
+});
+
+async function saveAirportsObj() {
+    renderAirports();
+    try {
+        await fetchAuth('/airports', {
+            method: 'POST',
+            body: JSON.stringify({ urls: state.airports })
+        });
+        showToast('机场配置已保存');
+    } catch(e) { showToast('保存失败', 'error'); }
+}
+
+// === Actions: Proxy Groups ===
 window.editGroup = function(index) {
     let g = index >= 0 ? state.templateObj['proxy-groups'][index] : { name: '', type: 'select', proxies: [] };
     const html = `
@@ -288,9 +364,7 @@ window.editGroup = function(index) {
         if (g.type !== 'select') {
             g.url = document.getElementById('m-group-url').value.trim();
             g.interval = parseInt(document.getElementById('m-group-interval').value) || 300;
-        } else {
-            delete g.url; delete g.interval;
-        }
+        } else { delete g.url; delete g.interval; }
         
         if (!state.templateObj['proxy-groups']) state.templateObj['proxy-groups'] = [];
         if (index >= 0) state.templateObj['proxy-groups'][index] = g;
@@ -303,19 +377,26 @@ window.editGroup = function(index) {
 document.getElementById('btn-add-group').addEventListener('click', () => editGroup(-1));
 
 window.deleteGroup = function(index) {
-    if(confirm('确定要删除该代理组吗？')) {
-        state.templateObj['proxy-groups'].splice(index, 1);
-        saveTemplateObj();
-    }
+    state.templateObj['proxy-groups'].splice(index, 1);
+    saveTemplateObj();
 };
 
-// === Action: Nodes ===
+document.getElementById('btn-bulk-delete-groups').addEventListener('click', () => {
+    let indices = getCheckedIndices('cb-group');
+    if(!indices.length) return alert('请先勾选要删除的项');
+    if(confirm(`确定删除这 ${indices.length} 项吗？`)) {
+        indices.forEach(i => state.templateObj['proxy-groups'].splice(i, 1));
+        saveTemplateObj();
+    }
+});
+
+// === Actions: Nodes ===
 window.editNode = function(index) {
     let isNew = index < 0;
     let yamlStr = isNew ? "name: New Node\ntype: vmess\nserver: 1.1.1.1\nport: 443" : jsyaml.dump(state.nodes[index]);
     const html = `
         <div class="form-group full-width">
-            <label>节点配置 (YAML / JSON格式)</label>
+            <label>节点配置 (YAML格式)</label>
             <textarea id="m-node-raw" style="min-height:250px; font-family:monospace;">${yamlStr}</textarea>
         </div>
     `;
@@ -326,9 +407,7 @@ window.editNode = function(index) {
             else state.nodes[index] = parsed;
             closeModal();
             saveNodesObj();
-        } catch(e) {
-            alert('YAML 解析失败，请检查格式');
-        }
+        } catch(e) { alert('YAML 解析失败'); }
     });
 };
 document.getElementById('btn-add-node').addEventListener('click', () => editNode(-1));
@@ -343,27 +422,28 @@ document.getElementById('btn-import-nodes').addEventListener('click', () => {
     openModal('批量导入自建节点', html, () => {
         try {
             let parsed = jsyaml.load(document.getElementById('m-nodes-import').value);
-            let toAdd = [];
-            if(Array.isArray(parsed)) toAdd = parsed;
-            else if(parsed.proxies && Array.isArray(parsed.proxies)) toAdd = parsed.proxies;
-            else throw new Error("找不到 proxies 数组");
-            
+            let toAdd = Array.isArray(parsed) ? parsed : (parsed.proxies || []);
             state.nodes = state.nodes.concat(toAdd);
             closeModal();
             saveNodesObj();
             showToast(`成功导入 ${toAdd.length} 个节点`);
-        } catch(e) {
-            alert('YAML 解析失败: ' + e.message);
-        }
+        } catch(e) { alert('YAML 解析失败'); }
     });
 });
 
 window.deleteNode = function(index) {
-    if(confirm('确定要删除该节点吗？')) {
-        state.nodes.splice(index, 1);
+    state.nodes.splice(index, 1);
+    saveNodesObj();
+};
+
+document.getElementById('btn-bulk-delete-nodes').addEventListener('click', () => {
+    let indices = getCheckedIndices('cb-node');
+    if(!indices.length) return alert('请先勾选要删除的项');
+    if(confirm(`确定删除这 ${indices.length} 项吗？`)) {
+        indices.forEach(i => state.nodes.splice(i, 1));
         saveNodesObj();
     }
-};
+});
 
 async function saveNodesObj() {
     renderNodes();
@@ -372,13 +452,11 @@ async function saveNodesObj() {
             method: 'POST',
             body: JSON.stringify({ nodes: state.nodes })
         });
-        showToast('节点已保存并生效');
-    } catch(e) {
-        showToast('保存节点失败', 'error');
-    }
+        showToast('节点已保存');
+    } catch(e) { showToast('保存失败', 'error'); }
 }
 
-// === Action: Rules ===
+// === Actions: Rules ===
 document.getElementById('btn-add-rule').addEventListener('click', () => {
     const html = `
         <div class="form-group full-width">
@@ -390,7 +468,7 @@ document.getElementById('btn-add-rule').addEventListener('click', () => {
         let val = document.getElementById('m-rule-input').value.trim();
         if(val) {
             if (!state.templateObj['rules']) state.templateObj['rules'] = [];
-            state.templateObj['rules'].unshift(val); // Insert at top
+            state.templateObj['rules'].unshift(val);
             closeModal();
             saveTemplateObj();
         }
@@ -421,6 +499,15 @@ window.deleteRule = function(index) {
     saveTemplateObj();
 };
 
+document.getElementById('btn-bulk-delete-rules').addEventListener('click', () => {
+    let indices = getCheckedIndices('cb-rule');
+    if(!indices.length) return alert('请先勾选要删除的项');
+    if(confirm(`确定删除这 ${indices.length} 项吗？`)) {
+        indices.forEach(i => state.templateObj['rules'].splice(i, 1));
+        saveTemplateObj();
+    }
+});
+
 async function saveTemplateObj() {
     state.templateRaw = jsyaml.dump(state.templateObj);
     rulesEditor.value = state.templateRaw;
@@ -431,66 +518,9 @@ async function saveTemplateObj() {
             method: 'POST',
             body: JSON.stringify({ content: state.templateRaw })
         });
-        showToast('路由及代理组已保存');
-    } catch(e) {
-        showToast('保存模板失败', 'error');
-    }
+        showToast('已保存底层模板');
+    } catch(e) { showToast('保存失败', 'error'); }
 }
-
-// === Action: Others ===
-copyBtn.addEventListener('click', () => {
-    subLink.select();
-    document.execCommand('copy');
-    showToast('链接已复制到剪贴板');
-});
-
-saveConfigBtn.addEventListener('click', async () => {
-    try {
-        const payload = { SECRET_TOKEN: secretToken.value };
-        await fetchAuth('/config', {
-            method: 'POST',
-            body: JSON.stringify(payload)
-        });
-        showToast('密钥已保存');
-        subLink.value = `${window.location.origin}/sub?token=${payload.SECRET_TOKEN}`;
-        if (payload.SECRET_TOKEN !== currentToken) {
-            currentToken = payload.SECRET_TOKEN;
-            localStorage.setItem('proxyforge_token', currentToken);
-        }
-    } catch (e) {
-        showToast('保存密钥失败', 'error');
-    }
-});
-
-saveAirportsBtn.addEventListener('click', async () => {
-    try {
-        const urls = airportsEditor.value.split('\n').map(u => u.trim()).filter(u => u);
-        await fetchAuth('/airports', {
-            method: 'POST',
-            body: JSON.stringify({ urls })
-        });
-        showToast('机场列表已保存');
-    } catch (e) {
-        showToast('保存机场列表失败', 'error');
-    }
-});
-
-saveRulesBtn.addEventListener('click', async () => {
-    try {
-        let newYaml = rulesEditor.value;
-        state.templateObj = jsyaml.load(newYaml) || {};
-        state.templateRaw = newYaml;
-        renderGroups();
-        renderRules();
-        await fetchAuth('/template', {
-            method: 'POST',
-            body: JSON.stringify({ content: newYaml })
-        });
-        showToast('底层配置已覆盖保存');
-    } catch (e) {
-        showToast('YAML解析或保存失败', 'error');
-    }
-});
 
 // === Action: Global Import ===
 const globalImportBtn = document.getElementById('global-import-btn');
@@ -510,23 +540,20 @@ if (globalImportBtn) {
                 if (!parsed || typeof parsed !== 'object') throw new Error("无效的 YAML 结构");
 
                 let nodeCount = 0;
-                // 提取 nodes
                 if (parsed.proxies && Array.isArray(parsed.proxies)) {
                     state.nodes = state.nodes.concat(parsed.proxies);
                     nodeCount = parsed.proxies.length;
-                    delete parsed.proxies; // 移除 proxies，剩下的作为 template
+                    delete parsed.proxies;
                 }
 
-                // 剩下的内容覆盖到 template (如果还有内容)
                 if (Object.keys(parsed).length > 0) {
-                    state.templateObj = Object.assign(state.templateObj, parsed); // 或者完全替换？合并更安全
+                    state.templateObj = Object.assign(state.templateObj, parsed);
                     state.templateRaw = jsyaml.dump(state.templateObj);
                     rulesEditor.value = state.templateRaw;
                     renderGroups();
                     renderRules();
                 }
 
-                // 异步保存
                 if (nodeCount > 0) {
                     await fetchAuth('/nodes', {
                         method: 'POST',
@@ -543,10 +570,46 @@ if (globalImportBtn) {
                 }
 
                 closeModal();
-                showToast(`全局导入成功！提取 ${nodeCount} 个节点，并更新底层配置。`);
-            } catch (e) {
-                alert('解析或保存失败: ' + e.message);
-            }
+                showToast(`全局导入成功！提取 ${nodeCount} 个节点，更新底层配置。`);
+            } catch (e) { alert('解析或保存失败: ' + e.message); }
         });
     });
 }
+
+// === Action: Config & Raw Save ===
+copyBtn.addEventListener('click', () => {
+    subLink.select();
+    document.execCommand('copy');
+    showToast('链接已复制到剪贴板');
+});
+
+saveConfigBtn.addEventListener('click', async () => {
+    try {
+        const payload = { SECRET_TOKEN: secretToken.value };
+        await fetchAuth('/config', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+        showToast('密钥已保存');
+        subLink.value = `${window.location.origin}/sub?token=${payload.SECRET_TOKEN}`;
+        if (payload.SECRET_TOKEN !== currentToken) {
+            currentToken = payload.SECRET_TOKEN;
+            localStorage.setItem('proxyforge_token', currentToken);
+        }
+    } catch (e) { showToast('保存密钥失败', 'error'); }
+});
+
+saveRulesBtn.addEventListener('click', async () => {
+    try {
+        let newYaml = rulesEditor.value;
+        state.templateObj = jsyaml.load(newYaml) || {};
+        state.templateRaw = newYaml;
+        renderGroups();
+        renderRules();
+        await fetchAuth('/template', {
+            method: 'POST',
+            body: JSON.stringify({ content: newYaml })
+        });
+        showToast('底层配置已覆盖保存');
+    } catch (e) { showToast('YAML解析或保存失败', 'error'); }
+});

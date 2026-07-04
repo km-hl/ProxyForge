@@ -29,11 +29,11 @@
             <div class="logo">
                 <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
                 ProxyForge
-                <button class="btn btn-success" id="global-import-btn" style="margin-left: 16px; padding: 4px 10px; font-size: 0.8rem;">📥 全局 YAML 导入</button>
             </div>
             <div class="header-actions">
-                <button class="btn btn-success" id="copy-btn">📝 复制订阅链接</button>
-                <button class="btn btn-danger" id="logout-btn">🚪 退出登录</button>
+                <button class="btn btn-success" id="global-import-btn">📥 全局 YAML 导入</button>
+                <button class="btn btn-primary" id="copy-btn">📝 复制订阅</button>
+                <button class="btn btn-danger" id="logout-btn">🚪 退出</button>
             </div>
         </header>
 
@@ -43,6 +43,9 @@
             <nav class="sidebar" id="sidebar">
                 <div class="sidebar-item active" data-panel="panel-overview">
                     ⚙️ <span>概览设置</span>
+                </div>
+                <div class="sidebar-item" data-panel="panel-airports">
+                    ✈️ <span>机场订阅</span>
                 </div>
                 <div class="sidebar-item" data-panel="panel-groups">
                     📁 <span>代理组</span>
@@ -86,18 +89,20 @@
                             </div>
                         </div>
                     </div>
+                </div>
 
-                    <div class="card">
-                        <div class="card-title">✈️ 机场订阅列表</div>
-                        <div class="form-grid">
-                            <div class="form-group full-width">
-                                <label>一行一个机场链接，系统会自动并发拉取并合并所有机场的节点</label>
-                                <textarea id="airports-editor" spellcheck="false" placeholder="https://example-airport.com/api/v1/client/subscribe?token=xxx&#10;https://another-airport.com/sub"></textarea>
-                                <div style="margin-top: 10px; text-align: right;">
-                                    <button id="save-airports-btn" class="btn btn-primary">保存机场列表</button>
-                                </div>
-                            </div>
+                <!-- 机场订阅 -->
+                <div class="section-panel" id="panel-airports">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <h2 style="font-size:1.2rem; font-weight:600;">✈️ 机场订阅管理</h2>
+                        <div>
+                            <button class="btn btn-danger" id="btn-bulk-delete-airports">🗑️ 批量删除</button>
+                            <button class="btn btn-primary" id="btn-add-airport" style="margin-left:8px;">➕ 添加机场</button>
                         </div>
+                    </div>
+                    <div id="airports-list">
+                        <!-- Rendered by JS -->
+                        <div class="empty-state">加载中...</div>
                     </div>
                 </div>
 
@@ -105,7 +110,10 @@
                 <div class="section-panel" id="panel-groups">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <h2 style="font-size:1.2rem; font-weight:600;">📁 代理组管理 (Proxy Groups)</h2>
-                        <button class="btn btn-primary" id="btn-add-group">➕ 添加代理组</button>
+                        <div>
+                            <button class="btn btn-danger" id="btn-bulk-delete-groups">🗑️ 批量删除</button>
+                            <button class="btn btn-primary" id="btn-add-group" style="margin-left:8px;">➕ 添加代理组</button>
+                        </div>
                     </div>
                     <div id="groups-list">
                         <!-- Rendered by JS -->
@@ -118,8 +126,9 @@
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <h2 style="font-size:1.2rem; font-weight:600;">🌐 自建节点管理</h2>
                         <div>
+                            <button class="btn btn-danger" id="btn-bulk-delete-nodes" style="margin-right:8px;">🗑️ 批量删除</button>
                             <button class="btn btn-primary" id="btn-add-node" style="margin-right:8px;">➕ 添加节点</button>
-                            <button class="btn btn-success" id="btn-import-nodes">📥 YAML/JSON导入</button>
+                            <button class="btn btn-success" id="btn-import-nodes">📥 YAML导入</button>
                         </div>
                     </div>
                     <div id="nodes-list">
@@ -133,6 +142,7 @@
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <h2 style="font-size:1.2rem; font-weight:600;">📏 路由规则管理 (Rules)</h2>
                         <div>
+                            <button class="btn btn-danger" id="btn-bulk-delete-rules" style="margin-right:8px;">🗑️ 批量删除</button>
                             <button class="btn btn-primary" id="btn-add-rule" style="margin-right:8px;">➕ 添加规则</button>
                             <button class="btn btn-success" id="btn-import-rules">📥 批量导入</button>
                         </div>
