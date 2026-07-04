@@ -637,12 +637,15 @@ if (globalImportBtn) {
 
                 let nodeCount = 0;
                 if (parsed.proxies && Array.isArray(parsed.proxies)) {
-                    state.nodes = state.nodes.concat(parsed.proxies);
+                    state.nodes = parsed.proxies; // Overwrite
                     nodeCount = parsed.proxies.length;
                     delete parsed.proxies;
+                } else {
+                    state.nodes = []; // If no proxies, clear existing
                 }
 
                 let airportCount = 0;
+                state.airports = []; // Overwrite airports
                 if (parsed['proxy-providers'] && typeof parsed['proxy-providers'] === 'object') {
                     for (const key in parsed['proxy-providers']) {
                         const provider = parsed['proxy-providers'][key];
@@ -653,42 +656,47 @@ if (globalImportBtn) {
                             }
                         }
                     }
-                    delete parsed['proxy-providers']; // 由 ProxyForge 接管，无需保留原生 provider
+                    delete parsed['proxy-providers'];
                 }
 
                 if (Object.keys(parsed).length > 0) {
-                    state.templateObj = Object.assign(state.templateObj, parsed);
+                    state.templateObj = parsed; // Overwrite
                     state.templateRaw = jsyaml.dump(state.templateObj);
                     rulesEditor.value = state.templateRaw;
                     renderGroups();
                     renderRules();
+                } else {
+                    state.templateObj = {};
+                    state.templateRaw = '';
+                    rulesEditor.value = '';
+                    renderGroups();
+                    renderRules();
                 }
 
-                if (nodeCount > 0) {
-                    await fetchAuth('/nodes', {
-                        method: 'POST',
-                        body: JSON.stringify({ nodes: state.nodes })
-                    });
-                    renderNodes();
-                }
+                // Save everything
+                await fetchAuth('/nodes', {
+                    method: 'POST',
+                    body: JSON.stringify({ nodes: state.nodes })
+                });
+                renderNodes();
 
-                if (airportCount > 0) {
-                    await fetchAuth('/airports', {
-                        method: 'POST',
-                        body: JSON.stringify({ urls: state.airports })
-                    });
+                await fetchAuth('/airports', {
+                    method: 'POST',
+                    body: JSON.stringify({ urls: state.airports })
+                });
+                // Fetch info after overwrite
+                fetchAuth('/airports/info').then(res => res.json()).then(data => {
+                    state.airportsInfo = data.info || [];
                     renderAirports();
-                }
+                });
                 
-                if (Object.keys(parsed).length > 0) {
-                    await fetchAuth('/template', {
-                        method: 'POST',
-                        body: JSON.stringify({ content: state.templateRaw })
-                    });
-                }
+                await fetchAuth('/template', {
+                    method: 'POST',
+                    body: JSON.stringify({ content: state.templateRaw })
+                });
 
                 closeModal();
-                showToast(`导入成功！提取 ${nodeCount} 个节点，${airportCount} 个机场，并更新底层配置。`);
+                showToast(`全局导入覆盖成功！提取 ${nodeCount} 个节点，${airportCount} 个机场，并更新底层配置。`);
             } catch (e) { alert('解析或保存失败: ' + e.message); }
         });
 

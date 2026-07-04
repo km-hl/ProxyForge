@@ -4,6 +4,7 @@ import logging
 import base64
 import json
 import urllib.parse
+import requests
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, HTTPException, Query, Header, Depends, Body
 from fastapi.responses import PlainTextResponse, FileResponse
