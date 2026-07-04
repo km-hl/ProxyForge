@@ -105,40 +105,65 @@ def load_cache_from_file() -> List[Dict[str, Any]]:
         logger.error(f"读取节点持久化缓存失败: {e}")
     return []
 
+def parse_airport_response(text: str) -> list:
+    # Try YAML first
+    try:
+        config = yaml.safe_load(text)
+        if isinstance(config, dict) and "proxies" in config and isinstance(config["proxies"], list):
+            return config["proxies"]
+    except: pass
+        
+    # Try Base64
+    try:
+        import base64
+        t = text.strip()
+        t += "=" * ((4 - len(t) % 4) % 4)
+        decoded = base64.b64decode(t).decode('utf-8')
+        proxies = []
+        for line in decoded.splitlines():
+            p = parse_share_link(line)
+            if p: proxies.append(p)
+        return proxies
+    except: pass
+    
+    return []
+
 def fetch_airport_proxies() -> List[Dict[str, Any]]:
-    urls = load_airports()
-    if not urls:
+    urls_data = load_airports()
+    if not urls_data:
         logger.warning("未配置机场订阅链接，跳过拉取。")
         return []
         
     headers = {"User-Agent": "ClashForWindows/0.18.0"}
     all_proxies = []
     
-    for url in urls:
-        if not url.strip(): continue
+    for item in urls_data:
+        url = item.get("url", "") if isinstance(item, dict) else item
+        if not isinstance(url, str) or not url.strip(): continue
+        
         logger.info(f"正在从机场拉取节点: {url.strip()}")
         try:
             response = requests.get(url.strip(), headers=headers, timeout=10)
             response.raise_for_status()
-            config = yaml.safe_load(response.text)
-            if config and "proxies" in config and isinstance(config["proxies"], list):
-                proxies = config["proxies"]
+            
+            proxies = parse_airport_response(response.text)
+            if proxies:
                 logger.info(f"成功从 {url.strip()} 拉取到 {len(proxies)} 个节点")
                 all_proxies.extend(proxies)
             else:
-                logger.warning(f"机场订阅内容解析成功，但未找到 proxies 字段: {url.strip()}")
+                logger.warning(f"机场订阅内容解析成功，但未找到代理节点: {url.strip()}")
         except Exception as e:
             logger.error(f"拉取机场订阅失败 {url.strip()}: {e}")
             
-    if not all_proxies and len([u for u in urls if u.strip()]) > 0:
-        raise Exception("所有配置的机场订阅均拉取失败或无数据")
-        
     return all_proxies
 
-def fetch_single_airport_info(url: str) -> dict:
+def fetch_single_airport_info(item) -> dict:
+    url = item.get("url", "").strip() if isinstance(item, dict) else item.strip()
+    custom_name = item.get("name", "") if isinstance(item, dict) else ""
+    
     info = {
         "url": url,
-        "name": urllib.parse.urlparse(url).netloc,
+        "name": custom_name or urllib.parse.urlparse(url).netloc,
         "nodesCount": 0,
         "upload": 0,
         "download": 0,
@@ -146,31 +171,33 @@ def fetch_single_airport_info(url: str) -> dict:
         "expire": 0,
         "error": None
     }
+    if not url: return info
+    
     try:
         headers = {"User-Agent": "ClashForWindows/0.18.0"}
         res = requests.get(url, headers=headers, timeout=10)
         res.raise_for_status()
         
         # 尝试提取名称
-        cd = res.headers.get("content-disposition", "")
-        if "filename=" in cd:
-            import re
-            m = re.search(r'filename=["\']?([^"\';]+)', cd)
-            if m:
-                info["name"] = urllib.parse.unquote(m.group(1))
+        if not custom_name:
+            cd = res.headers.get("content-disposition", "")
+            if "filename=" in cd:
+                import re
+                m = re.search(r'filename=["\']?([^"\';]+)', cd)
+                if m:
+                    info["name"] = urllib.parse.unquote(m.group(1))
                 
         # 尝试提取流量信息
         userinfo = res.headers.get("subscription-userinfo", "")
         if userinfo:
             import re
             for k in ["upload", "download", "total", "expire"]:
-                m = re.search(rf'{k}=(\d+)', userinfo)
+                m = re.search(rf'{k}\s*=\s*(\d+)', userinfo)
                 if m:
                     info[k] = int(m.group(1))
                     
-        config = yaml.safe_load(res.text)
-        if config and "proxies" in config and isinstance(config["proxies"], list):
-            info["nodesCount"] = len(config["proxies"])
+        proxies = parse_airport_response(res.text)
+        info["nodesCount"] = len(proxies)
             
     except Exception as e:
         info["error"] = str(e)
@@ -347,7 +374,7 @@ def get_airports():
     return {"urls": load_airports()}
 
 class AirportsModel(BaseModel):
-    urls: List[str]
+    urls: List[Any]
 
 @app.post("/api/airports", dependencies=[Depends(verify_api_token)])
 def update_airports(data: AirportsModel):
@@ -358,11 +385,11 @@ def update_airports(data: AirportsModel):
 
 @app.get("/api/airports/info", dependencies=[Depends(verify_api_token)])
 def get_airports_info():
-    urls = load_airports()
+    urls_data = load_airports()
     results = []
-    if urls:
+    if urls_data:
         with ThreadPoolExecutor(max_workers=5) as executor:
-            results = list(executor.map(fetch_single_airport_info, [u for u in urls if u.strip()]))
+            results = list(executor.map(fetch_single_airport_info, urls_data))
     return {"info": results}
 
 class ParseLinksModel(BaseModel):

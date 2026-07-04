@@ -146,7 +146,8 @@ async function loadData() {
         subLink.value = `${window.location.origin}/sub?token=${state.config.SECRET_TOKEN}`;
 
         const airportsRes = await fetchAuth('/airports');
-        state.airports = (await airportsRes.json()).urls || [];
+        let rawAirports = (await airportsRes.json()).urls || [];
+        state.airports = rawAirports.map(u => typeof u === 'string' ? {url: u} : u);
 
         const nodesRes = await fetchAuth('/nodes');
         state.nodes = (await nodesRes.json()).nodes || [];
@@ -208,8 +209,11 @@ function renderAirports() {
         return;
     }
     let html = '';
-    state.airports.forEach((url, index) => {
+    state.airports.forEach((item, index) => {
+        let url = typeof item === 'string' ? item : item.url;
+        let customName = typeof item === 'object' ? item.name : '';
         let info = state.airportsInfo && state.airportsInfo.find(i => i.url === url);
+        
         if (info) {
             let usageStr = "获取失败";
             if (!info.error) {
@@ -220,11 +224,12 @@ function renderAirports() {
                     usageStr = "未知流量";
                 }
             }
+            let displayName = customName || info.name || '机场';
             html += `
                 <div class="list-item" style="flex-direction:column; align-items:flex-start;">
                     <div style="display:flex; width:100%; align-items:center;">
                         ${getCheckboxHTML('cb-airport', index)}
-                        <span class="type-badge badge-select" style="margin-right:8px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${info.name || '机场'}</span>
+                        <span class="type-badge badge-select" style="margin-right:8px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${displayName}</span>
                         <div class="item-info" style="flex:1; word-break:break-all; font-size:0.8rem; color:#666;">${url}</div>
                         <div class="item-actions">
                             <button class="btn btn-sm btn-danger" onclick="deleteAirport(${index})">删除</button>
@@ -239,9 +244,11 @@ function renderAirports() {
                 </div>
             `;
         } else {
+            let displayName = customName || '机场';
             html += `
                 <div class="list-item">
                     ${getCheckboxHTML('cb-airport', index)}
+                    <span class="type-badge badge-select" style="margin-right:8px;">${displayName}</span>
                     <div class="item-info" style="word-break:break-all;">${url}</div>
                     <span style="font-size:0.8rem; color:#999;">动态数据加载中...</span>
                     <div class="item-actions">
@@ -339,14 +346,21 @@ function renderRules() {
 document.getElementById('btn-add-airport').addEventListener('click', () => {
     const html = `
         <div class="form-group full-width">
-            <label>添加多个机场链接 (一行一个)</label>
-            <textarea id="m-airport-input" style="min-height:150px;" placeholder="https://..."></textarea>
+            <label>添加多个机场链接 (一行一个，支持: 机场名称,链接)</label>
+            <textarea id="m-airport-input" style="min-height:150px;" placeholder="名称,https://... (名称可选)"></textarea>
         </div>
     `;
     openModal('添加机场', html, async () => {
-        let urls = document.getElementById('m-airport-input').value.split('\n').map(s=>s.trim()).filter(s=>s);
-        if(urls.length) {
-            state.airports = state.airports.concat(urls);
+        let lines = document.getElementById('m-airport-input').value.split('\n').map(s=>s.trim()).filter(s=>s);
+        if(lines.length) {
+            let toAdd = lines.map(line => {
+                let parts = line.split(',');
+                if (parts.length > 1 && parts[1].trim().startsWith('http')) {
+                    return { name: parts[0].trim(), url: parts.slice(1).join(',').trim() };
+                }
+                return { url: line };
+            });
+            state.airports = state.airports.concat(toAdd);
             closeModal();
             await saveAirportsObj();
         }
@@ -650,8 +664,8 @@ if (globalImportBtn) {
                     for (const key in parsed['proxy-providers']) {
                         const provider = parsed['proxy-providers'][key];
                         if (provider && provider.type === 'http' && provider.url) {
-                            if (!state.airports.includes(provider.url)) {
-                                state.airports.push(provider.url);
+                            if (!state.airports.find(a => a.url === provider.url)) {
+                                state.airports.push({ name: key, url: provider.url });
                                 airportCount++;
                             }
                         }
