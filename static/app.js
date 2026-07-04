@@ -491,3 +491,62 @@ saveRulesBtn.addEventListener('click', async () => {
         showToast('YAML解析或保存失败', 'error');
     }
 });
+
+// === Action: Global Import ===
+const globalImportBtn = document.getElementById('global-import-btn');
+if (globalImportBtn) {
+    globalImportBtn.addEventListener('click', () => {
+        const html = `
+            <div class="form-group full-width">
+                <label>粘贴完整的 YAML 配置 (包含 proxies, proxy-groups, rules 等)</label>
+                <textarea id="m-global-yaml" style="min-height:300px; font-family:monospace;" placeholder="proxies: ...\nproxy-groups: ...\nrules: ..."></textarea>
+                <span class="hint">系统会自动提取 proxies 合并到您的“自建节点”，并将 proxy-groups 和 rules 等覆盖到“底层配置”。</span>
+            </div>
+        `;
+        openModal('📥 全局 YAML 智能导入', html, async () => {
+            try {
+                let raw = document.getElementById('m-global-yaml').value;
+                let parsed = jsyaml.load(raw);
+                if (!parsed || typeof parsed !== 'object') throw new Error("无效的 YAML 结构");
+
+                let nodeCount = 0;
+                // 提取 nodes
+                if (parsed.proxies && Array.isArray(parsed.proxies)) {
+                    state.nodes = state.nodes.concat(parsed.proxies);
+                    nodeCount = parsed.proxies.length;
+                    delete parsed.proxies; // 移除 proxies，剩下的作为 template
+                }
+
+                // 剩下的内容覆盖到 template (如果还有内容)
+                if (Object.keys(parsed).length > 0) {
+                    state.templateObj = Object.assign(state.templateObj, parsed); // 或者完全替换？合并更安全
+                    state.templateRaw = jsyaml.dump(state.templateObj);
+                    rulesEditor.value = state.templateRaw;
+                    renderGroups();
+                    renderRules();
+                }
+
+                // 异步保存
+                if (nodeCount > 0) {
+                    await fetchAuth('/nodes', {
+                        method: 'POST',
+                        body: JSON.stringify({ nodes: state.nodes })
+                    });
+                    renderNodes();
+                }
+                
+                if (Object.keys(parsed).length > 0) {
+                    await fetchAuth('/template', {
+                        method: 'POST',
+                        body: JSON.stringify({ content: state.templateRaw })
+                    });
+                }
+
+                closeModal();
+                showToast(`全局导入成功！提取 ${nodeCount} 个节点，并更新底层配置。`);
+            } catch (e) {
+                alert('解析或保存失败: ' + e.message);
+            }
+        });
+    });
+}
