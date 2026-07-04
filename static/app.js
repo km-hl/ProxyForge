@@ -5,6 +5,7 @@ let currentToken = localStorage.getItem('proxyforge_token') || '';
 let state = {
     config: {},
     airports: [],
+    airportsInfo: [],
     nodes: [],
     templateRaw: '',
     templateObj: {}
@@ -163,9 +164,29 @@ async function loadData() {
         renderGroups();
         renderRules();
         rulesEditor.value = state.templateRaw;
+
+        // Async fetch airport info
+        fetchAuth('/airports/info').then(res => res.json()).then(data => {
+            state.airportsInfo = data.info || [];
+            renderAirports();
+        }).catch(e => console.error("Fetch info failed:", e));
+
     } catch (e) {
         console.error("Failed to load data", e);
     }
+}
+
+function formatBytes(bytes) {
+    if (!bytes || bytes === 0) return '0 B';
+    const k = 1024, sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function formatDate(timestamp) {
+    if (!timestamp) return '未知';
+    const d = new Date(timestamp * 1000);
+    return d.toLocaleDateString();
 }
 
 // Helper for checkboxes
@@ -188,15 +209,47 @@ function renderAirports() {
     }
     let html = '';
     state.airports.forEach((url, index) => {
-        html += `
-            <div class="list-item">
-                ${getCheckboxHTML('cb-airport', index)}
-                <div class="item-info" style="word-break:break-all;">${url}</div>
-                <div class="item-actions">
-                    <button class="btn btn-sm btn-danger" onclick="deleteAirport(${index})">删除</button>
+        let info = state.airportsInfo && state.airportsInfo.find(i => i.url === url);
+        if (info) {
+            let usageStr = "获取失败";
+            if (!info.error) {
+                if (info.total > 0) {
+                    let used = info.download + info.upload;
+                    usageStr = `${formatBytes(used)} / ${formatBytes(info.total)}`;
+                } else {
+                    usageStr = "未知流量";
+                }
+            }
+            html += `
+                <div class="list-item" style="flex-direction:column; align-items:flex-start;">
+                    <div style="display:flex; width:100%; align-items:center;">
+                        ${getCheckboxHTML('cb-airport', index)}
+                        <span class="type-badge badge-select" style="margin-right:8px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${info.name || '机场'}</span>
+                        <div class="item-info" style="flex:1; word-break:break-all; font-size:0.8rem; color:#666;">${url}</div>
+                        <div class="item-actions">
+                            <button class="btn btn-sm btn-danger" onclick="deleteAirport(${index})">删除</button>
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:15px; margin-left:34px; margin-top:8px; font-size:0.8rem; flex-wrap:wrap;">
+                        <span style="color:#2e7d32;"><b>📦 节点:</b> ${info.error ? '?' : info.nodesCount}</span>
+                        <span style="color:#1565c0;"><b>📊 流量:</b> ${usageStr}</span>
+                        <span style="color:#e65100;"><b>⏳ 到期:</b> ${info.expire ? formatDate(info.expire) : '长期有效'}</span>
+                    </div>
+                    ${info.error ? `<div style="color:red; font-size:0.75rem; margin-left:34px; margin-top:4px;">抓取失败: ${info.error}</div>` : ''}
                 </div>
-            </div>
-        `;
+            `;
+        } else {
+            html += `
+                <div class="list-item">
+                    ${getCheckboxHTML('cb-airport', index)}
+                    <div class="item-info" style="word-break:break-all;">${url}</div>
+                    <span style="font-size:0.8rem; color:#999;">动态数据加载中...</span>
+                    <div class="item-actions">
+                        <button class="btn btn-sm btn-danger" onclick="deleteAirport(${index})">删除</button>
+                    </div>
+                </div>
+            `;
+        }
     });
     list.innerHTML = html;
 }
@@ -322,6 +375,11 @@ async function saveAirportsObj() {
             body: JSON.stringify({ urls: state.airports })
         });
         showToast('机场配置已保存');
+        // Refresh info after saving
+        fetchAuth('/airports/info').then(res => res.json()).then(data => {
+            state.airportsInfo = data.info || [];
+            renderAirports();
+        });
     } catch(e) { showToast('保存失败', 'error'); }
 }
 
@@ -415,20 +473,46 @@ document.getElementById('btn-add-node').addEventListener('click', () => editNode
 document.getElementById('btn-import-nodes').addEventListener('click', () => {
     const html = `
         <div class="form-group full-width">
-            <label>选择包含 proxies 的 YAML 文件，或在下方直接粘贴</label>
+            <label>选择 YAML 文件上传，或在下方直接粘贴 (支持 YAML / JSON / 分享链接 vless:// 等)</label>
             <input type="file" id="m-nodes-file" accept=".yaml,.yml,.txt,.json" style="margin-bottom: 10px; cursor: pointer;">
-            <textarea id="m-nodes-import" style="min-height:250px;" placeholder="proxies:\n  - name: node1..."></textarea>
+            <textarea id="m-nodes-import" style="min-height:250px;" placeholder="支持粘贴标准 YAML 节点列表，或者直接粘贴 vless:// vmess:// hysteria2:// 链接 (每行一个)"></textarea>
         </div>
     `;
-    openModal('批量导入自建节点', html, () => {
+    openModal('批量导入自建节点', html, async () => {
         try {
-            let parsed = jsyaml.load(document.getElementById('m-nodes-import').value);
-            let toAdd = Array.isArray(parsed) ? parsed : (parsed.proxies || []);
-            state.nodes = state.nodes.concat(toAdd);
-            closeModal();
-            saveNodesObj();
-            showToast(`成功导入 ${toAdd.length} 个节点`);
-        } catch(e) { alert('YAML 解析失败'); }
+            let text = document.getElementById('m-nodes-import').value;
+            let lines = text.split('\n').map(s=>s.trim()).filter(s=>s);
+            let links = lines.filter(s => s.match(/^(vmess|vless|trojan|hysteria2|hy2|ss):\/\//i));
+            let nonLinksText = lines.filter(s => !s.match(/^(vmess|vless|trojan|hysteria2|hy2|ss):\/\//i)).join('\n');
+            
+            let toAdd = [];
+            if(nonLinksText) {
+                let parsed = jsyaml.load(nonLinksText);
+                if (parsed) {
+                    toAdd = Array.isArray(parsed) ? parsed : (parsed.proxies || []);
+                }
+            }
+            
+            if (links.length > 0) {
+                const res = await fetchAuth('/parse-links', {
+                    method: 'POST',
+                    body: JSON.stringify({ links })
+                });
+                const data = await res.json();
+                if (data.nodes && data.nodes.length) {
+                    toAdd = toAdd.concat(data.nodes);
+                }
+            }
+            
+            if (toAdd.length) {
+                state.nodes = state.nodes.concat(toAdd);
+                closeModal();
+                saveNodesObj();
+                showToast(`成功导入 ${toAdd.length} 个节点`);
+            } else {
+                alert('没有解析到任何有效节点');
+            }
+        } catch(e) { alert('解析失败: ' + e.message); }
     });
 
     document.getElementById('m-nodes-file').addEventListener('change', (e) => {

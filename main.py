@@ -1,10 +1,13 @@
 import os
 import yaml
 import logging
+import base64
+import json
+import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, HTTPException, Query, Header, Depends, Body
 from fastapi.responses import PlainTextResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-import requests
 from cachetools import cached, TTLCache
 from typing import List, Dict, Any
 from dotenv import load_dotenv
@@ -131,6 +134,103 @@ def fetch_airport_proxies() -> List[Dict[str, Any]]:
         
     return all_proxies
 
+def fetch_single_airport_info(url: str) -> dict:
+    info = {
+        "url": url,
+        "name": urllib.parse.urlparse(url).netloc,
+        "nodesCount": 0,
+        "upload": 0,
+        "download": 0,
+        "total": 0,
+        "expire": 0,
+        "error": None
+    }
+    try:
+        headers = {"User-Agent": "ClashForWindows/0.18.0"}
+        res = requests.get(url, headers=headers, timeout=10)
+        res.raise_for_status()
+        
+        # 尝试提取名称
+        cd = res.headers.get("content-disposition", "")
+        if "filename=" in cd:
+            import re
+            m = re.search(r'filename=["\']?([^"\';]+)', cd)
+            if m:
+                info["name"] = urllib.parse.unquote(m.group(1))
+                
+        # 尝试提取流量信息
+        userinfo = res.headers.get("subscription-userinfo", "")
+        if userinfo:
+            import re
+            for k in ["upload", "download", "total", "expire"]:
+                m = re.search(rf'{k}=(\d+)', userinfo)
+                if m:
+                    info[k] = int(m.group(1))
+                    
+        config = yaml.safe_load(res.text)
+        if config and "proxies" in config and isinstance(config["proxies"], list):
+            info["nodesCount"] = len(config["proxies"])
+            
+    except Exception as e:
+        info["error"] = str(e)
+    return info
+
+def parse_share_link(link: str) -> dict:
+    link = link.strip()
+    if link.startswith("vmess://"):
+        try:
+            b64 = link[8:]
+            b64 += "=" * ((4 - len(b64) % 4) % 4)
+            data = json.loads(base64.urlsafe_b64decode(b64).decode('utf-8'))
+            return {
+                "name": data.get("ps", "vmess_node"),
+                "type": "vmess",
+                "server": data.get("add", ""),
+                "port": int(data.get("port", 443)),
+                "uuid": data.get("id", ""),
+                "alterId": int(data.get("aid", 0)),
+                "cipher": data.get("scy", "auto"),
+                "network": data.get("net", "tcp"),
+                "ws-opts": {"path": data.get("path", ""), "headers": {"Host": data.get("host", "")}} if data.get("net") == "ws" else None,
+                "tls": data.get("tls") == "tls",
+                "sni": data.get("sni", "")
+            }
+        except: return None
+    elif any(link.startswith(prefix) for prefix in ["vless://", "trojan://", "hysteria2://", "hy2://"]):
+        try:
+            parsed = urllib.parse.urlparse(link)
+            scheme = "hysteria2" if parsed.scheme == "hy2" else parsed.scheme
+            node = {
+                "type": scheme,
+                "server": parsed.hostname,
+                "port": parsed.port,
+                "name": urllib.parse.unquote(parsed.fragment) if parsed.fragment else f"{scheme}_node"
+            }
+            if scheme == "vless": node["uuid"] = parsed.username
+            elif scheme == "trojan" or scheme == "hysteria2": node["password"] = parsed.username
+                
+            qs = urllib.parse.parse_qs(parsed.query)
+            if "sni" in qs: node["sni"] = qs["sni"][0]
+            if "peer" in qs: node["sni"] = qs["peer"][0]
+            if "type" in qs: node["network"] = qs["type"][0]
+            
+            if scheme == "vless":
+                sec = qs.get("security", [""])[0]
+                node["tls"] = sec != "none"
+                if sec == "reality":
+                    node["tls"] = True
+                    node["reality-opts"] = {"public-key": qs.get("pbk", [""])[0]}
+                    if "fp" in qs: node["client-fingerprint"] = qs["fp"][0]
+                    if "sid" in qs: node["reality-opts"]["short-id"] = qs["sid"][0]
+                if node.get("network") == "ws":
+                    node["ws-opts"] = {"path": qs.get("path", ["/"])[0], "headers": {"Host": qs.get("host", [""])[0]}}
+            elif scheme == "hysteria2":
+                if "obfs" in qs: node["obfs"] = qs["obfs"][0]
+                if "obfs-password" in qs: node["obfs-password"] = qs["obfs-password"][0]
+            return node
+        except: return None
+    return None
+
 @cached(cache=subscription_cache)
 def get_airport_proxies_cached() -> List[Dict[str, Any]]:
     return fetch_airport_proxies()
@@ -254,6 +354,29 @@ def update_airports(data: AirportsModel):
     # 更新了机场连接后，清空缓存
     subscription_cache.clear()
     return {"status": "ok"}
+
+@app.get("/api/airports/info", dependencies=[Depends(verify_api_token)])
+def get_airports_info():
+    urls = load_airports()
+    results = []
+    if urls:
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            results = list(executor.map(fetch_single_airport_info, [u for u in urls if u.strip()]))
+    return {"info": results}
+
+class ParseLinksModel(BaseModel):
+    links: List[str]
+
+@app.post("/api/parse-links", dependencies=[Depends(verify_api_token)])
+def parse_links_api(data: ParseLinksModel):
+    nodes = []
+    for link in data.links:
+        parsed = parse_share_link(link)
+        if parsed:
+            # 清理 None 值的键
+            parsed = {k: v for k, v in parsed.items() if v is not None}
+            nodes.append(parsed)
+    return {"nodes": nodes}
 
 @app.get("/api/nodes", dependencies=[Depends(verify_api_token)])
 def get_nodes():
