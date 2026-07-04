@@ -149,6 +149,16 @@ def fetch_airport_proxies() -> List[Dict[str, Any]]:
             proxies = parse_airport_response(response.text)
             if proxies:
                 logger.info(f"成功从 {url.strip()} 拉取到 {len(proxies)} 个节点")
+                
+                # Prepend airport name tag
+                airport_name = item.get("name", "") if isinstance(item, dict) else ""
+                if not airport_name:
+                    airport_name = urllib.parse.urlparse(url.strip()).netloc
+                
+                for p in proxies:
+                    if airport_name not in p.get("name", ""):
+                        p["name"] = f"[{airport_name}] {p.get('name', 'node')}"
+                        
                 all_proxies.extend(proxies)
             else:
                 logger.warning(f"机场订阅内容解析成功，但未找到代理节点: {url.strip()}")
@@ -304,10 +314,23 @@ def get_subscription(token: str = Query(..., description="安全验证 Token")):
             existing_proxies = group.get("proxies", [])
             if existing_proxies is None:
                 existing_proxies = []
-            for name in proxy_names:
-                if name not in existing_proxies:
-                    existing_proxies.append(name)
+                
+            if "filter" in group:
+                import re
+                filter_regex = group["filter"]
+                for name in proxy_names:
+                    try:
+                        if re.search(filter_regex, name) and name not in existing_proxies:
+                            existing_proxies.append(name)
+                    except: pass
+            elif group.get("include-all", False) or (not existing_proxies and group.get("type") != "select"):
+                for name in proxy_names:
+                    if name not in existing_proxies:
+                        existing_proxies.append(name)
+                        
             group["proxies"] = existing_proxies
+            if "include-all" in group:
+                del group["include-all"]
 
     return yaml.dump(template_config, allow_unicode=True, sort_keys=False)
 
@@ -340,8 +363,6 @@ class ConfigModel(BaseModel):
 def update_config(config: ConfigModel):
     global SECRET_TOKEN
     
-    # 因为去掉了机场链接，现在只需更新安全令牌和端口等（如果有）
-    # 为保留文件中其他设置，简单读取重写
     lines = []
     if os.path.exists(ENV_FILE):
         with open(ENV_FILE, "r", encoding="utf-8") as f:
@@ -354,7 +375,7 @@ def update_config(config: ConfigModel):
             new_lines.append(f'SECRET_TOKEN="{config.SECRET_TOKEN}"\n')
             token_updated = True
         elif line.startswith("AIRPORT_SUB_URL="):
-            continue # 删除旧的环境变量
+            continue 
         else:
             new_lines.append(line)
             
@@ -379,7 +400,6 @@ class AirportsModel(BaseModel):
 @app.post("/api/airports", dependencies=[Depends(verify_api_token)])
 def update_airports(data: AirportsModel):
     save_airports(data.urls)
-    # 更新了机场连接后，清空缓存
     subscription_cache.clear()
     return {"status": "ok"}
 
@@ -401,7 +421,6 @@ def parse_links_api(data: ParseLinksModel):
     for link in data.links:
         parsed = parse_share_link(link)
         if parsed:
-            # 清理 None 值的键
             parsed = {k: v for k, v in parsed.items() if v is not None}
             nodes.append(parsed)
     return {"nodes": nodes}
@@ -409,6 +428,12 @@ def parse_links_api(data: ParseLinksModel):
 @app.get("/api/nodes", dependencies=[Depends(verify_api_token)])
 def get_nodes():
     return {"nodes": load_custom_nodes()}
+
+@app.get("/api/proxies", dependencies=[Depends(verify_api_token)])
+def get_all_proxies():
+    custom = load_custom_nodes()
+    airports = get_airport_proxies_cached()
+    return {"proxies": custom + airports}
 
 class NodesModel(BaseModel):
     nodes: List[Dict[str, Any]]

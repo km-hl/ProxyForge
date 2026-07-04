@@ -7,6 +7,7 @@ let state = {
     airports: [],
     airportsInfo: [],
     nodes: [],
+    allProxies: [], // Contains all custom and airport proxies
     templateRaw: '',
     templateObj: {}
 };
@@ -152,6 +153,9 @@ async function loadData() {
         const nodesRes = await fetchAuth('/nodes');
         state.nodes = (await nodesRes.json()).nodes || [];
         
+        const allProxiesRes = await fetchAuth('/proxies');
+        state.allProxies = (await allProxiesRes.json()).proxies || [];
+        
         const rulesRes = await fetchAuth('/template');
         state.templateRaw = (await rulesRes.json()).content || '';
         try {
@@ -188,6 +192,33 @@ function formatDate(timestamp) {
     if (!timestamp) return '未知';
     const d = new Date(timestamp * 1000);
     return d.toLocaleDateString();
+}
+
+function getFlagEmoji(name) {
+    if (!name) return name;
+    if (/[\uD83C-\uDBFF\uDC00-\uDFFF]+/.test(name)) return name; // Already has emoji
+    const flags = {
+        'hk': '🇭🇰', '香港': '🇭🇰',
+        'jp': '🇯🇵', '日本': '🇯🇵',
+        'us': '🇺🇸', '美国': '🇺🇸', '美': '🇺🇸',
+        'sg': '🇸🇬', '新加坡': '🇸🇬', '狮城': '🇸🇬',
+        'tw': '🇹🇼', '台湾': '🇹🇼', '台': '🇹🇼',
+        'uk': '🇬🇧', '英国': '🇬🇧',
+        'kr': '🇰🇷', '韩国': '🇰🇷',
+        'de': '🇩🇪', '德国': '🇩🇪',
+        'fr': '🇫🇷', '法国': '🇫🇷',
+        'ru': '🇷🇺', '俄罗斯': '🇷🇺',
+        'in': '🇮🇳', '印度': '🇮🇳'
+    };
+    let found = null;
+    let lowerName = name.toLowerCase();
+    for (const [key, flag] of Object.entries(flags)) {
+        if (lowerName.includes(key)) {
+            found = flag;
+            break;
+        }
+    }
+    return found ? `${found} ${name}` : name;
 }
 
 // Helper for checkboxes
@@ -232,6 +263,7 @@ function renderAirports() {
                         <span class="type-badge badge-select" style="margin-right:8px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${displayName}</span>
                         <div class="item-info" style="flex:1; word-break:break-all; font-size:0.8rem; color:#666;">${url}</div>
                         <div class="item-actions">
+                            <button class="btn btn-sm btn-primary" onclick="editAirport(${index})">编辑</button>
                             <button class="btn btn-sm btn-danger" onclick="deleteAirport(${index})">删除</button>
                         </div>
                     </div>
@@ -252,6 +284,7 @@ function renderAirports() {
                     <div class="item-info" style="word-break:break-all;">${url}</div>
                     <span style="font-size:0.8rem; color:#999;">动态数据加载中...</span>
                     <div class="item-actions">
+                        <button class="btn btn-sm btn-primary" onclick="editAirport(${index})">编辑</button>
                         <button class="btn btn-sm btn-danger" onclick="deleteAirport(${index})">删除</button>
                     </div>
                 </div>
@@ -271,15 +304,24 @@ function renderGroups() {
     }
     let html = '';
     groups.forEach((g, index) => {
-        const typeBadge = `badge-${(g.type || 'select').toLowerCase().replace(' ', '-')}`;
-        const proxies = Array.isArray(g.proxies) ? g.proxies.join(', ') : '无';
+        let badgeCls = 'badge-default';
+        if (g.type === 'select') badgeCls = 'badge-select';
+        else if (g.type === 'url-test') badgeCls = 'badge-url-test';
+        else if (g.type === 'fallback') badgeCls = 'badge-fallback';
+        else if (g.type === 'load-balance') badgeCls = 'badge-load-balance';
+        
+        let pCount = Array.isArray(g.proxies) ? g.proxies.length : 0;
+        let proxiesPreview = pCount > 0 ? g.proxies.slice(0, 8).join(', ') + (pCount > 8 ? '...' : '') : '无';
+        
+        let displayName = getFlagEmoji(g.name);
+
         html += `
             <div class="list-item">
                 ${getCheckboxHTML('cb-group', index)}
-                <span class="type-badge ${typeBadge}">${g.type || 'select'}</span>
+                <span class="type-badge ${badgeCls}">${g.type || 'unknown'}</span>
                 <div class="item-info">
-                    <div class="item-name">${g.name || 'Unnamed'}</div>
-                    <div class="item-detail">包含: ${proxies}</div>
+                    <div class="item-name">${displayName}</div>
+                    <div class="item-detail">包含: ${proxiesPreview} ${g.filter ? `| 筛选: ${g.filter}` : ''}</div>
                 </div>
                 <div class="item-actions">
                     <button class="btn btn-sm" onclick="editGroup(${index})">编辑</button>
@@ -300,14 +342,14 @@ function renderNodes() {
     }
     let html = '';
     state.nodes.forEach((n, index) => {
-        const typeBadge = `badge-node`;
+        let displayName = getFlagEmoji(n.name);
         html += `
             <div class="list-item">
                 ${getCheckboxHTML('cb-node', index)}
-                <span class="type-badge ${typeBadge}">${n.type || 'unknown'}</span>
+                <span class="type-badge badge-node">${n.type || 'unknown'}</span>
                 <div class="item-info">
-                    <div class="item-name">${n.name || 'Unnamed'}</div>
-                    <div class="item-detail">${n.server || 'No server'} : ${n.port || 'No port'}</div>
+                    <div class="item-name">${displayName}</div>
+                    <div class="item-detail">${n.server || ''} ${n.port ? ':'+n.port : ''}</div>
                 </div>
                 <div class="item-actions">
                     <button class="btn btn-sm" onclick="editNode(${index})">编辑</button>
@@ -367,8 +409,34 @@ document.getElementById('btn-add-airport').addEventListener('click', () => {
     });
 });
 
-window.deleteAirport = async function(index) {
-    state.airports.splice(index, 1);
+window.editAirport = (idx) => {
+    let item = state.airports[idx];
+    let customName = typeof item === 'object' ? (item.name || '') : '';
+    let url = typeof item === 'object' ? item.url : item;
+    
+    const html = `
+        <div class="form-group full-width">
+            <label>机场名称 (可选)</label>
+            <input type="text" id="m-airport-name" value="${customName}" placeholder="比如: 良心云">
+        </div>
+        <div class="form-group full-width">
+            <label>订阅链接</label>
+            <input type="text" id="m-airport-url" value="${url}" placeholder="https://...">
+        </div>
+    `;
+    openModal('编辑机场', html, async () => {
+        let nName = document.getElementById('m-airport-name').value.trim();
+        let nUrl = document.getElementById('m-airport-url').value.trim();
+        if(nUrl) {
+            state.airports[idx] = nName ? { name: nName, url: nUrl } : { url: nUrl };
+            closeModal();
+            await saveAirportsObj();
+        }
+    });
+};
+
+window.deleteAirport = async (idx) => {
+    state.airports.splice(idx, 1);
     await saveAirportsObj();
 };
 
@@ -400,43 +468,109 @@ async function saveAirportsObj() {
 // === Actions: Proxy Groups ===
 window.editGroup = function(index) {
     let g = index >= 0 ? state.templateObj['proxy-groups'][index] : { name: '', type: 'select', proxies: [] };
+    
+    const regions = [
+        {key: 'hk|香港', label: '🇭🇰 香港'},
+        {key: 'jp|日本', label: '🇯🇵 日本'},
+        {key: 'us|美国|美', label: '🇺🇸 美国'},
+        {key: 'sg|新加坡|狮城', label: '🇸🇬 新加坡'},
+        {key: 'tw|台湾|台', label: '🇹🇼 台湾'},
+        {key: 'kr|韩国', label: '🇰🇷 韩国'},
+        {key: 'uk|英国', label: '🇬🇧 英国'}
+    ];
+    
+    const airportNames = new Set();
+    state.allProxies.forEach(p => {
+        let match = p.name.match(/^\[(.*?)\]/);
+        if (match) airportNames.add(match[1]);
+    });
+    
+    let manualProxies = Array.isArray(g.proxies) ? g.proxies : [];
+    
     const html = `
-        <div class="form-grid">
-            <div class="form-group">
-                <label>名称 (Name)</label>
-                <input type="text" id="m-group-name" value="${g.name || ''}">
+        <div class="form-group full-width">
+            <label>名称 (Name)</label>
+            <input type="text" id="m-group-name" value="${g.name || ''}">
+        </div>
+        <div class="form-group full-width">
+            <label>类型 (Type)</label>
+            <select id="m-group-type">
+                <option value="select" ${g.type==='select'?'selected':''}>select (手动选择)</option>
+                <option value="url-test" ${g.type==='url-test'?'selected':''}>url-test (自动测速)</option>
+                <option value="fallback" ${g.type==='fallback'?'selected':''}>fallback (可用性切换)</option>
+                <option value="load-balance" ${g.type==='load-balance'?'selected':''}>load-balance (负载均衡)</option>
+            </select>
+        </div>
+        
+        <div class="form-group full-width" id="wrap-group-url" style="${g.type==='select'?'display:none':''}">
+            <label>测试链接 (URL)</label>
+            <input type="text" id="m-group-url" value="${g.url || 'http://www.gstatic.com/generate_204'}">
+        </div>
+        <div class="form-group full-width" id="wrap-group-interval" style="${g.type==='select'?'display:none':''}">
+            <label>测试间隔 (Interval / s)</label>
+            <input type="number" id="m-group-interval" value="${g.interval || 300}">
+        </div>
+        
+        <div class="form-group full-width" style="margin-top: 10px; border-top: 1px dashed #ddd; padding-top: 15px;">
+            <label style="color:var(--primary); font-size:0.9rem; font-weight: 600;">✨ 智能节点筛选器</label>
+            
+            <div style="font-size:0.8rem; margin:8px 0 4px 0; color:#666; font-weight: 600;">1. 快速选择地区:</div>
+            <div class="filter-tags" id="tags-regions">
+                ${regions.map(r => `<div class="filter-tag" data-val="${r.key}">${r.label}</div>`).join('')}
             </div>
-            <div class="form-group">
-                <label>类型 (Type)</label>
-                <select id="m-group-type">
-                    <option value="select" ${g.type==='select'?'selected':''}>select (手动选择)</option>
-                    <option value="url-test" ${g.type==='url-test'?'selected':''}>url-test (自动测速)</option>
-                    <option value="fallback" ${g.type==='fallback'?'selected':''}>fallback (故障转移)</option>
-                    <option value="load-balance" ${g.type==='load-balance'?'selected':''}>load-balance (负载均衡)</option>
-                </select>
+            
+            <div style="font-size:0.8rem; margin:8px 0 4px 0; color:#666; font-weight: 600;">2. 快速选择节点来源:</div>
+            <div class="filter-tags" id="tags-sources">
+                ${Array.from(airportNames).map(name => `<div class="filter-tag" data-val="\\[${name}\\]">✈️ ${name}</div>`).join('')}
+                <div class="filter-tag" data-val="^(?!\\[.*?\\])">🌐 自建节点 (无前缀)</div>
             </div>
-            <div class="form-group full-width">
-                <label>包含节点 (Proxies) - 每行一个</label>
-                <textarea id="m-group-proxies" rows="4">${Array.isArray(g.proxies)?g.proxies.join('\n'):''}</textarea>
-            </div>
-            <div class="form-group">
-                <label>测试链接 (URL)</label>
-                <input type="text" id="m-group-url" value="${g.url || 'http://www.gstatic.com/generate_204'}">
-            </div>
-            <div class="form-group">
-                <label>测试间隔 (Interval / s)</label>
-                <input type="number" id="m-group-interval" value="${g.interval || 300}">
+            
+            <div style="font-size:0.8rem; margin:8px 0 4px 0; color:#666; font-weight: 600;">底层正则表达式 (可手动修改):</div>
+            <input type="text" id="m-group-filter" value="${g.filter || ''}" placeholder="例如: (?i)hk|香港">
+        </div>
+        
+        <div class="form-group full-width">
+            <label style="display:flex; justify-content:space-between; align-items:center;">
+                <span>3. 包含节点预览 (手动微调)</span>
+                <span id="preview-count" style="color:var(--primary);"></span>
+            </label>
+            <div class="preview-list" id="m-group-preview">
             </div>
         </div>
     `;
     openModal(index >= 0 ? '编辑代理组' : '新建代理组', html, () => {
         g.name = document.getElementById('m-group-name').value.trim();
         g.type = document.getElementById('m-group-type').value;
-        g.proxies = document.getElementById('m-group-proxies').value.split('\n').map(s=>s.trim()).filter(s=>s);
         if (g.type !== 'select') {
             g.url = document.getElementById('m-group-url').value.trim();
             g.interval = parseInt(document.getElementById('m-group-interval').value) || 300;
-        } else { delete g.url; delete g.interval; }
+        } else {
+            delete g.url;
+            delete g.interval;
+        }
+        
+        g.filter = document.getElementById('m-group-filter').value.trim();
+        if (!g.filter) delete g.filter;
+        
+        let checked = [];
+        document.querySelectorAll('#m-group-preview input[type="checkbox"]').forEach(cb => {
+            if (cb.checked) checked.push(cb.value);
+        });
+        
+        let manualOnly = [];
+        if (g.filter) {
+            try {
+                let re = new RegExp(g.filter, 'i');
+                checked.forEach(p => {
+                    if (!re.test(p)) manualOnly.push(p);
+                });
+            } catch(e) { manualOnly = checked; }
+        } else {
+            manualOnly = checked;
+        }
+        
+        g.proxies = manualOnly.length ? manualOnly : [];
+        if (!g.proxies.length && !g.filter) delete g.proxies;
         
         if (!state.templateObj['proxy-groups']) state.templateObj['proxy-groups'] = [];
         if (index >= 0) state.templateObj['proxy-groups'][index] = g;
@@ -445,6 +579,96 @@ window.editGroup = function(index) {
         closeModal();
         saveTemplateObj();
     });
+
+    document.getElementById('m-group-type').addEventListener('change', (e) => {
+        let isSelect = e.target.value === 'select';
+        document.getElementById('wrap-group-url').style.display = isSelect ? 'none' : 'block';
+        document.getElementById('wrap-group-interval').style.display = isSelect ? 'none' : 'block';
+    });
+    
+    const filterInput = document.getElementById('m-group-filter');
+    const previewBox = document.getElementById('m-group-preview');
+    const previewCount = document.getElementById('preview-count');
+    
+    let activeRegions = new Set();
+    let activeSources = new Set();
+    
+    function updateFilterInput() {
+        let parts = [];
+        if (activeRegions.size > 0) parts.push(`(${Array.from(activeRegions).join('|')})`);
+        if (activeSources.size > 0) parts.push(`(${Array.from(activeSources).join('|')})`);
+        
+        let finalRe = '';
+        if (parts.length === 2) finalRe = `(?i)(?=.*${parts[0]})(?=.*${parts[1]})`;
+        else if (parts.length === 1) finalRe = `(?i)${parts[0]}`;
+        
+        filterInput.value = finalRe;
+        renderPreview();
+    }
+    
+    document.querySelectorAll('#tags-regions .filter-tag').forEach(tag => {
+        tag.addEventListener('click', () => {
+            tag.classList.toggle('active');
+            let val = tag.getAttribute('data-val');
+            if (tag.classList.contains('active')) activeRegions.add(val);
+            else activeRegions.delete(val);
+            updateFilterInput();
+        });
+    });
+    
+    document.querySelectorAll('#tags-sources .filter-tag').forEach(tag => {
+        tag.addEventListener('click', () => {
+            tag.classList.toggle('active');
+            let val = tag.getAttribute('data-val');
+            if (tag.classList.contains('active')) activeSources.add(val);
+            else activeSources.delete(val);
+            updateFilterInput();
+        });
+    });
+    
+    filterInput.addEventListener('input', () => {
+        document.querySelectorAll('.filter-tag').forEach(t => t.classList.remove('active'));
+        activeRegions.clear();
+        activeSources.clear();
+        renderPreview();
+    });
+    
+    function renderPreview() {
+        let filterRe = null;
+        if (filterInput.value.trim()) {
+            try { filterRe = new RegExp(filterInput.value.trim(), 'i'); } 
+            catch(e) {}
+        }
+        
+        let proxyNames = ['DIRECT', 'REJECT'];
+        state.allProxies.forEach(p => { if (!proxyNames.includes(p.name)) proxyNames.push(p.name); });
+        
+        let html = '';
+        let matchedCount = 0;
+        
+        proxyNames.forEach(name => {
+            let isMatchedByFilter = filterRe ? filterRe.test(name) : false;
+            let isManuallySelected = manualProxies.includes(name);
+            let isChecked = isMatchedByFilter || isManuallySelected;
+            
+            if (isChecked) matchedCount++;
+            
+            let labelStyle = isMatchedByFilter ? 'color: var(--primary); font-weight:600;' : '';
+            let emojiName = getFlagEmoji(name);
+            
+            html += `
+                <label class="preview-item">
+                    <input type="checkbox" value="${name}" ${isChecked ? 'checked' : ''}>
+                    <span style="${labelStyle}">${emojiName}</span>
+                </label>
+            `;
+        });
+        
+        previewBox.innerHTML = html;
+        previewCount.innerText = `选中 ${matchedCount} 个`;
+    }
+    
+    renderPreview();
 };
 document.getElementById('btn-add-group').addEventListener('click', () => editGroup(-1));
 

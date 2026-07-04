@@ -93,9 +93,12 @@
 
                 <!-- 机场订阅 -->
                 <div class="section-panel" id="panel-airports">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <h2 style="font-size:1.2rem; font-weight:600;">✈️ 机场订阅管理</h2>
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;">
                         <div>
+                            <h2 style="font-size:1.2rem; font-weight:600;">✈️ 机场订阅管理</h2>
+                            <span style="font-size:0.8rem; color:#888;">(勾选左侧选框可配合上方红色按钮批量删除)</span>
+                        </div>
+                        <div style="margin-top:8px;">
                             <button class="btn btn-danger" id="btn-bulk-delete-airports">🗑️ 批量删除</button>
                             <button class="btn btn-primary" id="btn-add-airport" style="margin-left:8px;">➕ 添加机场</button>
                         </div>
@@ -108,9 +111,12 @@
 
                 <!-- 代理组 (Proxy Groups) -->
                 <div class="section-panel" id="panel-groups">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <h2 style="font-size:1.2rem; font-weight:600;">📁 代理组管理 (Proxy Groups)</h2>
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;">
                         <div>
+                            <h2 style="font-size:1.2rem; font-weight:600;">📁 代理组管理 (Proxy Groups)</h2>
+                            <span style="font-size:0.8rem; color:#888;">(勾选左侧选框可批量删除)</span>
+                        </div>
+                        <div style="margin-top:8px;">
                             <button class="btn btn-danger" id="btn-bulk-delete-groups">🗑️ 批量删除</button>
                             <button class="btn btn-primary" id="btn-add-group" style="margin-left:8px;">➕ 添加代理组</button>
                         </div>
@@ -123,9 +129,12 @@
 
                 <!-- 自建节点 (Custom Nodes) -->
                 <div class="section-panel" id="panel-nodes">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <h2 style="font-size:1.2rem; font-weight:600;">🌐 自建节点管理</h2>
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;">
                         <div>
+                            <h2 style="font-size:1.2rem; font-weight:600;">🌐 自建节点管理</h2>
+                            <span style="font-size:0.8rem; color:#888;">(勾选左侧选框可批量删除)</span>
+                        </div>
+                        <div style="margin-top:8px;">
                             <button class="btn btn-danger" id="btn-bulk-delete-nodes" style="margin-right:8px;">🗑️ 批量删除</button>
                             <button class="btn btn-primary" id="btn-add-node" style="margin-right:8px;">➕ 添加节点</button>
                             <button class="btn btn-success" id="btn-import-nodes">📥 YAML导入</button>
@@ -139,9 +148,12 @@
 
                 <!-- 路由规则 (Rules) -->
                 <div class="section-panel" id="panel-rules">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <h2 style="font-size:1.2rem; font-weight:600;">📏 路由规则管理 (Rules)</h2>
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;">
                         <div>
+                            <h2 style="font-size:1.2rem; font-weight:600;">📏 路由规则管理 (Rules)</h2>
+                            <span style="font-size:0.8rem; color:#888;">(勾选左侧选框可批量删除)</span>
+                        </div>
+                        <div style="margin-top:8px;">
                             <button class="btn btn-danger" id="btn-bulk-delete-rules" style="margin-right:8px;">🗑️ 批量删除</button>
                             <button class="btn btn-primary" id="btn-add-rule" style="margin-right:8px;">➕ 添加规则</button>
                             <button class="btn btn-success" id="btn-import-rules">📥 批量导入</button>
