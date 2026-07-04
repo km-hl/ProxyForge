@@ -1,0 +1,29 @@
+port: 7890
+socks-port: 7891
+allow-lan: true
+mode: Rule
+log-level: info
+external-controller: 127.0.0.1:9090
+
+# proxies 留空，将由 ProxyForge 代码自动注入所有机场节点和自建节点
+proxies: []
+
+# proxy-groups 预先定义好，代码会自动将所有节点名称注入到 proxies 列表的最末尾
+proxy-groups:
+  - name: 🚀 节点选择
+    type: select
+    proxies:
+      - ♻️ 自动选择
+      - DIRECT
+      # 此处将被代码注入所有节点名称
+  
+  - name: ♻️ 自动选择
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+    proxies:
+      # 此处将被代码注入所有节点名称
+
+rules:
+  - MATCH,🚀 节点选择
