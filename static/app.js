@@ -558,6 +558,20 @@ if (globalImportBtn) {
                     delete parsed.proxies;
                 }
 
+                let airportCount = 0;
+                if (parsed['proxy-providers'] && typeof parsed['proxy-providers'] === 'object') {
+                    for (const key in parsed['proxy-providers']) {
+                        const provider = parsed['proxy-providers'][key];
+                        if (provider && provider.type === 'http' && provider.url) {
+                            if (!state.airports.includes(provider.url)) {
+                                state.airports.push(provider.url);
+                                airportCount++;
+                            }
+                        }
+                    }
+                    delete parsed['proxy-providers']; // 由 ProxyForge 接管，无需保留原生 provider
+                }
+
                 if (Object.keys(parsed).length > 0) {
                     state.templateObj = Object.assign(state.templateObj, parsed);
                     state.templateRaw = jsyaml.dump(state.templateObj);
@@ -573,6 +587,14 @@ if (globalImportBtn) {
                     });
                     renderNodes();
                 }
+
+                if (airportCount > 0) {
+                    await fetchAuth('/airports', {
+                        method: 'POST',
+                        body: JSON.stringify({ urls: state.airports })
+                    });
+                    renderAirports();
+                }
                 
                 if (Object.keys(parsed).length > 0) {
                     await fetchAuth('/template', {
@@ -582,7 +604,7 @@ if (globalImportBtn) {
                 }
 
                 closeModal();
-                showToast(`全局导入成功！提取 ${nodeCount} 个节点，更新底层配置。`);
+                showToast(`导入成功！提取 ${nodeCount} 个节点，${airportCount} 个机场，并更新底层配置。`);
             } catch (e) { alert('解析或保存失败: ' + e.message); }
         });
 
