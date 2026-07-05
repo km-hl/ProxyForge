@@ -71,8 +71,11 @@
                         <div class="form-grid">
                             <div class="form-group full-width">
                                 <label>您的专属客户端订阅链接</label>
-                                <input type="text" id="sub-link" readonly style="background: #eef1ff; color: var(--primary); font-weight: 500;">
-                                <span class="hint">请将此链接复制并添加到您的 Clash / Mihomo 客户端中。</span>
+                                <div style="display: flex; gap: 10px; margin-bottom: 8px;">
+                                    <input type="text" id="sub-name" placeholder="订阅名称 (例如: ProxyForge)" value="ProxyForge" style="width: 250px;">
+                                    <input type="text" id="sub-link" readonly style="flex-grow: 1; background: #eef1ff; color: var(--primary); font-weight: 500;">
+                                </div>
+                                <span class="hint">请将此链接复制并添加到您的 Clash / Mihomo 客户端中。修改名称后链接会自动更新。</span>
                             </div>
                         </div>
                     </div>

@@ -134,14 +134,11 @@ def fetch_airport_proxies() -> List[Dict[str, Any]]:
         logger.warning("未配置机场订阅链接，跳过拉取。")
         return []
         
-    headers = {"User-Agent": "clash-verge/v1.6.0 clash-meta/1.18.3"}
-    all_proxies = []
-    seen_names = set()
-    
-    for item in urls_data:
+    def fetch_one(item):
         url = item.get("url", "") if isinstance(item, dict) else item
-        if not isinstance(url, str) or not url.strip(): continue
+        if not isinstance(url, str) or not url.strip(): return []
         
+        headers = {"User-Agent": "clash-verge/v1.6.0 clash-meta/1.18.3"}
         logger.info(f"正在从机场拉取节点: {url.strip()}")
         try:
             response = requests.get(url.strip(), headers=headers, timeout=30)
@@ -150,32 +147,38 @@ def fetch_airport_proxies() -> List[Dict[str, Any]]:
             proxies = parse_airport_response(response.text)
             if proxies:
                 logger.info(f"成功从 {url.strip()} 拉取到 {len(proxies)} 个节点")
-                
                 airport_name = item.get("name", "") if isinstance(item, dict) else ""
                 if not airport_name:
                     airport_name = urllib.parse.urlparse(url.strip()).netloc
-                
                 for p in proxies:
                     p["_airport_name"] = airport_name
-                    
-                    original_name = p.get('name', 'node')
-                    name = original_name
-                    # Handle name collisions
-                    collision_count = 1
-                    while name in seen_names:
-                        name = f"{original_name} ({airport_name})"
-                        if name in seen_names:
-                            name = f"{original_name} ({airport_name} {collision_count})"
-                            collision_count += 1
-                            
-                    seen_names.add(name)
-                    p["name"] = name
-                        
-                all_proxies.extend(proxies)
+                return proxies
             else:
                 logger.warning(f"机场订阅内容解析成功，但未找到代理节点: {url.strip()}")
         except Exception as e:
             logger.error(f"拉取机场订阅失败 {url.strip()}: {e}")
+        return []
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        results = list(executor.map(fetch_one, urls_data))
+        
+    all_proxies = []
+    seen_names = set()
+    
+    for proxies in results:
+        for p in proxies:
+            original_name = p.get('name', 'node')
+            name = original_name
+            airport_name = p.get("_airport_name", "")
+            collision_count = 1
+            while name in seen_names:
+                name = f"{original_name} ({airport_name})"
+                if name in seen_names:
+                    name = f"{original_name} ({airport_name} {collision_count})"
+                    collision_count += 1
+            seen_names.add(name)
+            p["name"] = name
+            all_proxies.append(p)
             
     return all_proxies
 
@@ -312,7 +315,10 @@ def get_airport_proxies_cached() -> List[Dict[str, Any]]:
 # ================= 订阅下发接口 (对外公开) =================
 
 @app.get("/sub", response_class=PlainTextResponse)
-def get_subscription(token: str = Query(..., description="安全验证 Token")):
+def get_subscription(
+    token: str = Query(..., description="安全验证 Token"),
+    name: str = Query("ProxyForge", description="自定义订阅名称")
+):
     if token != SECRET_TOKEN:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -385,8 +391,16 @@ def get_subscription(token: str = Query(..., description="安全验证 Token")):
             for field in ["include-all", "filter", "use"]:
                 if field in group:
                     del group[field]
-
-    return yaml.dump(template_config, allow_unicode=True, sort_keys=False)
+    yaml_content = yaml.dump(template_config, allow_unicode=True, sort_keys=False)
+    
+    encoded_name = urllib.parse.quote(name)
+    headers = {
+        "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}.yaml",
+        "Profile-Title": name,
+        "Subscription-Userinfo": "upload=0; download=0; total=1073741824000; expire=253402300799"
+    }
+    
+    return Response(content=yaml_content, media_type="text/plain", headers=headers)
 
 # ================= 后台管理 API 接口 (需鉴权) =================
 

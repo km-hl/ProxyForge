@@ -144,7 +144,12 @@ async function loadData() {
         const configRes = await fetchAuth('/config');
         state.config = await configRes.json();
         secretToken.value = state.config.SECRET_TOKEN;
-        subLink.value = `${window.location.origin}/sub?token=${state.config.SECRET_TOKEN}`;
+        const updateSubLink = () => {
+            const name = encodeURIComponent(document.getElementById('sub-name').value.trim() || 'ProxyForge');
+            subLink.value = `${window.location.origin}/sub?token=${state.config.SECRET_TOKEN}&name=${name}`;
+        };
+        updateSubLink();
+        document.getElementById('sub-name').addEventListener('input', updateSubLink);
 
         const airportsRes = await fetchAuth('/airports');
         let rawAirports = (await airportsRes.json()).urls || [];
@@ -1060,7 +1065,8 @@ saveConfigBtn.addEventListener('click', async () => {
             body: JSON.stringify(payload)
         });
         showToast('密钥已保存');
-        subLink.value = `${window.location.origin}/sub?token=${payload.SECRET_TOKEN}`;
+        const name = encodeURIComponent(document.getElementById('sub-name').value.trim() || 'ProxyForge');
+        subLink.value = `${window.location.origin}/sub?token=${payload.SECRET_TOKEN}&name=${name}`;
         if (payload.SECRET_TOKEN !== currentToken) {
             currentToken = payload.SECRET_TOKEN;
             localStorage.setItem('proxyforge_token', currentToken);
