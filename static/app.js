@@ -363,6 +363,8 @@ function renderNodes() {
                     <div class="item-detail">${n.server || ''} ${n.port ? ':'+n.port : ''}</div>
                 </div>
                 <div class="item-actions">
+                    ${index > 0 ? `<button class="btn btn-sm" onclick="moveNodeUp(${index})" title="上移">⬆️</button>` : ''}
+                    ${index < state.nodes.length - 1 ? `<button class="btn btn-sm" onclick="moveNodeDown(${index})" title="下移">⬇️</button>` : ''}
                     <button class="btn btn-sm" onclick="editNode(${index})">编辑</button>
                     <button class="btn btn-sm btn-danger" onclick="deleteNode(${index})">删除</button>
                 </div>
@@ -883,6 +885,24 @@ document.getElementById('btn-import-nodes').addEventListener('click', () => {
 window.deleteNode = function(index) {
     state.nodes.splice(index, 1);
     saveNodesObj();
+};
+
+window.moveNodeUp = function(index) {
+    if (index > 0) {
+        let temp = state.nodes[index];
+        state.nodes[index] = state.nodes[index - 1];
+        state.nodes[index - 1] = temp;
+        saveNodesObj();
+    }
+};
+
+window.moveNodeDown = function(index) {
+    if (index < state.nodes.length - 1) {
+        let temp = state.nodes[index];
+        state.nodes[index] = state.nodes[index + 1];
+        state.nodes[index + 1] = temp;
+        saveNodesObj();
+    }
 };
 
 document.getElementById('btn-bulk-delete-nodes').addEventListener('click', () => {
