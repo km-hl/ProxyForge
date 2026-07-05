@@ -155,20 +155,42 @@
 
                 <!-- 路由规则 (Rules) -->
                 <div class="section-panel" id="panel-rules">
-                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;">
-                        <div>
-                            <h2 style="font-size:1.2rem; font-weight:600;">📏 路由规则管理 (Rules)</h2>
-                            <span style="font-size:0.8rem; color:#888;">(勾选左侧选框可批量删除)</span>
+                    <!-- Rule Providers Section -->
+                    <div style="margin-bottom: 30px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;">
+                            <div>
+                                <h2 style="font-size:1.1rem; font-weight:600; color:var(--primary);">📦 规则集 (Rule Providers)</h2>
+                                <span style="font-size:0.8rem; color:#888;">(用于动态下载和管理大批量远程分流规则)</span>
+                            </div>
+                            <div style="margin-top:8px;">
+                                <button class="btn btn-primary" id="btn-add-rule-provider">➕ 添加规则集</button>
+                            </div>
                         </div>
-                        <div style="margin-top:8px;">
-                            <button class="btn btn-danger" id="btn-bulk-delete-rules" style="margin-right:8px;">🗑️ 批量删除</button>
-                            <button class="btn btn-primary" id="btn-add-rule" style="margin-right:8px;">➕ 添加规则</button>
-                            <button class="btn btn-success" id="btn-import-rules">📥 批量导入</button>
+                        <div id="rule-providers-list" style="margin-top: 15px;">
+                            <!-- Rendered by JS -->
+                            <div class="empty-state">加载中...</div>
                         </div>
                     </div>
-                    <div id="rules-list">
-                        <!-- Rendered by JS -->
-                        <div class="empty-state">加载中...</div>
+
+                    <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+
+                    <!-- Rules Section -->
+                    <div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;">
+                            <div>
+                                <h2 style="font-size:1.1rem; font-weight:600; color:var(--primary);">📏 分流规则 (Rules)</h2>
+                                <span style="font-size:0.8rem; color:#888;">(支持拖拽排序，从上到下按顺序匹配)</span>
+                            </div>
+                            <div style="margin-top:8px;">
+                                <button class="btn btn-danger" id="btn-bulk-delete-rules" style="margin-right:8px;">🗑️ 批量删除</button>
+                                <button class="btn btn-primary" id="btn-add-rule" style="margin-right:8px;">➕ 添加规则</button>
+                                <button class="btn btn-success" id="btn-import-rules">📥 批量导入</button>
+                            </div>
+                        </div>
+                        <div id="rules-list" style="margin-top: 15px;">
+                            <!-- Rendered by JS -->
+                            <div class="empty-state">加载中...</div>
+                        </div>
                     </div>
                 </div>
 

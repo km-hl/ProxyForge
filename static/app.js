@@ -173,6 +173,7 @@ async function loadData() {
         renderNodes();
         renderGroups();
         renderRules();
+renderRuleProviders();
         rulesEditor.value = state.templateRaw;
 
         // Async fetch airport info
@@ -404,6 +405,35 @@ function renderNodes() {
     if (window.twemoji) twemoji.parse(list, { folder: 'svg', ext: '.svg' });
 }
 
+// === Render: Rule Providers ===
+function renderRuleProviders() {
+    const list = document.getElementById('rule-providers-list');
+    let providers = state.templateObj['rule-providers'] || {};
+    let keys = Object.keys(providers);
+    if (!keys.length) {
+        list.innerHTML = `<div class="empty-state">暂无规则集</div>`;
+        return;
+    }
+    let html = '';
+    keys.forEach(key => {
+        let p = providers[key];
+        html += `
+            <div class="list-item">
+                <span class="type-badge badge-node">${p.type || 'http'}</span>
+                <div class="item-info">
+                    <div class="item-name">${key}</div>
+                    <div class="item-detail">${p.url ? p.url : (p.path || '')}</div>
+                </div>
+                <div class="item-actions">
+                    <button class="btn btn-sm" onclick="editRuleProvider('${key}')">编辑</button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteRuleProvider('${key}')">删除</button>
+                </div>
+            </div>
+        `;
+    });
+    list.innerHTML = html;
+}
+
 // === Render: Rules ===
 function renderRules() {
     const list = document.getElementById('rules-list');
@@ -414,17 +444,40 @@ function renderRules() {
     }
     let html = '';
     rules.forEach((r, index) => {
+        let parts = r.split(',');
+        let type = parts[0] || '';
+        
+        let typeColor = '#6c757d';
+        if (type.startsWith('DOMAIN')) typeColor = '#007bff';
+        else if (type.startsWith('IP-')) typeColor = '#28a745';
+        else if (type === 'GEOIP') typeColor = '#17a2b8';
+        else if (type === 'MATCH') typeColor = '#dc3545';
+        else if (type === 'RULE-SET') typeColor = '#fd7e14';
+        
         html += `
-            <div class="list-item">
+            <div class="list-item" draggable="true" data-index="${index}"
+                 ondragstart="handleRuleDragStart(event, ${index})"
+                 ondragover="handleRuleDragOver(event)"
+                 ondragenter="handleRuleDragEnter(event)"
+                 ondragleave="handleRuleDragLeave(event)"
+                 ondrop="handleRuleDrop(event, ${index})"
+                 ondragend="handleRuleDragEnd(event)">
+                <span class="drag-handle" style="cursor: grab; margin-right: 10px; color: #999;">⠿</span>
                 ${getCheckboxHTML('cb-rule', index)}
-                <div class="item-info" style="font-family: monospace;">${r}</div>
+                <span class="type-badge" style="background:${typeColor}; min-width: 90px; text-align: center;">${type}</span>
+                <div class="item-info" style="font-family: monospace; display:flex; align-items:center;">
+                    <span style="font-weight:600; color:#333; margin-right:8px;">${parts.slice(1, -1).join(',')}</span>
+                    <span style="color:#888; font-size:0.85em;">➔ ${parts[parts.length-1] || ''}</span>
+                </div>
                 <div class="item-actions">
+                    <button class="btn btn-sm" onclick="editRule(${index})">编辑</button>
                     <button class="btn btn-sm btn-danger" onclick="deleteRule(${index})">删除</button>
                 </div>
             </div>
         `;
     });
     list.innerHTML = html;
+    if (window.twemoji) twemoji.parse(list, { folder: 'svg', ext: '.svg' });
 }
 
 // === Actions: Airports ===
@@ -1258,6 +1311,7 @@ async function saveTemplateObj() {
     rulesEditor.value = state.templateRaw;
     renderGroups();
     renderRules();
+renderRuleProviders();
     try {
         await fetchAuth('/template', {
             method: 'POST',
@@ -1314,12 +1368,14 @@ if (globalImportBtn) {
                     rulesEditor.value = state.templateRaw;
                     renderGroups();
                     renderRules();
+renderRuleProviders();
                 } else {
                     state.templateObj = {};
                     state.templateRaw = '';
                     rulesEditor.value = '';
                     renderGroups();
                     renderRules();
+renderRuleProviders();
                 }
 
                 // Save everything
@@ -1392,6 +1448,7 @@ saveRulesBtn.addEventListener('click', async () => {
         state.templateRaw = newYaml;
         renderGroups();
         renderRules();
+renderRuleProviders();
         await fetchAuth('/template', {
             method: 'POST',
             body: JSON.stringify({ content: newYaml })
@@ -1399,3 +1456,234 @@ saveRulesBtn.addEventListener('click', async () => {
         showToast('底层配置已覆盖保存');
     } catch (e) { showToast('YAML解析或保存失败', 'error'); }
 });
+
+// === Actions: Rules & Rule Providers ===
+window.deleteRule = function(index) {
+    state.templateObj['rules'].splice(index, 1);
+    saveTemplateObj();
+};
+
+document.getElementById('btn-bulk-delete-rules').addEventListener('click', () => {
+    let indices = getCheckedIndices('cb-rule');
+    if(!indices.length) return alert('请先勾选要删除的规则');
+    if(confirm(`确定删除这 ${indices.length} 项吗？`)) {
+        indices.forEach(i => state.templateObj['rules'].splice(i, 1));
+        saveTemplateObj();
+    }
+});
+
+window.deleteRuleProvider = function(key) {
+    if(confirm(`确定删除规则集 [${key}] 吗？`)) {
+        delete state.templateObj['rule-providers'][key];
+        saveTemplateObj();
+    }
+};
+
+const RULE_TYPES = ['DOMAIN-SUFFIX', 'DOMAIN-KEYWORD', 'DOMAIN', 'IP-CIDR', 'GEOIP', 'MATCH', 'RULE-SET'];
+
+window.editRule = function(index) {
+    let isNew = index < 0;
+    let r = isNew ? '' : state.templateObj['rules'][index];
+    let parts = r ? r.split(',') : [];
+    
+    let type = parts[0] || 'DOMAIN-SUFFIX';
+    let payload = '';
+    let target = '';
+    if (type === 'MATCH') {
+        target = parts[1] || '';
+    } else {
+        payload = parts[1] || '';
+        target = parts[2] || '';
+    }
+    
+    let targetsHtml = ['DIRECT', 'REJECT'];
+    let proxyGroups = state.templateObj['proxy-groups'] || [];
+    proxyGroups.forEach(g => { if(g.name) targetsHtml.push(g.name); });
+    
+    let html = `
+        <div class="form-group full-width">
+            <label>规则类型 (Type)</label>
+            <select id="m-rule-type">
+                ${RULE_TYPES.map(t => `<option value="${t}" ${t===type?'selected':''}>${t}</option>`).join('')}
+            </select>
+        </div>
+        <div class="form-group full-width" id="m-rule-payload-group" style="${type==='MATCH' ? 'display:none;' : ''}">
+            <label>匹配内容 (Payload)</label>
+            <input type="text" id="m-rule-payload" value="${payload}" placeholder="如 google.com 或 reject_list">
+        </div>
+        <div class="form-group full-width">
+            <label>目标策略 (Target)</label>
+            <select id="m-rule-target">
+                ${targetsHtml.map(t => `<option value="${t}" ${t===target?'selected':''}>${t}</option>`).join('')}
+            </select>
+        </div>
+    `;
+    openModal(isNew ? '新建规则' : '编辑规则', html, () => {
+        let nType = document.getElementById('m-rule-type').value;
+        let nPayload = document.getElementById('m-rule-payload').value.trim();
+        let nTarget = document.getElementById('m-rule-target').value;
+        
+        let newRule = '';
+        if (nType === 'MATCH') {
+            newRule = `${nType},${nTarget}`;
+        } else {
+            if(!nPayload) return alert('请输入匹配内容');
+            newRule = `${nType},${nPayload},${nTarget}`;
+        }
+        
+        if (!state.templateObj['rules']) state.templateObj['rules'] = [];
+        if (isNew) {
+            // MATCH 规则应始终在最后
+            let matchIndex = state.templateObj['rules'].findIndex(x => x.startsWith('MATCH,'));
+            if (matchIndex >= 0 && nType !== 'MATCH') {
+                state.templateObj['rules'].splice(matchIndex, 0, newRule);
+            } else {
+                state.templateObj['rules'].push(newRule);
+            }
+        } else {
+            state.templateObj['rules'][index] = newRule;
+        }
+        saveTemplateObj();
+        closeModal();
+    });
+    
+    document.getElementById('m-rule-type').addEventListener('change', function() {
+        if(this.value === 'MATCH') document.getElementById('m-rule-payload-group').style.display = 'none';
+        else document.getElementById('m-rule-payload-group').style.display = 'block';
+    });
+};
+
+document.getElementById('btn-add-rule').addEventListener('click', () => editRule(-1));
+
+window.editRuleProvider = function(keyToEdit) {
+    let isNew = !keyToEdit;
+    let p = isNew ? { type: 'http', behavior: 'domain', interval: 86400 } : state.templateObj['rule-providers'][keyToEdit];
+    
+    let html = `
+        <div class="form-group full-width">
+            <label>规则集名称 (Name)</label>
+            <input type="text" id="m-rp-name" value="${isNew ? '' : keyToEdit}" ${isNew ? '' : 'readonly'} placeholder="英文，如 reject_list">
+        </div>
+        <div class="form-group">
+            <label>类型 (Type)</label>
+            <select id="m-rp-type">
+                <option value="http" ${p.type==='http'?'selected':''}>http (远程)</option>
+                <option value="file" ${p.type==='file'?'selected':''}>file (本地)</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>行为 (Behavior)</label>
+            <select id="m-rp-behavior">
+                <option value="domain" ${p.behavior==='domain'?'selected':''}>domain</option>
+                <option value="ipcidr" ${p.behavior==='ipcidr'?'selected':''}>ipcidr</option>
+                <option value="classical" ${p.behavior==='classical'?'selected':''}>classical</option>
+            </select>
+        </div>
+        <div class="form-group full-width" id="m-rp-url-group" style="${p.type==='file'?'display:none;':''}">
+            <label>下载地址 (URL)</label>
+            <input type="text" id="m-rp-url" value="${p.url || ''}" placeholder="https://...">
+        </div>
+        <div class="form-group full-width">
+            <label>本地路径 (Path)</label>
+            <input type="text" id="m-rp-path" value="${p.path || './ruleset/' + (isNew ? 'my_ruleset.yaml' : keyToEdit + '.yaml')}" placeholder="./ruleset/...">
+        </div>
+        <div class="form-group full-width" id="m-rp-interval-group" style="${p.type==='file'?'display:none;':''}">
+            <label>更新间隔 (Interval 单位:秒)</label>
+            <input type="number" id="m-rp-interval" value="${p.interval || 86400}">
+        </div>
+    `;
+    openModal(isNew ? '添加规则集' : '编辑规则集', html, () => {
+        let nName = document.getElementById('m-rp-name').value.trim();
+        if(!nName) return alert('请输入名称');
+        
+        let nType = document.getElementById('m-rp-type').value;
+        let nBehavior = document.getElementById('m-rp-behavior').value;
+        let nPath = document.getElementById('m-rp-path').value.trim();
+        
+        if (!state.templateObj['rule-providers']) state.templateObj['rule-providers'] = {};
+        let obj = {
+            type: nType,
+            behavior: nBehavior,
+            path: nPath
+        };
+        
+        if (nType === 'http') {
+            obj.url = document.getElementById('m-rp-url').value.trim();
+            obj.interval = parseInt(document.getElementById('m-rp-interval').value) || 86400;
+        }
+        
+        state.templateObj['rule-providers'][nName] = obj;
+        saveTemplateObj();
+        closeModal();
+    });
+    
+    document.getElementById('m-rp-type').addEventListener('change', function() {
+        let isHttp = this.value === 'http';
+        document.getElementById('m-rp-url-group').style.display = isHttp ? 'block' : 'none';
+        document.getElementById('m-rp-interval-group').style.display = isHttp ? 'block' : 'none';
+    });
+};
+
+document.getElementById('btn-add-rule-provider').addEventListener('click', () => editRuleProvider(null));
+
+document.getElementById('btn-import-rules').addEventListener('click', () => {
+    let html = `
+        <div class="form-group full-width">
+            <label>粘贴分流规则 (一行一个)</label>
+            <textarea id="m-import-rules" style="height:200px" placeholder="DOMAIN-SUFFIX,google.com,🚀 节点选择\nIP-CIDR,1.1.1.1/32,DIRECT"></textarea>
+        </div>
+    `;
+    openModal('批量导入规则', html, () => {
+        let lines = document.getElementById('m-import-rules').value.split('\n').map(l=>l.trim()).filter(l=>l && l.includes(','));
+        if(lines.length) {
+            if (!state.templateObj['rules']) state.templateObj['rules'] = [];
+            state.templateObj['rules'] = lines.concat(state.templateObj['rules']);
+            saveTemplateObj();
+        }
+        closeModal();
+    });
+});
+
+// === Rule Drag and Drop ===
+let draggedRuleIndex = -1;
+
+window.handleRuleDragStart = (e, index) => {
+    draggedRuleIndex = index;
+    e.dataTransfer.effectAllowed = 'move';
+    e.currentTarget.style.opacity = '0.4';
+};
+
+window.handleRuleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    return false;
+};
+
+window.handleRuleDragEnter = (e) => {
+    e.preventDefault();
+    e.currentTarget.classList.add('drag-over');
+};
+
+window.handleRuleDragLeave = (e) => {
+    e.currentTarget.classList.remove('drag-over');
+};
+
+window.handleRuleDrop = (e, targetIndex) => {
+    e.stopPropagation();
+    e.currentTarget.classList.remove('drag-over');
+    if (draggedRuleIndex !== targetIndex && draggedRuleIndex !== -1) {
+        let rules = state.templateObj['rules'];
+        const item = rules.splice(draggedRuleIndex, 1)[0];
+        rules.splice(targetIndex, 0, item);
+        saveTemplateObj();
+    }
+    return false;
+};
+
+window.handleRuleDragEnd = (e) => {
+    e.currentTarget.style.opacity = '1';
+    document.querySelectorAll('#rules-list .list-item').forEach(item => {
+        item.classList.remove('drag-over');
+    });
+    draggedRuleIndex = -1;
+};
