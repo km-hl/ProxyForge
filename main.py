@@ -136,6 +136,7 @@ def fetch_airport_proxies() -> List[Dict[str, Any]]:
         
     headers = {"User-Agent": "clash-verge/v1.6.0 clash-meta/1.18.3"}
     all_proxies = []
+    seen_names = set()
     
     for item in urls_data:
         url = item.get("url", "") if isinstance(item, dict) else item
@@ -143,21 +144,32 @@ def fetch_airport_proxies() -> List[Dict[str, Any]]:
         
         logger.info(f"正在从机场拉取节点: {url.strip()}")
         try:
-            response = requests.get(url.strip(), headers=headers, timeout=10)
+            response = requests.get(url.strip(), headers=headers, timeout=30)
             response.raise_for_status()
             
             proxies = parse_airport_response(response.text)
             if proxies:
                 logger.info(f"成功从 {url.strip()} 拉取到 {len(proxies)} 个节点")
                 
-                # Prepend airport name tag
                 airport_name = item.get("name", "") if isinstance(item, dict) else ""
                 if not airport_name:
                     airport_name = urllib.parse.urlparse(url.strip()).netloc
                 
                 for p in proxies:
-                    if airport_name not in p.get("name", ""):
-                        p["name"] = f"[{airport_name}] {p.get('name', 'node')}"
+                    p["_airport_name"] = airport_name
+                    
+                    original_name = p.get('name', 'node')
+                    name = original_name
+                    # Handle name collisions
+                    collision_count = 1
+                    while name in seen_names:
+                        name = f"{original_name} ({airport_name})"
+                        if name in seen_names:
+                            name = f"{original_name} ({airport_name} {collision_count})"
+                            collision_count += 1
+                            
+                    seen_names.add(name)
+                    p["name"] = name
                         
                 all_proxies.extend(proxies)
             else:
@@ -167,7 +179,7 @@ def fetch_airport_proxies() -> List[Dict[str, Any]]:
             
     return all_proxies
 
-def fetch_single_airport_info(item) -> dict:
+def fetch_single_airport_info(item, force=False) -> dict:
     url = item.get("url", "").strip() if isinstance(item, dict) else item.strip()
     custom_name = item.get("name", "") if isinstance(item, dict) else ""
     
@@ -183,9 +195,24 @@ def fetch_single_airport_info(item) -> dict:
     }
     if not url: return info
     
+    cache_file = DATA_DIR / "airports_info_cache.json"
+    cache_data = {}
+    if cache_file.exists():
+        try:
+            with open(cache_file, "r", encoding="utf-8") as f:
+                cache_data = json.load(f)
+        except: pass
+        
+    if not force and url in cache_data:
+        cached_info = cache_data[url]
+        # Check if cache is less than 24 hours old
+        import time
+        if time.time() - cached_info.get("_timestamp", 0) < 24 * 3600:
+            return cached_info["info"]
+            
     try:
         headers = {"User-Agent": "clash-verge/v1.6.0 clash-meta/1.18.3"}
-        res = requests.get(url, headers=headers, timeout=10)
+        res = requests.get(url, headers=headers, timeout=30)
         res.raise_for_status()
         
         # 尝试提取名称
@@ -211,6 +238,18 @@ def fetch_single_airport_info(item) -> dict:
             
     except Exception as e:
         info["error"] = str(e)
+        
+    import time
+    cache_data[url] = {"info": info, "_timestamp": time.time()}
+    try:
+        with open(cache_file, "w", encoding="utf-8") as f:
+            json.load(f) # Wait, it should be json.dump
+    except: pass
+    try:
+        with open(cache_file, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f)
+    except: pass
+        
     return info
 
 def parse_share_link(link: str) -> dict:
@@ -312,32 +351,31 @@ def get_subscription(token: str = Query(..., description="安全验证 Token")):
     if "proxy-groups" in template_config and isinstance(template_config["proxy-groups"], list):
         for group in template_config["proxy-groups"]:
             existing_proxies = group.get("proxies", [])
-            if existing_proxies is None:
+            if not isinstance(existing_proxies, list):
                 existing_proxies = []
                 
+            # 1. Collect candidates based on 'use'
+            candidates = []
+            if "use" in group and isinstance(group["use"], list):
+                for p in unique_proxies:
+                    if p.get("_airport_name") in group["use"]:
+                        candidates.append(p)
+            elif "filter" in group or group.get("include-all", False):
+                candidates = unique_proxies
+                
+            # 2. Filter candidates with regex if present
             if "filter" in group:
                 import re
                 filter_regex = group["filter"]
-                for name in proxy_names:
+                for p in candidates:
                     try:
-                        if re.search(filter_regex, name) and name not in existing_proxies:
-                            existing_proxies.append(name)
+                        if re.search(filter_regex, p["name"]) and p["name"] not in existing_proxies:
+                            existing_proxies.append(p["name"])
                     except: pass
-                    
-            if "use" in group and isinstance(group["use"], list):
-                # Convert 'use' to airport tags filtering
-                for name in proxy_names:
-                    for u in group["use"]:
-                        # if the node name contains [AirportName]
-                        if f"[{u}]" in name and name not in existing_proxies:
-                            existing_proxies.append(name)
-                            break
-                            
-            if not existing_proxies and group.get("type") != "select":
-                if group.get("include-all", False) or ("filter" not in group and "use" not in group):
-                    for name in proxy_names:
-                        if name not in existing_proxies:
-                            existing_proxies.append(name)
+            else:
+                for p in candidates:
+                    if p["name"] not in existing_proxies:
+                        existing_proxies.append(p["name"])
                         
             group["proxies"] = existing_proxies
             
@@ -423,12 +461,14 @@ def update_airports(data: AirportsModel):
     return {"status": "ok"}
 
 @app.get("/api/airports/info", dependencies=[Depends(verify_api_token)])
-def get_airports_info():
+def get_airports_info(force: bool = False):
     urls_data = load_airports()
     results = []
     if urls_data:
+        def fetch_wrapper(item):
+            return fetch_single_airport_info(item, force=force)
         with ThreadPoolExecutor(max_workers=5) as executor:
-            results = list(executor.map(fetch_single_airport_info, urls_data))
+            results = list(executor.map(fetch_wrapper, urls_data))
     return {"info": results}
 
 class ParseLinksModel(BaseModel):

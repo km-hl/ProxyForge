@@ -464,7 +464,7 @@ async function saveAirportsObj() {
         });
         showToast('机场配置已保存');
         // Refresh info after saving
-        fetchAuth('/airports/info').then(res => res.json()).then(data => {
+        fetchAuth('/airports/info?force=true').then(res => res.json()).then(data => {
             state.airportsInfo = data.info || [];
             renderAirports();
         });
@@ -486,9 +486,9 @@ window.editGroup = function(index) {
     ];
     
     const airportNames = new Set();
-    state.allProxies.forEach(p => {
-        let match = p.name.match(/^\[(.*?)\]/);
-        if (match) airportNames.add(match[1]);
+    state.airports.forEach(a => {
+        let name = typeof a === 'object' ? a.name : a;
+        if (name) airportNames.add(name);
     });
     
     let manualProxies = Array.isArray(g.proxies) ? g.proxies : [];
@@ -527,8 +527,8 @@ window.editGroup = function(index) {
             
             <div style="font-size:0.8rem; margin:8px 0 4px 0; color:#666; font-weight: 600;">2. 快速选择节点来源:</div>
             <div class="filter-tags" id="tags-sources">
-                ${Array.from(airportNames).map(name => `<div class="filter-tag" data-val="\\[${name}\\]">✈️ ${name}</div>`).join('')}
-                <div class="filter-tag" data-val="^(?!\\[.*?\\])">🌐 自建节点 (无前缀)</div>
+                ${Array.from(airportNames).map(name => `<div class="filter-tag" data-val="${name}">✈️ ${name}</div>`).join('')}
+                <div class="filter-tag" data-val="_custom_nodes_">🌐 自建节点</div>
             </div>
             
             <div style="font-size:0.8rem; margin:8px 0 4px 0; color:#666; font-weight: 600;">底层正则表达式 (可手动修改):</div>
@@ -563,20 +563,44 @@ window.editGroup = function(index) {
             if (cb.checked) checked.push(cb.value);
         });
         
+        // Exclude nodes that are automatically matched by the filter/use combination
         let manualOnly = [];
+        
+        let filterRe = null;
         if (g.filter) {
-            try {
-                let re = new RegExp(g.filter, 'i');
-                checked.forEach(p => {
-                    if (!re.test(p)) manualOnly.push(p);
-                });
-            } catch(e) { manualOnly = checked; }
-        } else {
-            manualOnly = checked;
+            try { filterRe = new RegExp(g.filter, 'i'); } catch(e) {}
         }
         
+        checked.forEach(name => {
+            let p = state.allProxies.find(x => x.name === name);
+            let isAutoMatched = false;
+            
+            if (p) {
+                // If the group has use, node must be from one of the use sources
+                let matchesSource = true;
+                if (activeSources.size > 0) {
+                    let src = p._airport_name || '_custom_nodes_';
+                    if (!activeSources.has(src)) matchesSource = false;
+                }
+                
+                let matchesRegion = true;
+                if (filterRe) {
+                    if (!filterRe.test(name)) matchesRegion = false;
+                }
+                
+                if (matchesSource && matchesRegion && (activeSources.size > 0 || filterRe)) {
+                    isAutoMatched = true;
+                }
+            }
+            
+            if (!isAutoMatched) manualOnly.push(name);
+        });
+        
         g.proxies = manualOnly.length ? manualOnly : [];
-        if (!g.proxies.length && !g.filter) delete g.proxies;
+        if (!g.proxies.length && !g.filter && activeSources.size === 0) delete g.proxies;
+        
+        g.use = Array.from(activeSources);
+        if (g.use.length === 0) delete g.use;
         
         if (!state.templateObj['proxy-groups']) state.templateObj['proxy-groups'] = [];
         if (index >= 0) state.templateObj['proxy-groups'][index] = g;
@@ -600,31 +624,19 @@ window.editGroup = function(index) {
     let activeSources = new Set();
     
     if (g.use && Array.isArray(g.use)) {
-        g.use.forEach(u => activeSources.add(`\\[${u}\\]`));
-        delete g.use; // We migrate it to filter
-        updateFilterInput(); // This sets the tags and filter field
+        g.use.forEach(u => activeSources.add(u));
     }
     
-    // Also try to reverse parse simple regions from filter to activeRegions
-    if (g.filter && !g.use) {
+    if (g.filter) {
         regions.forEach(r => {
             if (g.filter.includes(r.key)) {
                 activeRegions.add(r.key);
-                // Highlight tag visually
                 let tag = document.querySelector(`#tags-regions .filter-tag[data-val="${r.key}"]`);
-                if (tag) tag.classList.add('active');
-            }
-        });
-        airportNames.forEach(name => {
-            if (g.filter.includes(`\\[${name}\\]`)) {
-                activeSources.add(`\\[${name}\\]`);
-                let tag = document.querySelector(`#tags-sources .filter-tag[data-val="\\[${name}\\]"]`);
                 if (tag) tag.classList.add('active');
             }
         });
     }
 
-    // Refresh tags state
     document.querySelectorAll('#tags-sources .filter-tag').forEach(tag => {
         if (activeSources.has(tag.getAttribute('data-val'))) tag.classList.add('active');
     });
@@ -632,11 +644,9 @@ window.editGroup = function(index) {
     function updateFilterInput() {
         let parts = [];
         if (activeRegions.size > 0) parts.push(`(${Array.from(activeRegions).join('|')})`);
-        if (activeSources.size > 0) parts.push(`(${Array.from(activeSources).join('|')})`);
         
         let finalRe = '';
-        if (parts.length === 2) finalRe = `(?i)(?=.*${parts[0]})(?=.*${parts[1]})`;
-        else if (parts.length === 1) finalRe = `(?i)${parts[0]}`;
+        if (parts.length > 0) finalRe = `(?i)${parts[0]}`;
         
         filterInput.value = finalRe;
         renderPreview();
@@ -683,7 +693,26 @@ window.editGroup = function(index) {
         let matchedCount = 0;
         
         proxyNames.forEach(name => {
-            let isMatchedByFilter = filterRe ? filterRe.test(name) : false;
+            let p = state.allProxies.find(x => x.name === name);
+            let isMatchedByFilter = false;
+            
+            if (p) {
+                let matchesSource = true;
+                if (activeSources.size > 0) {
+                    let src = p._airport_name || '_custom_nodes_';
+                    if (!activeSources.has(src)) matchesSource = false;
+                }
+                
+                let matchesRegion = true;
+                if (filterRe) {
+                    if (!filterRe.test(name)) matchesRegion = false;
+                }
+                
+                if (matchesSource && matchesRegion && (activeSources.size > 0 || filterRe)) {
+                    isMatchedByFilter = true;
+                }
+            }
+            
             let isManuallySelected = manualProxies.includes(name);
             let isChecked = isMatchedByFilter || isManuallySelected;
             
@@ -977,7 +1006,7 @@ if (globalImportBtn) {
                     body: JSON.stringify({ urls: state.airports })
                 });
                 // Fetch info after overwrite
-                fetchAuth('/airports/info').then(res => res.json()).then(data => {
+                fetchAuth('/airports/info?force=true').then(res => res.json()).then(data => {
                     state.airportsInfo = data.info || [];
                     renderAirports();
                 });
