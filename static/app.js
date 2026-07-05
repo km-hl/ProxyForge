@@ -793,13 +793,28 @@ window.editNode = function(index) {
     let yamlStr = isNew ? "name: New Node\ntype: vmess\nserver: 1.1.1.1\nport: 443" : jsyaml.dump(state.nodes[index]);
     const html = `
         <div class="form-group full-width">
-            <label>节点配置 (YAML格式)</label>
+            <label>节点配置 (YAML格式) - 或者直接粘贴 vless:// 等分享链接</label>
             <textarea id="m-node-raw" style="min-height:250px; font-family:monospace;">${yamlStr}</textarea>
         </div>
     `;
-    openModal(isNew ? '新建自建节点' : '编辑自建节点', html, () => {
+    openModal(isNew ? '新建自建节点' : '编辑自建节点', html, async () => {
         try {
-            let parsed = jsyaml.load(document.getElementById('m-node-raw').value);
+            let val = document.getElementById('m-node-raw').value.trim();
+            let parsed;
+            if (val.match(/^(vmess|vless|trojan|hysteria2|hy2|ss):\/\//i)) {
+                const res = await fetchAuth('/parse-links', {
+                    method: 'POST',
+                    body: JSON.stringify({ links: [val] })
+                });
+                const data = await res.json();
+                if (data.nodes && data.nodes.length) {
+                    parsed = data.nodes[0];
+                } else {
+                    return alert('分享链接解析失败，不支持的协议或格式有误');
+                }
+            } else {
+                parsed = jsyaml.load(val);
+            }
             if(isNew) state.nodes.push(parsed);
             else state.nodes[index] = parsed;
             closeModal();
