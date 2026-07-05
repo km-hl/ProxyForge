@@ -208,7 +208,7 @@ body {
     text-transform: uppercase;
     letter-spacing: 0.3px;
 }
-.form-group input,
+.form-group input:not([type="checkbox"]):not([type="radio"]),
 .form-group select,
 .form-group textarea {
     padding: 9px 12px;
@@ -220,7 +220,7 @@ body {
     background: #fafbfc;
     color: var(--text);
 }
-.form-group input:focus,
+.form-group input:not([type="checkbox"]):not([type="radio"]):focus,
 .form-group select:focus,
 .form-group textarea:focus {
     outline: none;
