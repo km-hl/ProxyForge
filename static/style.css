@@ -513,3 +513,5 @@ body {
 .preview-item input[type="checkbox"] {
     cursor: pointer;
 }
+.list-item.dragging { opacity: 0.5; border: 2px dashed var(--primary); }
+.list-item.drag-over { border-top: 3px solid var(--primary); padding-top: 15px; }

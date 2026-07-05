@@ -355,7 +355,14 @@ function renderNodes() {
     state.nodes.forEach((n, index) => {
         let displayName = getFlagEmoji(n.name);
         html += `
-            <div class="list-item">
+            <div class="list-item" draggable="true" data-index="${index}" 
+                 ondragstart="handleDragStart(event, ${index})" 
+                 ondragover="handleDragOver(event)"
+                 ondragenter="handleDragEnter(event)"
+                 ondragleave="handleDragLeave(event)"
+                 ondrop="handleDrop(event, ${index})"
+                 ondragend="handleDragEnd(event)">
+                <span class="drag-handle" style="cursor: grab; margin-right: 10px; color: #999;">⠿</span>
                 ${getCheckboxHTML('cb-node', index)}
                 <span class="type-badge badge-node">${n.type || 'unknown'}</span>
                 <div class="item-info">
@@ -903,6 +910,46 @@ window.moveNodeDown = function(index) {
         state.nodes[index + 1] = temp;
         saveNodesObj();
     }
+};
+
+let draggedNodeIndex = null;
+
+window.handleDragStart = function(e, index) {
+    draggedNodeIndex = index;
+    e.dataTransfer.effectAllowed = 'move';
+    e.currentTarget.classList.add('dragging');
+};
+
+window.handleDragOver = function(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    return false;
+};
+
+window.handleDragEnter = function(e) {
+    e.preventDefault();
+    e.currentTarget.classList.add('drag-over');
+};
+
+window.handleDragLeave = function(e) {
+    e.currentTarget.classList.remove('drag-over');
+};
+
+window.handleDrop = function(e, dropIndex) {
+    e.stopPropagation();
+    e.currentTarget.classList.remove('drag-over');
+    if (draggedNodeIndex !== null && draggedNodeIndex !== dropIndex) {
+        let draggedItem = state.nodes.splice(draggedNodeIndex, 1)[0];
+        state.nodes.splice(dropIndex, 0, draggedItem);
+        saveNodesObj();
+    }
+    draggedNodeIndex = null;
+    return false;
+};
+
+window.handleDragEnd = function(e) {
+    e.currentTarget.classList.remove('dragging');
+    document.querySelectorAll('.list-item').forEach(el => el.classList.remove('drag-over'));
 };
 
 document.getElementById('btn-bulk-delete-nodes').addEventListener('click', () => {
