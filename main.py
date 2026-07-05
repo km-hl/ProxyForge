@@ -395,9 +395,8 @@ def get_subscription(
     
     encoded_name = urllib.parse.quote(name)
     headers = {
-        "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}.yaml",
-        "Profile-Title": name,
-        "Subscription-Userinfo": "upload=0; download=0; total=1073741824000; expire=253402300799"
+        "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}",
+        "Profile-Title": name
     }
     
     return PlainTextResponse(content=yaml_content, headers=headers)
