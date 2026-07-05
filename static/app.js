@@ -759,6 +759,14 @@ window.editGroup = function(index) {
         }
         
         let proxyNames = ['DIRECT', 'REJECT'];
+        
+        let proxyGroups = state.templateObj['proxy-groups'] || [];
+        proxyGroups.forEach(pg => {
+            if (pg.name && pg.name !== g.name && !proxyNames.includes(pg.name)) {
+                proxyNames.push(pg.name);
+            }
+        });
+        
         state.allProxies.forEach(p => { if (!proxyNames.includes(p.name)) proxyNames.push(p.name); });
         
         let html = '';
