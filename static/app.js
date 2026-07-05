@@ -992,25 +992,6 @@ if (globalImportBtn) {
                     }
                     delete parsed['proxy-providers'];
                 }
-                
-                // Convert 'use' to 'filter' during global import to avoid errors
-                if (parsed['proxy-groups'] && Array.isArray(parsed['proxy-groups'])) {
-                    parsed['proxy-groups'].forEach(g => {
-                        if (g.use && Array.isArray(g.use)) {
-                            let filterParts = g.use.map(u => `\\[${u}\\]`);
-                            if (filterParts.length > 0) {
-                                let regexStr = filterParts.join('|');
-                                if (g.filter) {
-                                    g.filter = `(?=.*(${regexStr}))(?=.*(${g.filter}))`;
-                                } else {
-                                    g.filter = regexStr;
-                                }
-                            }
-                            delete g.use; 
-                        }
-                    });
-                }
-
                 if (Object.keys(parsed).length > 0) {
                     state.templateObj = parsed; // Overwrite
                     state.templateRaw = jsyaml.dump(state.templateObj);
