@@ -318,6 +318,8 @@ function renderGroups() {
         
         let pCount = Array.isArray(g.proxies) ? g.proxies.length : 0;
         let uCount = Array.isArray(g.use) ? g.use.length : 0;
+        let proxyGroupNames = state.templateObj['proxy-groups'].map(x => x.name);
+        let nestedGroups = Array.isArray(g.proxies) ? g.proxies.filter(p => proxyGroupNames.includes(p)) : [];
         
         let summaries = [];
         if (g['include-all']) {
@@ -331,8 +333,12 @@ function renderGroups() {
             summaries.push(`正则: ${g.filter}`);
         }
         
-        if (!g['include-all'] && uCount === 0 && !g.filter && pCount > 0) {
-            let manuals = g.proxies.filter(p => p !== 'DIRECT' && p !== 'REJECT');
+        if (nestedGroups.length > 0) {
+            summaries.push(`嵌套: ${nestedGroups.join(', ')}`);
+        }
+        
+        if (!g['include-all'] && uCount === 0 && !g.filter && nestedGroups.length === 0 && pCount > 0) {
+            let manuals = g.proxies.filter(p => p !== 'DIRECT' && p !== 'REJECT' && !nestedGroups.includes(p));
             if (manuals.length === 0) manuals = g.proxies;
             summaries.push(`手动节点: ${manuals.slice(0, 3).join(', ')}${manuals.length > 3 ? '...' : ''}`);
         }
@@ -726,8 +732,17 @@ window.editGroup = function(index) {
         tag.addEventListener('click', () => {
             tag.classList.toggle('active');
             let val = tag.getAttribute('data-val');
-            if (tag.classList.contains('active')) activeRegions.add(val);
-            else activeRegions.delete(val);
+            if (tag.classList.contains('active')) {
+                activeRegions.add(val);
+                if (activeSources.size === 0) {
+                    document.querySelectorAll('#tags-sources .filter-tag').forEach(t => {
+                        t.classList.add('active');
+                        activeSources.add(t.getAttribute('data-val'));
+                    });
+                }
+            } else {
+                activeRegions.delete(val);
+            }
             updateFilterInput();
         });
     });
@@ -892,6 +907,120 @@ document.getElementById('btn-bulk-add-nodes').addEventListener('click', () => {
             if (box) twemoji.parse(box, { folder: 'svg', ext: '.svg' });
         }, 10);
     }
+});
+
+document.getElementById('btn-bulk-smart-filter').addEventListener('click', () => {
+    let indices = getCheckedIndices('cb-group');
+    if(!indices.length) return alert('请先勾选左侧要操作的目标代理组');
+    
+    const regions = [
+        {key: 'hk|香港', label: '🇭🇰 香港'},
+        {key: 'jp|日本', label: '🇯🇵 日本'},
+        {key: 'us|美国|美', label: '🇺🇸 美国'},
+        {key: 'sg|新加坡|狮城', label: '🇸🇬 新加坡'},
+        {key: 'tw|台湾|台', label: '🇹🇼 台湾'},
+        {key: 'kr|韩国', label: '🇰🇷 韩国'},
+        {key: 'uk|英国', label: '🇬🇧 英国'}
+    ];
+    
+    const airportNames = new Set();
+    state.airports.forEach(a => {
+        let name = typeof a === 'object' ? a.name : a;
+        if (name) airportNames.add(name);
+    });
+    
+    let html = `
+        <div class="form-group full-width" style="margin-top: 10px;">
+            <label style="color:var(--primary); font-size:0.9rem; font-weight: 600;">✨ 批量设置智能筛选器</label>
+            <div style="font-size:0.8rem; color:#888; margin-bottom:10px;">此操作将覆盖选中代理组的智能筛选配置，不会影响手动勾选的节点或嵌套代理组。</div>
+            
+            <label style="display:flex; align-items:center; cursor:pointer; font-size:0.9rem; margin-bottom:15px; color:#333;">
+                <input type="checkbox" id="bulk-group-include-all" style="margin-right:8px; width:16px; height:16px;"> 
+                自动包含全部节点 (后续新增节点也会自动加入)
+            </label>
+            
+            <div style="font-size:0.8rem; margin:8px 0 4px 0; color:#666; font-weight: 600;">1. 快速选择地区 (覆盖正则):</div>
+            <div class="filter-tags" id="bulk-tags-regions">
+                ${regions.map(r => `<div class="filter-tag" data-val="${r.key}">${r.label}</div>`).join('')}
+            </div>
+            
+            <div style="font-size:0.8rem; margin:8px 0 4px 0; color:#666; font-weight: 600;">2. 快速选择节点来源 (覆盖来源):</div>
+            <div class="filter-tags" id="bulk-tags-sources">
+                ${Array.from(airportNames).map(name => `<div class="filter-tag" data-val="${name}">✈️ ${name}</div>`).join('')}
+                <div class="filter-tag" data-val="_custom_nodes_">🌐 自建节点</div>
+            </div>
+            
+            <div style="font-size:0.8rem; margin:8px 0 4px 0; color:#666; font-weight: 600;">底层正则表达式 (可手动修改):</div>
+            <input type="text" id="bulk-group-filter" value="" placeholder="例如: (?i)hk|香港">
+        </div>
+    `;
+    
+    openModal('批量智能筛选', html, () => {
+        let includeAll = document.getElementById('bulk-group-include-all').checked;
+        let filterInput = document.getElementById('bulk-group-filter').value.trim();
+        let sources = [];
+        document.querySelectorAll('#bulk-tags-sources .filter-tag.active').forEach(t => sources.push(t.getAttribute('data-val')));
+        
+        indices.forEach(idx => {
+            let g = state.templateObj['proxy-groups'][idx];
+            if (includeAll) g['include-all'] = true;
+            else delete g['include-all'];
+            
+            if (filterInput) g.filter = filterInput;
+            else delete g.filter;
+            
+            if (sources.length > 0) g.use = sources;
+            else delete g.use;
+        });
+        saveTemplateObj();
+        closeModal();
+    });
+    
+    // Wire up the bulk modal logic
+    let bulkActiveRegions = new Set();
+    let bulkActiveSources = new Set();
+    let bulkFilterInput = document.getElementById('bulk-group-filter');
+    
+    function updateBulkFilterInput() {
+        if (bulkActiveRegions.size === 0) {
+            bulkFilterInput.value = '';
+        } else {
+            bulkFilterInput.value = '(?i)' + Array.from(bulkActiveRegions).join('|');
+        }
+    }
+    
+    document.querySelectorAll('#bulk-tags-regions .filter-tag').forEach(tag => {
+        tag.addEventListener('click', () => {
+            tag.classList.toggle('active');
+            let val = tag.getAttribute('data-val');
+            if (tag.classList.contains('active')) {
+                bulkActiveRegions.add(val);
+                if (bulkActiveSources.size === 0) {
+                    document.querySelectorAll('#bulk-tags-sources .filter-tag').forEach(t => {
+                        t.classList.add('active');
+                        bulkActiveSources.add(t.getAttribute('data-val'));
+                    });
+                }
+            } else {
+                bulkActiveRegions.delete(val);
+            }
+            updateBulkFilterInput();
+        });
+    });
+    
+    document.querySelectorAll('#bulk-tags-sources .filter-tag').forEach(tag => {
+        tag.addEventListener('click', () => {
+            tag.classList.toggle('active');
+            let val = tag.getAttribute('data-val');
+            if (tag.classList.contains('active')) bulkActiveSources.add(val);
+            else bulkActiveSources.delete(val);
+        });
+    });
+    
+    bulkFilterInput.addEventListener('input', () => {
+        document.querySelectorAll('#bulk-tags-regions .filter-tag').forEach(t => t.classList.remove('active'));
+        bulkActiveRegions.clear();
+    });
 });
 
 // === Actions: Nodes ===
