@@ -195,9 +195,10 @@ def fetch_single_airport_info(item, force=False) -> dict:
     }
     if not url: return info
     
-    cache_file = DATA_DIR / "airports_info_cache.json"
+    import os
+    cache_file = os.path.join(DATA_DIR, "airports_info_cache.json")
     cache_data = {}
-    if cache_file.exists():
+    if os.path.exists(cache_file):
         try:
             with open(cache_file, "r", encoding="utf-8") as f:
                 cache_data = json.load(f)
@@ -241,10 +242,6 @@ def fetch_single_airport_info(item, force=False) -> dict:
         
     import time
     cache_data[url] = {"info": info, "_timestamp": time.time()}
-    try:
-        with open(cache_file, "w", encoding="utf-8") as f:
-            json.load(f) # Wait, it should be json.dump
-    except: pass
     try:
         with open(cache_file, "w", encoding="utf-8") as f:
             json.dump(cache_data, f)
