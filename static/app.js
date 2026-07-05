@@ -836,6 +836,64 @@ document.getElementById('btn-bulk-delete-groups').addEventListener('click', () =
     }
 });
 
+document.getElementById('btn-bulk-add-nodes').addEventListener('click', () => {
+    let indices = getCheckedIndices('cb-group');
+    if(!indices.length) return alert('请先勾选左侧要操作的目标代理组');
+    
+    let proxyNames = ['DIRECT', 'REJECT'];
+    let proxyGroups = state.templateObj['proxy-groups'] || [];
+    proxyGroups.forEach(pg => {
+        if (pg.name && !proxyNames.includes(pg.name)) {
+            proxyNames.push(pg.name);
+        }
+    });
+    state.allProxies.forEach(p => { if (!proxyNames.includes(p.name)) proxyNames.push(p.name); });
+    
+    let html = `
+        <div class="form-group full-width">
+            <label style="margin-bottom: 15px; display: block; color: var(--primary);">请选择要批量添加到选中代理组的节点或代理组：</label>
+            <div class="preview-list" style="max-height: 400px;" id="bulk-add-preview-box">
+    `;
+    
+    proxyNames.forEach(name => {
+        let emojiName = getFlagEmoji(name);
+        html += `
+            <label class="preview-item">
+                <input type="checkbox" value="${name}" class="bulk-add-cb">
+                <span>${emojiName}</span>
+            </label>
+        `;
+    });
+    
+    html += `</div></div>`;
+    
+    openModal('批量添加内容', html, () => {
+        let toAdd = [];
+        document.querySelectorAll('.bulk-add-cb:checked').forEach(cb => toAdd.push(cb.value));
+        if (toAdd.length === 0) return closeModal();
+        
+        indices.forEach(idx => {
+            let g = state.templateObj['proxy-groups'][idx];
+            if (!Array.isArray(g.proxies)) g.proxies = [];
+            toAdd.forEach(item => {
+                if (item !== g.name && !g.proxies.includes(item)) {
+                    g.proxies.push(item);
+                }
+            });
+        });
+        saveTemplateObj();
+        closeModal();
+    });
+    
+    // Parse emojis in the modal
+    if (window.twemoji) {
+        setTimeout(() => {
+            let box = document.getElementById('bulk-add-preview-box');
+            if (box) twemoji.parse(box, { folder: 'svg', ext: '.svg' });
+        }, 10);
+    }
+});
+
 // === Actions: Nodes ===
 window.editNode = function(index) {
     let isNew = index < 0;
