@@ -455,6 +455,22 @@ document.getElementById('btn-bulk-delete-airports').addEventListener('click', as
     }
 });
 
+document.getElementById('btn-refresh-airports').addEventListener('click', () => {
+    let btn = document.getElementById('btn-refresh-airports');
+    btn.disabled = true;
+    btn.textContent = '🔄 刷新中...';
+    fetchAuth('/airports/info?force=true').then(res => res.json()).then(data => {
+        state.airportsInfo = data.info || [];
+        renderAirports();
+        showToast('机场流量与节点数据已刷新');
+    }).catch(e => {
+        showToast('刷新失败', 'error');
+    }).finally(() => {
+        btn.disabled = false;
+        btn.textContent = '🔄 强制刷新';
+    });
+});
+
 async function saveAirportsObj() {
     renderAirports();
     try {
