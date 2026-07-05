@@ -458,14 +458,24 @@ def update_airports(data: AirportsModel):
     return {"status": "ok"}
 
 @app.get("/api/airports/info", dependencies=[Depends(verify_api_token)])
-def get_airports_info(force: bool = False):
+def get_airports_info(force_indices: str = ""):
     urls_data = load_airports()
     results = []
+    
+    force_idx_list = []
+    if force_indices:
+        try:
+            force_idx_list = [int(x) for x in force_indices.split(",") if x.strip()]
+        except: pass
+        
     if urls_data:
-        def fetch_wrapper(item):
+        def fetch_wrapper(args):
+            idx, item = args
+            force = (idx in force_idx_list) or (force_indices == "all")
             return fetch_single_airport_info(item, force=force)
+            
         with ThreadPoolExecutor(max_workers=5) as executor:
-            results = list(executor.map(fetch_wrapper, urls_data))
+            results = list(executor.map(fetch_wrapper, enumerate(urls_data)))
     return {"info": results}
 
 class ParseLinksModel(BaseModel):

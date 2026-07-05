@@ -456,15 +456,30 @@ document.getElementById('btn-bulk-delete-airports').addEventListener('click', as
 });
 
 document.getElementById('btn-refresh-airports').addEventListener('click', () => {
+    let indices = getCheckedIndices('cb-airport');
+    if(!indices.length) return alert('请先在左侧勾选需要强制刷新的机场！');
+    
     let btn = document.getElementById('btn-refresh-airports');
     btn.disabled = true;
     btn.textContent = '🔄 刷新中...';
-    fetchAuth('/airports/info?force=true').then(res => res.json()).then(data => {
+    
+    indices.forEach(idx => {
+        let card = document.querySelectorAll('#airports-list .airport-card')[idx];
+        if (card) {
+            let statsDiv = card.querySelector('.airport-stats');
+            if (statsDiv) {
+                statsDiv.innerHTML = `<span style="color:#666; font-size:0.9rem;">⏳ 正在强制拉取最新数据...</span>`;
+            }
+        }
+    });
+
+    fetchAuth(`/airports/info?force_indices=${indices.join(',')}`).then(res => res.json()).then(data => {
         state.airportsInfo = data.info || [];
         renderAirports();
-        showToast('机场流量与节点数据已刷新');
+        showToast('选中的机场数据已刷新');
     }).catch(e => {
         showToast('刷新失败', 'error');
+        renderAirports();
     }).finally(() => {
         btn.disabled = false;
         btn.textContent = '🔄 强制刷新';
@@ -480,7 +495,7 @@ async function saveAirportsObj() {
         });
         showToast('机场配置已保存');
         // Refresh info after saving
-        fetchAuth('/airports/info?force=true').then(res => res.json()).then(data => {
+        fetchAuth('/airports/info?force_indices=all').then(res => res.json()).then(data => {
             state.airportsInfo = data.info || [];
             renderAirports();
         });
@@ -1022,7 +1037,7 @@ if (globalImportBtn) {
                     body: JSON.stringify({ urls: state.airports })
                 });
                 // Fetch info after overwrite
-                fetchAuth('/airports/info?force=true').then(res => res.json()).then(data => {
+                fetchAuth('/airports/info?force_indices=all').then(res => res.json()).then(data => {
                     state.airportsInfo = data.info || [];
                     renderAirports();
                 });
