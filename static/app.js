@@ -321,17 +321,20 @@ function renderGroups() {
         
         let summaries = [];
         if (g['include-all']) {
-            summaries.push('全部节点');
-        }
-        if (pCount > 0) {
-            summaries.push(`手动: ${g.proxies.slice(0, 3).join(', ')}${pCount > 3 ? '...' : ''}`);
-        }
-        if (uCount > 0) {
+            summaries.push('全部 (机场+自建)');
+        } else if (uCount > 0) {
             let sources = g.use.map(s => s === '_custom_nodes_' ? '🌐自建' : `✈️${s}`);
-            summaries.push(`来源: ${sources.join(', ')}`);
-        }
+            summaries.push(`${sources.join(', ')}`);
+        } 
+        
         if (g.filter) {
             summaries.push(`正则: ${g.filter}`);
+        }
+        
+        if (!g['include-all'] && uCount === 0 && !g.filter && pCount > 0) {
+            let manuals = g.proxies.filter(p => p !== 'DIRECT' && p !== 'REJECT');
+            if (manuals.length === 0) manuals = g.proxies;
+            summaries.push(`手动节点: ${manuals.slice(0, 3).join(', ')}${manuals.length > 3 ? '...' : ''}`);
         }
         
         let proxiesPreview = summaries.length > 0 ? summaries.join(' | ') : '无';
