@@ -297,6 +297,7 @@ function renderAirports() {
         }
     });
     list.innerHTML = html;
+    if (window.twemoji) twemoji.parse(list, { folder: 'svg', ext: '.svg' });
 }
 
 // === Render: Proxy Groups ===
@@ -342,6 +343,7 @@ function renderGroups() {
         `;
     });
     list.innerHTML = html;
+    if (window.twemoji) twemoji.parse(list, { folder: 'svg', ext: '.svg' });
 }
 
 // === Render: Custom Nodes ===
@@ -379,6 +381,7 @@ function renderNodes() {
         `;
     });
     list.innerHTML = html;
+    if (window.twemoji) twemoji.parse(list, { folder: 'svg', ext: '.svg' });
 }
 
 // === Render: Rules ===
@@ -776,6 +779,7 @@ window.editGroup = function(index) {
         
         previewBox.innerHTML = html;
         previewCount.innerText = `选中 ${matchedCount} 个`;
+        if (window.twemoji) twemoji.parse(previewBox, { folder: 'svg', ext: '.svg' });
     }
     
     renderPreview();
@@ -969,6 +973,8 @@ async function saveNodesObj() {
             body: JSON.stringify({ nodes: state.nodes })
         });
         showToast('节点已保存');
+        const allProxiesRes = await fetchAuth('/proxies');
+        state.allProxies = (await allProxiesRes.json()).proxies || [];
     } catch(e) { showToast('保存失败', 'error'); }
 }
 

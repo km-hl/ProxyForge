@@ -515,3 +515,10 @@ body {
 }
 .list-item.dragging { opacity: 0.5; border: 2px dashed var(--primary); }
 .list-item.drag-over { border-top: 3px solid var(--primary); padding-top: 15px; }
+
+img.emoji {
+    height: 1em;
+    width: 1em;
+    margin: 0 .05em 0 .1em;
+    vertical-align: -0.1em;
+}
