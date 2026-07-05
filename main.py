@@ -400,7 +400,7 @@ def get_subscription(
         "Subscription-Userinfo": "upload=0; download=0; total=1073741824000; expire=253402300799"
     }
     
-    return Response(content=yaml_content, media_type="text/plain", headers=headers)
+    return PlainTextResponse(content=yaml_content, headers=headers)
 
 # ================= 后台管理 API 接口 (需鉴权) =================
 
