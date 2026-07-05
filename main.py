@@ -539,6 +539,38 @@ def update_template(data: TemplateModel):
     save_template_content(data.content)
     return {"status": "ok"}
 
+import asyncio
+from cachetools.keys import hashkey
+
+# ================= 后台定时刷新任务 =================
+
+async def background_airport_updater():
+    # 启动后先等待 5 分钟，错开刚启动时的并发请求
+    await asyncio.sleep(300)
+    while True:
+        try:
+            logger.info("后台定时任务触发：开始静默拉取机场节点...")
+            # 利用已有的多线程逻辑并发拉取
+            proxies = fetch_airport_proxies()
+            if proxies:
+                save_cache_to_file(proxies)
+                subscription_cache.clear()
+                # 预热内存缓存，后续 /sub 请求将直接 0 延迟命中
+                subscription_cache[hashkey()] = proxies
+                logger.info(f"后台定时任务完成，成功更新了 {len(proxies)} 个机场节点")
+            else:
+                logger.warning("后台定时任务：拉取到的节点为空，放弃更新，保留旧缓存")
+        except Exception as e:
+            logger.error(f"后台定时任务异常: {e}")
+            
+        # 默认每隔 4 小时更新一次
+        await asyncio.sleep(4 * 3600)
+
+@app.on_event("startup")
+async def startup_event():
+    logger.info("系统启动：已注册后台定时更新任务")
+    asyncio.create_task(background_airport_updater())
+
 # ================= 前端静态页面挂载 =================
 
 @app.get("/")
