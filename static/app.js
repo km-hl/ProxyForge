@@ -318,12 +318,23 @@ function renderGroups() {
         
         let pCount = Array.isArray(g.proxies) ? g.proxies.length : 0;
         let uCount = Array.isArray(g.use) ? g.use.length : 0;
-        let proxiesPreview = '无';
-        if (pCount > 0) {
-            proxiesPreview = g.proxies.slice(0, 8).join(', ') + (pCount > 8 ? '...' : '');
-        } else if (uCount > 0) {
-            proxiesPreview = `[机场: ${g.use.join(', ')}]`;
+        
+        let summaries = [];
+        if (g['include-all']) {
+            summaries.push('全部节点');
         }
+        if (pCount > 0) {
+            summaries.push(`手动: ${g.proxies.slice(0, 3).join(', ')}${pCount > 3 ? '...' : ''}`);
+        }
+        if (uCount > 0) {
+            let sources = g.use.map(s => s === '_custom_nodes_' ? '🌐自建' : `✈️${s}`);
+            summaries.push(`来源: ${sources.join(', ')}`);
+        }
+        if (g.filter) {
+            summaries.push(`正则: ${g.filter}`);
+        }
+        
+        let proxiesPreview = summaries.length > 0 ? summaries.join(' | ') : '无';
         
         let displayName = getFlagEmoji(g.name);
 
@@ -333,7 +344,7 @@ function renderGroups() {
                 <span class="type-badge ${badgeCls}">${g.type || 'unknown'}</span>
                 <div class="item-info">
                     <div class="item-name">${displayName}</div>
-                    <div class="item-detail">包含: ${proxiesPreview} ${g.filter ? `| 筛选: ${g.filter}` : ''}</div>
+                    <div class="item-detail" style="color: #666; font-size: 0.8rem; margin-top: 4px;">包含: ${proxiesPreview}</div>
                 </div>
                 <div class="item-actions">
                     <button class="btn btn-sm" onclick="editGroup(${index})">编辑</button>
@@ -568,6 +579,11 @@ window.editGroup = function(index) {
         <div class="form-group full-width" style="margin-top: 10px; border-top: 1px dashed #ddd; padding-top: 15px;">
             <label style="color:var(--primary); font-size:0.9rem; font-weight: 600;">✨ 智能节点筛选器</label>
             
+            <label style="display:flex; align-items:center; cursor:pointer; font-size:0.9rem; margin-bottom:10px; color:#333;">
+                <input type="checkbox" id="m-group-include-all" style="margin-right:8px; width:16px; height:16px;" ${g['include-all'] ? 'checked' : ''}> 
+                自动包含全部节点 (后续新增节点也会自动加入)
+            </label>
+            
             <div style="font-size:0.8rem; margin:8px 0 4px 0; color:#666; font-weight: 600;">1. 快速选择地区:</div>
             <div class="filter-tags" id="tags-regions">
                 ${regions.map(r => `<div class="filter-tag" data-val="${r.key}">${r.label}</div>`).join('')}
@@ -605,6 +621,9 @@ window.editGroup = function(index) {
         
         g.filter = document.getElementById('m-group-filter').value.trim();
         if (!g.filter) delete g.filter;
+        
+        g['include-all'] = document.getElementById('m-group-include-all').checked;
+        if (!g['include-all']) delete g['include-all'];
         
         let checked = [];
         document.querySelectorAll('#m-group-preview input[type="checkbox"]').forEach(cb => {
@@ -727,6 +746,8 @@ window.editGroup = function(index) {
         renderPreview();
     });
     
+    document.getElementById('m-group-include-all').addEventListener('change', renderPreview);
+    
     function renderPreview() {
         let filterRe = null;
         if (filterInput.value.trim()) {
@@ -745,7 +766,10 @@ window.editGroup = function(index) {
             let isMatchedByFilter = false;
             
             if (p) {
-                let matchesSource = true;
+                if (document.getElementById('m-group-include-all').checked) {
+                    isMatchedByFilter = true;
+                } else {
+                    let matchesSource = true;
                 if (activeSources.size > 0) {
                     let src = p._airport_name || '_custom_nodes_';
                     if (!activeSources.has(src)) matchesSource = false;
@@ -758,6 +782,7 @@ window.editGroup = function(index) {
                 
                 if (matchesSource && matchesRegion && (activeSources.size > 0 || filterRe)) {
                     isMatchedByFilter = true;
+                }
                 }
             }
             
