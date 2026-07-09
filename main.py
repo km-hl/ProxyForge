@@ -217,7 +217,9 @@ def fetch_single_airport_info(item, force=False) -> dict:
         # Check if cache is less than 24 hours old
         import time
         if time.time() - cached_info.get("_timestamp", 0) < 24 * 3600:
-            return cached_info["info"]
+            ret_info = cached_info["info"]
+            ret_info["_timestamp"] = cached_info.get("_timestamp", 0)
+            return ret_info
             
     try:
         headers = {"User-Agent": "clash-verge/v1.6.0 clash-meta/1.18.3"}
@@ -249,7 +251,9 @@ def fetch_single_airport_info(item, force=False) -> dict:
         info["error"] = str(e)
         
     import time
-    cache_data[url] = {"info": info, "_timestamp": time.time()}
+    timestamp = time.time()
+    info["_timestamp"] = timestamp
+    cache_data[url] = {"info": info, "_timestamp": timestamp}
     try:
         with open(cache_file, "w", encoding="utf-8") as f:
             json.dump(cache_data, f)

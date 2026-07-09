@@ -277,6 +277,7 @@ function renderAirports() {
                         <span style="color:#2e7d32;"><b>📦 节点:</b> ${info.error ? '?' : info.nodesCount}</span>
                         <span style="color:#1565c0;"><b>📊 流量:</b> ${usageStr}</span>
                         <span style="color:#e65100;"><b>⏳ 到期:</b> ${info.expire ? formatDate(info.expire) : '长期有效'}</span>
+                        <span style="color:#607d8b;"><b>🔄 刷新:</b> ${info._timestamp ? new Date(info._timestamp * 1000).toLocaleString('zh-CN', {month: 'numeric', day: 'numeric', hour: '2-digit', minute:'2-digit'}) : '未知'}</span>
                     </div>
                     ${info.error ? `<div style="color:red; font-size:0.75rem; margin-left:34px; margin-top:4px;">抓取失败: ${info.error}</div>` : ''}
                 </div>
