@@ -58,7 +58,10 @@
                     📏 <span>路由规则</span>
                 </div>
                 <div class="sidebar-item" data-panel="panel-raw">
-                    🛠️ <span>底层配置</span>
+                    🛠️ <span>底层配置兜底</span>
+                </div>
+                <div class="sidebar-item" data-panel="panel-preview">
+                    👁️ <span>最终订阅预览</span>
                 </div>
             </nav>
 
@@ -203,6 +206,20 @@
                             <textarea id="rules-editor" spellcheck="false" style="min-height: 600px; font-family: monospace;"></textarea>
                             <div style="margin-top: 10px; text-align: right;">
                                 <button id="save-rules-btn" class="btn btn-primary">覆盖保存</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 最终订阅预览 (Preview) -->
+                <div class="section-panel" id="panel-preview">
+                    <div class="card" style="flex: 1; display: flex; flex-direction: column;">
+                        <div class="card-title">👁️ 最终订阅预览 (Final Preview)</div>
+                        <div class="form-group" style="flex: 1;">
+                            <label>这里显示的是经过后端处理、注入节点、智能聚合后，您的客户端最终拉取到的真实配置文件内容（只读）。</label>
+                            <textarea id="preview-editor" readonly spellcheck="false" style="min-height: 600px; font-family: monospace; background-color: #f8f9fa; cursor: not-allowed;"></textarea>
+                            <div style="margin-top: 10px; text-align: right;">
+                                <button id="refresh-preview-btn" class="btn btn-success">刷新预览</button>
                             </div>
                         </div>
                     </div>

@@ -1718,3 +1718,35 @@ window.handleRuleDragEnd = (e) => {
     });
     draggedRuleIndex = -1;
 };
+
+// === Final Preview ===
+const previewEditor = document.getElementById('preview-editor');
+const refreshPreviewBtn = document.getElementById('refresh-preview-btn');
+
+async function loadFinalPreview() {
+    previewEditor.value = '正在从后端生成最终订阅配置...\n如果数据量大可能会需要几秒钟，请稍候...';
+    try {
+        let res = await fetch(`/sub?token=${encodeURIComponent(state.token)}`);
+        if (!res.ok) {
+            let errText = await res.text();
+            throw new Error(`HTTP ${res.status}: ${errText}`);
+        }
+        let text = await res.text();
+        previewEditor.value = text;
+    } catch(e) {
+        previewEditor.value = `获取最终订阅失败:\n\n${e.message}`;
+        showToast('获取最终订阅失败', 'error');
+    }
+}
+
+refreshPreviewBtn.addEventListener('click', loadFinalPreview);
+
+// Hook into sidebar click to auto-load when switching to preview
+document.querySelectorAll('.sidebar-item').forEach(el => {
+    el.addEventListener('click', () => {
+        if (el.getAttribute('data-panel') === 'panel-preview') {
+            loadFinalPreview();
+        }
+    });
+});
+
