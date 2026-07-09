@@ -380,8 +380,9 @@ def get_subscription(
                 # 1. Collect candidates based on 'use'
                 candidates = []
                 if "use" in group and isinstance(group["use"], list):
+                    use_list_lower = [str(u).lower() for u in group["use"]]
                     for p in unique_proxies:
-                        if p.get("_airport_name") in group["use"]:
+                        if str(p.get("_airport_name", "")).lower() in use_list_lower:
                             candidates.append(p)
                 elif "filter" in group or group.get("include-all", False):
                     candidates = unique_proxies
