@@ -766,6 +766,12 @@ window.editGroup = function(index) {
         });
     }
 
+    if (g['include-all'] && activeSources.size === 0) {
+        document.querySelectorAll('#tags-sources .filter-tag').forEach(t => {
+            activeSources.add(t.getAttribute('data-val'));
+        });
+    }
+
     document.querySelectorAll('#tags-sources .filter-tag').forEach(tag => {
         if (activeSources.has(tag.getAttribute('data-val'))) tag.classList.add('active');
     });
