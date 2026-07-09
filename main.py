@@ -342,9 +342,10 @@ def get_subscription(
     seen_names = set()
     unique_proxies = []
     for p in all_proxies:
-        if p["name"] not in seen_names:
-            seen_names.add(p["name"])
-            unique_proxies.append(p)
+        if isinstance(p, dict) and p.get("name"):
+            if p["name"] not in seen_names:
+                seen_names.add(p["name"])
+                unique_proxies.append(p)
             
     proxy_names = [p["name"] for p in unique_proxies]
 
@@ -378,7 +379,7 @@ def get_subscription(
                 filter_regex = group["filter"]
                 for p in candidates:
                     try:
-                        if re.search(filter_regex, p["name"]):
+                        if re.search(filter_regex, str(p.get("name", ""))):
                             matched_candidates.append(p)
                     except: pass
             else:
@@ -389,19 +390,21 @@ def get_subscription(
             # - Existing proxies (manual proxy groups) second
             # - Airport Nodes last
             final_proxies = []
-            custom_names = set(p["name"] for p in custom_proxies)
+            custom_names = set(p.get("name") for p in custom_proxies if isinstance(p, dict) and p.get("name"))
             
             for p in matched_candidates:
-                if p["name"] in custom_names and p["name"] not in final_proxies:
-                    final_proxies.append(p["name"])
+                name = p.get("name")
+                if name and name in custom_names and name not in final_proxies:
+                    final_proxies.append(name)
                     
             for name in existing_proxies:
-                if name not in final_proxies:
+                if name and name not in final_proxies:
                     final_proxies.append(name)
                     
             for p in matched_candidates:
-                if p["name"] not in custom_names and p["name"] not in final_proxies:
-                    final_proxies.append(p["name"])
+                name = p.get("name")
+                if name and name not in custom_names and name not in final_proxies:
+                    final_proxies.append(name)
                     
             group["proxies"] = final_proxies
             
