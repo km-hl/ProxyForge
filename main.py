@@ -422,13 +422,19 @@ def get_subscription(
                         
                 group["proxies"] = final_proxies
                 
+                if "default" in group:
+                    def_val = group["default"]
+                    if def_val in group["proxies"]:
+                        group["proxies"].remove(def_val)
+                        group["proxies"].insert(0, def_val)
+                
                 # Clash will fail to start if a proxy group has neither 'use' nor a non-empty 'proxies' array.
                 # Since we delete 'use' and 'filter', we must ensure 'proxies' is never empty.
                 if not group["proxies"]:
                     group["proxies"] = ["DIRECT"]
                 
                 # Remove proxyforge-specific or mihomo-incompatible fields from the final output
-                for field in ["include-all", "filter", "use"]:
+                for field in ["include-all", "filter", "use", "default"]:
                     if field in group:
                         del group[field]
         yaml_content = yaml.dump(template_config, allow_unicode=True, sort_keys=False)

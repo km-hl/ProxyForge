@@ -637,6 +637,10 @@ window.editGroup = function(index) {
             <label>测试间隔 (Interval / s)</label>
             <input type="number" id="m-group-interval" value="${g.interval || 300}">
         </div>
+        <div class="form-group full-width" id="wrap-group-default" style="${g.type!=='select'?'display:none':''}">
+            <label>默认选中项 (例如: 🚀 节点选择)</label>
+            <input type="text" id="m-group-default" value="${g.default || ''}" placeholder="留空则默认选中第一项">
+        </div>
         
         <div class="form-group full-width" style="margin-top: 10px; border-top: 1px dashed #ddd; padding-top: 15px;">
             <label style="color:var(--primary); font-size:0.9rem; font-weight: 600;">✨ 智能节点筛选器</label>
@@ -676,9 +680,15 @@ window.editGroup = function(index) {
         if (g.type !== 'select') {
             g.url = document.getElementById('m-group-url').value.trim();
             g.interval = parseInt(document.getElementById('m-group-interval').value) || 300;
+            delete g.default;
         } else {
             delete g.url;
             delete g.interval;
+            let defVal = document.getElementById('m-group-default');
+            if (defVal) {
+                g.default = defVal.value.trim();
+                if (!g.default) delete g.default;
+            }
         }
         
         g.filter = document.getElementById('m-group-filter').value.trim();
@@ -743,6 +753,8 @@ window.editGroup = function(index) {
         let isSelect = e.target.value === 'select';
         document.getElementById('wrap-group-url').style.display = isSelect ? 'none' : 'block';
         document.getElementById('wrap-group-interval').style.display = isSelect ? 'none' : 'block';
+        let defaultWrap = document.getElementById('wrap-group-default');
+        if (defaultWrap) defaultWrap.style.display = isSelect ? 'block' : 'none';
     });
     
     const filterInput = document.getElementById('m-group-filter');
