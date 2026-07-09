@@ -817,7 +817,16 @@ window.editGroup = function(index) {
         renderPreview();
     });
     
-    document.getElementById('m-group-include-all').addEventListener('change', renderPreview);
+    document.getElementById('m-group-include-all').addEventListener('change', (e) => {
+        if (e.target.checked) {
+            document.querySelectorAll('#tags-sources .filter-tag').forEach(t => {
+                t.classList.add('active');
+                activeSources.add(t.getAttribute('data-val'));
+            });
+            updateFilterInput();
+        }
+        renderPreview();
+    });
     
     function renderPreview() {
         let filterRe = null;
@@ -826,29 +835,42 @@ window.editGroup = function(index) {
             catch(e) {}
         }
         
-        let proxyNames = ['DIRECT', 'REJECT'];
-        
+        let proxyNamesGroups = ['DIRECT', 'REJECT'];
         let proxyGroups = state.templateObj['proxy-groups'] || [];
         proxyGroups.forEach(pg => {
-            if (pg.name && pg.name !== g.name && !proxyNames.includes(pg.name)) {
-                proxyNames.push(pg.name);
+            if (pg.name && pg.name !== g.name && !proxyNamesGroups.includes(pg.name)) {
+                proxyNamesGroups.push(pg.name);
             }
         });
         
-        state.allProxies.forEach(p => { if (!proxyNames.includes(p.name)) proxyNames.push(p.name); });
+        let proxyNamesNodes = [];
+        state.allProxies.forEach(p => { if (!proxyNamesGroups.includes(p.name) && !proxyNamesNodes.includes(p.name)) proxyNamesNodes.push(p.name); });
         
         let html = '';
         let matchedCount = 0;
         
-        proxyNames.forEach(name => {
+        // Render Proxy Groups Section
+        html += `<div style="padding: 5px 10px; background: #f8f9fa; font-weight: bold; font-size: 0.85em; color: #666;">代理组 (不可被智能筛选，需手动微调)</div>`;
+        proxyNamesGroups.forEach(name => {
+            let isManuallySelected = manualProxies.includes(name);
+            if (isManuallySelected) matchedCount++;
+            let emojiName = getFlagEmoji(name);
+            html += `
+                <label class="preview-item">
+                    <input type="checkbox" value="${name}" ${isManuallySelected ? 'checked' : ''}>
+                    <span>${emojiName}</span>
+                </label>
+            `;
+        });
+        
+        // Render Nodes Section
+        html += `<div style="padding: 5px 10px; background: #e3f2fd; font-weight: bold; font-size: 0.85em; color: #0056b3;">节点 (由智能筛选器自动匹配)</div>`;
+        proxyNamesNodes.forEach(name => {
             let p = state.allProxies.find(x => x.name === name);
             let isMatchedByFilter = false;
             
             if (p) {
-                if (document.getElementById('m-group-include-all').checked) {
-                    isMatchedByFilter = true;
-                } else {
-                    let matchesSource = true;
+                let matchesSource = true;
                 if (activeSources.size > 0) {
                     let src = p._airport_name || '_custom_nodes_';
                     if (!activeSources.has(src)) matchesSource = false;
@@ -859,9 +881,12 @@ window.editGroup = function(index) {
                     if (!filterRe.test(name)) matchesRegion = false;
                 }
                 
-                if (matchesSource && matchesRegion && (activeSources.size > 0 || filterRe)) {
+                let includeAllChecked = document.getElementById('m-group-include-all').checked;
+                
+                if (includeAllChecked && activeSources.size === 0 && !filterRe) {
                     isMatchedByFilter = true;
-                }
+                } else if ((activeSources.size > 0 || filterRe || includeAllChecked) && matchesSource && matchesRegion) {
+                    isMatchedByFilter = true;
                 }
             }
             
@@ -875,7 +900,7 @@ window.editGroup = function(index) {
             
             html += `
                 <label class="preview-item">
-                    <input type="checkbox" value="${name}" ${isChecked ? 'checked' : ''}>
+                    <input type="checkbox" value="${name}" ${isChecked ? 'checked' : ''} ${isMatchedByFilter ? 'disabled title="已由智能筛选器自动包含"' : ''}>
                     <span style="${labelStyle}">${emojiName}</span>
                 </label>
             `;
