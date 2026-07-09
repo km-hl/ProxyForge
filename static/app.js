@@ -1726,7 +1726,7 @@ const refreshPreviewBtn = document.getElementById('refresh-preview-btn');
 async function loadFinalPreview() {
     previewEditor.value = '正在从后端生成最终订阅配置...\n如果数据量大可能会需要几秒钟，请稍候...';
     try {
-        let res = await fetch(`/sub?token=${encodeURIComponent(state.token)}`);
+        let res = await fetch(`/sub?token=${encodeURIComponent(currentToken)}`);
         if (!res.ok) {
             let errText = await res.text();
             throw new Error(`HTTP ${res.status}: ${errText}`);
