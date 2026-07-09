@@ -390,16 +390,17 @@ def get_subscription(
                     matched_candidates = candidates
                     
                 # 3. Construct final proxies list with specific order:
-                # - DIRECT/REJECT (built-ins) first
+                # - DIRECT/REJECT/🚀 节点选择 (built-ins / top priority) first
                 # - Custom Nodes second
                 # - Remaining existing proxies (nested groups, manual selections) third
                 # - Airport Nodes last
                 final_proxies = []
                 custom_names = set(p.get("name") for p in custom_proxies if isinstance(p, dict) and p.get("name"))
                 
-                for ex_name in existing_proxies:
-                    if ex_name in ["DIRECT", "REJECT"] and ex_name not in final_proxies:
-                        final_proxies.append(ex_name)
+                # Top priority items in exact order
+                for top_item in ["DIRECT", "REJECT", "🚀 节点选择", "节点选择"]:
+                    if top_item in existing_proxies and top_item not in final_proxies:
+                        final_proxies.append(top_item)
                         
                 for p in matched_candidates:
                     p_name = p.get("name")
