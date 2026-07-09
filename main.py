@@ -273,7 +273,8 @@ def parse_share_link(link: str) -> dict:
                 "alterId": int(data.get("aid", 0)),
                 "cipher": data.get("scy", "auto"),
                 "network": data.get("net", "tcp"),
-                "tls": data.get("tls") == "tls"
+                "tls": data.get("tls") == "tls",
+                "udp": True
             }
             if data.get("net") == "ws":
                 node["ws-opts"] = {"path": data.get("path", ""), "headers": {"Host": data.get("host", "")}}
@@ -289,7 +290,8 @@ def parse_share_link(link: str) -> dict:
                 "type": scheme,
                 "server": parsed.hostname,
                 "port": parsed.port,
-                "name": urllib.parse.unquote(parsed.fragment) if parsed.fragment else f"{scheme}_node"
+                "name": urllib.parse.unquote(parsed.fragment) if parsed.fragment else f"{scheme}_node",
+                "udp": True
             }
             if scheme == "vless": node["uuid"] = parsed.username
             elif scheme == "trojan" or scheme == "hysteria2": node["password"] = parsed.username
