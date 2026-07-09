@@ -68,7 +68,12 @@ def load_custom_nodes() -> List[Dict[str, Any]]:
     try:
         with open(CUSTOM_NODES_PATH, "r", encoding="utf-8") as f:
             nodes = yaml.safe_load(f)
-            return nodes if isinstance(nodes, list) else []
+            if isinstance(nodes, list):
+                for node in nodes:
+                    if isinstance(node, dict):
+                        node["_airport_name"] = "_custom_nodes_"
+                return nodes
+            return []
     except Exception as e:
         logger.error(f"读取自建节点文件失败: {e}")
     return []
