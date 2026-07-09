@@ -372,20 +372,38 @@ def get_subscription(
                 candidates = unique_proxies
                 
             # 2. Filter candidates with regex if present
+            matched_candidates = []
             if "filter" in group:
                 import re
                 filter_regex = group["filter"]
                 for p in candidates:
                     try:
-                        if re.search(filter_regex, p["name"]) and p["name"] not in existing_proxies:
-                            existing_proxies.append(p["name"])
+                        if re.search(filter_regex, p["name"]):
+                            matched_candidates.append(p)
                     except: pass
             else:
-                for p in candidates:
-                    if p["name"] not in existing_proxies:
-                        existing_proxies.append(p["name"])
-                        
-            group["proxies"] = existing_proxies
+                matched_candidates = candidates
+                
+            # 3. Construct final proxies list with specific order:
+            # - Custom Nodes first
+            # - Existing proxies (manual proxy groups) second
+            # - Airport Nodes last
+            final_proxies = []
+            custom_names = set(p["name"] for p in custom_proxies)
+            
+            for p in matched_candidates:
+                if p["name"] in custom_names and p["name"] not in final_proxies:
+                    final_proxies.append(p["name"])
+                    
+            for name in existing_proxies:
+                if name not in final_proxies:
+                    final_proxies.append(name)
+                    
+            for p in matched_candidates:
+                if p["name"] not in custom_names and p["name"] not in final_proxies:
+                    final_proxies.append(p["name"])
+                    
+            group["proxies"] = final_proxies
             
             # Clash will fail to start if a proxy group has neither 'use' nor a non-empty 'proxies' array.
             # Since we delete 'use' and 'filter', we must ensure 'proxies' is never empty.
