@@ -70,3 +70,27 @@ git pull
 # 2. 重启 Docker 容器以应用更新
 docker compose restart
 ```
+
+---
+
+## 📦 数据迁移指南 (如何无损迁移到新 VPS)
+
+ProxyForge 的所有核心数据和配置均以纯文本文件的形式持久化保存在当前目录下。如果您更换了 VPS 或需要备份，只需带走以下几个核心文件即可完美还原：
+
+- `.env` (您的安全验证密钥)
+- `template.yaml` (底层配置、代理组、路由规则等核心逻辑)
+- `airports.yaml` (您的机场订阅链接列表)
+- `custom_nodes.yaml` (您的自定义节点数据)
+
+**迁移步骤：**
+1. 在新 VPS 上克隆项目并进入目录：
+   ```bash
+   git clone https://github.com/km-hl/ProxyForge.git
+   cd ProxyForge
+   ```
+2. 将旧 VPS 上 ProxyForge 目录下的上述 4 个文件（`.env`, `template.yaml`, `airports.yaml`, `custom_nodes.yaml`）复制/下载到新 VPS 的 `ProxyForge` 目录中，覆盖默认文件。
+3. 在新 VPS 上启动容器：
+   ```bash
+   docker compose up -d
+   ```
+大功告成！您之前所有的节点、配置、筛选规则都会瞬间满血复活，并且客户端的订阅链接完全不需要改变（只需把域名解析或 IP 换成新的即可）。
