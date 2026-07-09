@@ -328,104 +328,113 @@ def get_subscription(
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
-        airport_proxies = get_airport_proxies_cached()
-        if airport_proxies:
-            save_cache_to_file(airport_proxies)
+        try:
+            airport_proxies = get_airport_proxies_cached()
+            if airport_proxies:
+                save_cache_to_file(airport_proxies)
+        except Exception as e:
+            logger.error(f"尝试使用本地持久化备份，原因: {e}")
+            airport_proxies = load_cache_from_file()
+
+        custom_proxies = load_custom_nodes()
+        all_proxies = airport_proxies + custom_proxies
+        
+        # 节点去重，防止多个机场出现同名节点或手动重复添加（保留第一个）
+        seen_names = set()
+        unique_proxies = []
+        for p in all_proxies:
+            if isinstance(p, dict) and p.get("name"):
+                if p["name"] not in seen_names:
+                    seen_names.add(p["name"])
+                    unique_proxies.append(p)
+                
+        proxy_names = [p["name"] for p in unique_proxies]
+
+        if not os.path.exists(TEMPLATE_PATH):
+            raise HTTPException(status_code=500, detail="Template file not found")
+
+        with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
+            template_config = yaml.safe_load(f) or {}
+
+        template_config["proxies"] = unique_proxies
+        all_proxy_names = {p["name"] for p in unique_proxies if p.get("name")}
+        all_group_names = {g["name"] for g in template_config.get("proxy-groups", []) if g.get("name")}
+        valid_manual_proxies = all_proxy_names.union(all_group_names).union({"DIRECT", "REJECT"})
+
+        if "proxy-groups" in template_config and isinstance(template_config["proxy-groups"], list):
+            for group in template_config["proxy-groups"]:
+                existing_proxies = group.get("proxies", [])
+                if not isinstance(existing_proxies, list):
+                    existing_proxies = []
+                    
+                # 1. Collect candidates based on 'use'
+                candidates = []
+                if "use" in group and isinstance(group["use"], list):
+                    for p in unique_proxies:
+                        if p.get("_airport_name") in group["use"]:
+                            candidates.append(p)
+                elif "filter" in group or group.get("include-all", False):
+                    candidates = unique_proxies
+                    
+                # 2. Filter candidates with regex if present
+                matched_candidates = []
+                if "filter" in group:
+                    import re
+                    filter_regex = group["filter"]
+                    for p in candidates:
+                        try:
+                            if re.search(filter_regex, str(p.get("name", ""))):
+                                matched_candidates.append(p)
+                        except: pass
+                else:
+                    matched_candidates = candidates
+                    
+                # 3. Construct final proxies list with specific order:
+                # - Custom Nodes first
+                # - Existing proxies (manual proxy groups) second
+                # - Airport Nodes last
+                final_proxies = []
+                custom_names = set(p.get("name") for p in custom_proxies if isinstance(p, dict) and p.get("name"))
+                
+                for p in matched_candidates:
+                    p_name = p.get("name")
+                    if p_name and p_name in custom_names and p_name not in final_proxies:
+                        final_proxies.append(p_name)
+                        
+                for ex_name in existing_proxies:
+                    if ex_name and ex_name in valid_manual_proxies and ex_name not in final_proxies:
+                        final_proxies.append(ex_name)
+                        
+                for p in matched_candidates:
+                    p_name = p.get("name")
+                    if p_name and p_name not in custom_names and p_name not in final_proxies:
+                        final_proxies.append(p_name)
+                        
+                group["proxies"] = final_proxies
+                
+                # Clash will fail to start if a proxy group has neither 'use' nor a non-empty 'proxies' array.
+                # Since we delete 'use' and 'filter', we must ensure 'proxies' is never empty.
+                if not group["proxies"]:
+                    group["proxies"] = ["DIRECT"]
+                
+                # Remove proxyforge-specific or mihomo-incompatible fields from the final output
+                for field in ["include-all", "filter", "use"]:
+                    if field in group:
+                        del group[field]
+        yaml_content = yaml.dump(template_config, allow_unicode=True, sort_keys=False)
+        
+        encoded_name = urllib.parse.quote(name)
+        headers = {
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}",
+            "Profile-Title": name
+        }
+        
+        return PlainTextResponse(content=yaml_content, headers=headers)
     except Exception as e:
-        logger.error(f"尝试使用本地持久化备份，原因: {e}")
-        airport_proxies = load_cache_from_file()
-
-    custom_proxies = load_custom_nodes()
-    all_proxies = airport_proxies + custom_proxies
-    
-    # 节点去重，防止多个机场出现同名节点或手动重复添加（保留第一个）
-    seen_names = set()
-    unique_proxies = []
-    for p in all_proxies:
-        if isinstance(p, dict) and p.get("name"):
-            if p["name"] not in seen_names:
-                seen_names.add(p["name"])
-                unique_proxies.append(p)
-            
-    proxy_names = [p["name"] for p in unique_proxies]
-
-    if not os.path.exists(TEMPLATE_PATH):
-        raise HTTPException(status_code=500, detail="Template file not found")
-
-    with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
-        template_config = yaml.safe_load(f) or {}
-
-    template_config["proxies"] = unique_proxies
-
-    if "proxy-groups" in template_config and isinstance(template_config["proxy-groups"], list):
-        for group in template_config["proxy-groups"]:
-            existing_proxies = group.get("proxies", [])
-            if not isinstance(existing_proxies, list):
-                existing_proxies = []
-                
-            # 1. Collect candidates based on 'use'
-            candidates = []
-            if "use" in group and isinstance(group["use"], list):
-                for p in unique_proxies:
-                    if p.get("_airport_name") in group["use"]:
-                        candidates.append(p)
-            elif "filter" in group or group.get("include-all", False):
-                candidates = unique_proxies
-                
-            # 2. Filter candidates with regex if present
-            matched_candidates = []
-            if "filter" in group:
-                import re
-                filter_regex = group["filter"]
-                for p in candidates:
-                    try:
-                        if re.search(filter_regex, str(p.get("name", ""))):
-                            matched_candidates.append(p)
-                    except: pass
-            else:
-                matched_candidates = candidates
-                
-            # 3. Construct final proxies list with specific order:
-            # - Custom Nodes first
-            # - Existing proxies (manual proxy groups) second
-            # - Airport Nodes last
-            final_proxies = []
-            custom_names = set(p.get("name") for p in custom_proxies if isinstance(p, dict) and p.get("name"))
-            
-            for p in matched_candidates:
-                name = p.get("name")
-                if name and name in custom_names and name not in final_proxies:
-                    final_proxies.append(name)
-                    
-            for name in existing_proxies:
-                if name and name not in final_proxies:
-                    final_proxies.append(name)
-                    
-            for p in matched_candidates:
-                name = p.get("name")
-                if name and name not in custom_names and name not in final_proxies:
-                    final_proxies.append(name)
-                    
-            group["proxies"] = final_proxies
-            
-            # Clash will fail to start if a proxy group has neither 'use' nor a non-empty 'proxies' array.
-            # Since we delete 'use' and 'filter', we must ensure 'proxies' is never empty.
-            if not group["proxies"]:
-                group["proxies"] = ["DIRECT"]
-            
-            # Remove proxyforge-specific or mihomo-incompatible fields from the final output
-            for field in ["include-all", "filter", "use"]:
-                if field in group:
-                    del group[field]
-    yaml_content = yaml.dump(template_config, allow_unicode=True, sort_keys=False)
-    
-    encoded_name = urllib.parse.quote(name)
-    headers = {
-        "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}",
-        "Profile-Title": name
-    }
-    
-    return PlainTextResponse(content=yaml_content, headers=headers)
+        import traceback
+        error_msg = traceback.format_exc()
+        logger.error(f"Subscription Generation Error: {error_msg}")
+        return PlainTextResponse(content=f"Error generating subscription:\n{error_msg}", status_code=500)
 
 # ================= 后台管理 API 接口 (需鉴权) =================
 
