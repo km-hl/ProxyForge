@@ -390,20 +390,20 @@ def get_subscription(
                     matched_candidates = candidates
                     
                 # 3. Construct final proxies list with specific order:
-                # - Custom Nodes first
-                # - Existing proxies (manual proxy groups) second
+                # - Existing proxies (manual proxy groups) first
+                # - Custom Nodes second
                 # - Airport Nodes last
                 final_proxies = []
                 custom_names = set(p.get("name") for p in custom_proxies if isinstance(p, dict) and p.get("name"))
                 
+                for ex_name in existing_proxies:
+                    if ex_name and ex_name in valid_manual_proxies and ex_name not in final_proxies:
+                        final_proxies.append(ex_name)
+                        
                 for p in matched_candidates:
                     p_name = p.get("name")
                     if p_name and p_name in custom_names and p_name not in final_proxies:
                         final_proxies.append(p_name)
-                        
-                for ex_name in existing_proxies:
-                    if ex_name and ex_name in valid_manual_proxies and ex_name not in final_proxies:
-                        final_proxies.append(ex_name)
                         
                 for p in matched_candidates:
                     p_name = p.get("name")
