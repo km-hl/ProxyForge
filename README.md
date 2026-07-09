@@ -79,8 +79,8 @@ ProxyForge 的所有核心数据和配置均以纯文本文件的形式持久化
 
 - `.env` (您的安全验证密钥)
 - `template.yaml` (底层配置、代理组、路由规则等核心逻辑)
-- `airports.yaml` (您的机场订阅链接列表)
 - `custom_nodes.yaml` (您的自定义节点数据)
+- `data/` 文件夹 (包含 `airports.yaml` 和您的所有缓存数据)
 
 **迁移步骤：**
 1. 在新 VPS 上克隆项目并进入目录：
@@ -88,7 +88,7 @@ ProxyForge 的所有核心数据和配置均以纯文本文件的形式持久化
    git clone https://github.com/km-hl/ProxyForge.git
    cd ProxyForge
    ```
-2. 将旧 VPS 上 ProxyForge 目录下的上述 4 个文件（`.env`, `template.yaml`, `airports.yaml`, `custom_nodes.yaml`）复制/下载到新 VPS 的 `ProxyForge` 目录中，覆盖默认文件。
+2. 将旧 VPS 上 ProxyForge 目录下的核心文件和文件夹（`.env`, `template.yaml`, `custom_nodes.yaml` 以及整个 `data` 文件夹）复制并覆盖到新 VPS 的 `ProxyForge` 目录中。
 3. 在新 VPS 上启动容器：
    ```bash
    docker compose up -d
