@@ -264,7 +264,7 @@ def parse_share_link(link: str) -> dict:
             b64 = link[8:]
             b64 += "=" * ((4 - len(b64) % 4) % 4)
             data = json.loads(base64.urlsafe_b64decode(b64).decode('utf-8'))
-            return {
+            node = {
                 "name": data.get("ps", "vmess_node"),
                 "type": "vmess",
                 "server": data.get("add", ""),
@@ -273,10 +273,13 @@ def parse_share_link(link: str) -> dict:
                 "alterId": int(data.get("aid", 0)),
                 "cipher": data.get("scy", "auto"),
                 "network": data.get("net", "tcp"),
-                "ws-opts": {"path": data.get("path", ""), "headers": {"Host": data.get("host", "")}} if data.get("net") == "ws" else None,
-                "tls": data.get("tls") == "tls",
-                "sni": data.get("sni", "")
+                "tls": data.get("tls") == "tls"
             }
+            if data.get("net") == "ws":
+                node["ws-opts"] = {"path": data.get("path", ""), "headers": {"Host": data.get("host", "")}}
+            if data.get("sni"):
+                node["servername"] = data.get("sni")
+            return node
         except: return None
     elif any(link.startswith(prefix) for prefix in ["vless://", "trojan://", "hysteria2://", "hy2://"]):
         try:
@@ -292,8 +295,8 @@ def parse_share_link(link: str) -> dict:
             elif scheme == "trojan" or scheme == "hysteria2": node["password"] = parsed.username
                 
             qs = urllib.parse.parse_qs(parsed.query)
-            if "sni" in qs: node["sni"] = qs["sni"][0]
-            if "peer" in qs: node["sni"] = qs["peer"][0]
+            if "sni" in qs: node["servername"] = qs["sni"][0]
+            elif "peer" in qs: node["servername"] = qs["peer"][0]
             if "type" in qs: node["network"] = qs["type"][0]
             
             if scheme == "vless":
@@ -304,6 +307,7 @@ def parse_share_link(link: str) -> dict:
                     node["reality-opts"] = {"public-key": qs.get("pbk", [""])[0]}
                     if "fp" in qs: node["client-fingerprint"] = qs["fp"][0]
                     if "sid" in qs: node["reality-opts"]["short-id"] = qs["sid"][0]
+                    if "spx" in qs: node["reality-opts"]["spider-x"] = urllib.parse.unquote(qs["spx"][0])
                 if node.get("network") == "ws":
                     node["ws-opts"] = {"path": qs.get("path", ["/"])[0], "headers": {"Host": qs.get("host", [""])[0]}}
             elif scheme == "hysteria2":
