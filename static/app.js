@@ -349,7 +349,14 @@ function renderGroups() {
         let displayName = getFlagEmoji(g.name);
 
         html += `
-            <div class="list-item">
+            <div class="list-item" draggable="true" data-index="${index}"
+                 ondragstart="handleGroupDragStart(event, ${index})"
+                 ondragover="handleGroupDragOver(event)"
+                 ondragenter="handleGroupDragEnter(event)"
+                 ondragleave="handleGroupDragLeave(event)"
+                 ondrop="handleGroupDrop(event, ${index})"
+                 ondragend="handleGroupDragEnd(event)">
+                <span class="drag-handle" style="cursor: grab; margin-right: 10px; color: #999;">⠿</span>
                 ${getCheckboxHTML('cb-group', index)}
                 <span class="type-badge ${badgeCls}">${g.type || 'unknown'}</span>
                 <div class="item-info">
@@ -1762,3 +1769,47 @@ document.querySelectorAll('.sidebar-item').forEach(el => {
     });
 });
 
+// === Proxy Group Drag and Drop ===
+let draggedGroupIndex = -1;
+
+window.handleGroupDragStart = (e, index) => {
+    draggedGroupIndex = index;
+    e.dataTransfer.effectAllowed = 'move';
+    e.currentTarget.style.opacity = '0.4';
+};
+
+window.handleGroupDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    return false;
+};
+
+window.handleGroupDragEnter = (e) => {
+    e.preventDefault();
+    e.currentTarget.classList.add('drag-over');
+};
+
+window.handleGroupDragLeave = (e) => {
+    e.currentTarget.classList.remove('drag-over');
+};
+
+window.handleGroupDrop = (e, targetIndex) => {
+    e.stopPropagation();
+    e.currentTarget.classList.remove('drag-over');
+    if (draggedGroupIndex !== targetIndex && draggedGroupIndex !== -1) {
+        let groups = state.templateObj['proxy-groups'];
+        const item = groups.splice(draggedGroupIndex, 1)[0];
+        groups.splice(targetIndex, 0, item);
+        saveTemplateObj();
+        renderGroups();
+    }
+    return false;
+};
+
+window.handleGroupDragEnd = (e) => {
+    e.currentTarget.style.opacity = '1';
+    document.querySelectorAll('#groups-list .list-item').forEach(item => {
+        item.classList.remove('drag-over');
+    });
+    draggedGroupIndex = -1;
+};
