@@ -78,9 +78,60 @@ def load_custom_nodes() -> List[Dict[str, Any]]:
         logger.error(f"读取自建节点文件失败: {e}")
     return []
 
+def strip_internal_proxy_fields(node: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        key: value
+        for key, value in node.items()
+        if not str(key).startswith("_")
+    }
+
+def has_country_flag(name: str) -> bool:
+    chars = list(str(name))
+    for index in range(len(chars) - 1):
+        first_code = ord(chars[index])
+        second_code = ord(chars[index + 1])
+        if 0x1F1E6 <= first_code <= 0x1F1FF and 0x1F1E6 <= second_code <= 0x1F1FF:
+            return True
+    return False
+
+def keyword_matches_name(name: str, keyword: str) -> bool:
+    import re
+    if any(ord(char) > 127 for char in keyword):
+        return keyword in name
+    return re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", name) is not None
+
+def add_flag_to_proxy_name(name: str) -> str:
+    if not name or has_country_flag(name):
+        return name
+
+    lower_name = str(name).lower()
+    flag_keywords = [
+        ("\U0001F1ED\U0001F1F0", ["hk", "hkg", "hong kong", "香港", "港"]),
+        ("\U0001F1EF\U0001F1F5", ["jp", "jpn", "japan", "tokyo", "osaka", "日本", "东京", "大阪"]),
+        ("\U0001F1FA\U0001F1F8", ["us", "usa", "united states", "america", "los angeles", "美国", "美國", "洛杉矶", "洛杉磯", "圣何塞", "聖何塞"]),
+        ("\U0001F1F8\U0001F1EC", ["sg", "singapore", "新加坡", "狮城", "獅城"]),
+        ("\U0001F1F9\U0001F1FC", ["tw", "taiwan", "taipei", "台湾", "台灣", "台北"]),
+        ("\U0001F1EC\U0001F1E7", ["uk", "gb", "united kingdom", "britain", "london", "英国", "英國", "伦敦", "倫敦"]),
+        ("\U0001F1F0\U0001F1F7", ["kr", "korea", "seoul", "韩国", "韓國", "首尔", "首爾"]),
+        ("\U0001F1E9\U0001F1EA", ["de", "germany", "frankfurt", "德国", "德國"]),
+        ("\U0001F1EB\U0001F1F7", ["fr", "france", "法国", "法國"]),
+        ("\U0001F1F7\U0001F1FA", ["ru", "russia", "俄罗斯", "俄羅斯"]),
+        ("\U0001F1EE\U0001F1F3", ["in", "india", "印度"]),
+    ]
+
+    for flag, keywords in flag_keywords:
+        if any(keyword_matches_name(lower_name, keyword) for keyword in keywords):
+            return f"{flag} {name}"
+    return name
+
 def save_custom_nodes(nodes: List[Dict[str, Any]]):
+    cleaned_nodes = [
+        strip_internal_proxy_fields(node)
+        for node in nodes
+        if isinstance(node, dict)
+    ]
     with open(CUSTOM_NODES_PATH, "w", encoding="utf-8") as f:
-        yaml.dump(nodes, f, allow_unicode=True, sort_keys=False)
+        yaml.dump(cleaned_nodes, f, allow_unicode=True, sort_keys=False)
 
 def load_template_content() -> str:
     if not os.path.exists(TEMPLATE_PATH):
@@ -263,11 +314,72 @@ def fetch_single_airport_info(item, force=False) -> dict:
 
 def parse_share_link(link: str) -> dict:
     link = link.strip()
-    if link.startswith("vmess://"):
+
+    def b64_decode(value: str) -> str:
+        value = value.strip()
+        value += "=" * ((4 - len(value) % 4) % 4)
+        return base64.urlsafe_b64decode(value).decode("utf-8")
+
+    def first(qs: dict, *keys: str, default: str = "") -> str:
+        for key in keys:
+            if key in qs and qs[key]:
+                return qs[key][0]
+        return default
+
+    def as_bool(value: str) -> bool:
+        return str(value).lower() in {"1", "true", "yes"}
+
+    def split_list(value: str) -> list:
+        return [item for item in value.replace(",", "\n").splitlines() if item]
+
+    def add_common_tls_fields(node: dict, qs: dict, sni_field: str):
+        sni = first(qs, "sni", "peer")
+        if sni:
+            node[sni_field] = sni
+        alpn = first(qs, "alpn")
+        if alpn:
+            node["alpn"] = split_list(alpn)
+        fingerprint = first(qs, "fingerprint")
+        if fingerprint:
+            node["fingerprint"] = fingerprint
+        client_fingerprint = first(qs, "fp", "client-fingerprint")
+        if client_fingerprint:
+            node["client-fingerprint"] = client_fingerprint
+        skip_cert_verify = first(qs, "skip-cert-verify", "allowInsecure", "insecure")
+        if skip_cert_verify:
+            node["skip-cert-verify"] = as_bool(skip_cert_verify)
+
+    def add_transport_opts(node: dict, qs: dict):
+        network = node.get("network")
+        path = first(qs, "path", default="/")
+        host = first(qs, "host")
+        if network == "ws":
+            ws_opts = {"path": path}
+            if host:
+                ws_opts["headers"] = {"Host": host}
+            node["ws-opts"] = ws_opts
+        elif network == "grpc":
+            service_name = first(qs, "serviceName", "service-name", "grpc-service-name")
+            if service_name:
+                node["grpc-opts"] = {"grpc-service-name": service_name}
+        elif network == "h2":
+            h2_opts = {"path": path}
+            if host:
+                h2_opts["host"] = split_list(host)
+            node["h2-opts"] = h2_opts
+        elif network == "xhttp":
+            xhttp_opts = {"path": path}
+            if host:
+                xhttp_opts["host"] = host
+            mode = first(qs, "mode")
+            if mode:
+                xhttp_opts["mode"] = mode
+            node["xhttp-opts"] = xhttp_opts
+
+    if link.lower().startswith("vmess://"):
         try:
             b64 = link[8:]
-            b64 += "=" * ((4 - len(b64) % 4) % 4)
-            data = json.loads(base64.urlsafe_b64decode(b64).decode('utf-8'))
+            data = json.loads(b64_decode(b64))
             node = {
                 "name": data.get("ps", "vmess_node"),
                 "type": "vmess",
@@ -286,7 +398,40 @@ def parse_share_link(link: str) -> dict:
                 node["servername"] = data.get("sni")
             return node
         except: return None
-    elif any(link.startswith(prefix) for prefix in ["vless://", "trojan://", "hysteria2://", "hy2://"]):
+    elif link.lower().startswith("ss://"):
+        try:
+            parsed = urllib.parse.urlparse(link)
+            userinfo = parsed.username or ""
+            server = parsed.hostname
+            port = parsed.port
+            cipher = ""
+            password = ""
+
+            if parsed.password is not None:
+                cipher = urllib.parse.unquote(parsed.username or "")
+                password = urllib.parse.unquote(parsed.password)
+            elif parsed.hostname and parsed.port and userinfo:
+                decoded_userinfo = b64_decode(userinfo)
+                cipher, password = decoded_userinfo.split(":", 1)
+            else:
+                raw = parsed.netloc or link[5:].split("#", 1)[0].split("?", 1)[0]
+                decoded = b64_decode(raw)
+                userinfo, address = decoded.rsplit("@", 1)
+                cipher, password = userinfo.split(":", 1)
+                server, port_text = address.rsplit(":", 1)
+                port = int(port_text)
+
+            return {
+                "name": urllib.parse.unquote(parsed.fragment) if parsed.fragment else "ss_node",
+                "type": "ss",
+                "server": server,
+                "port": int(port),
+                "cipher": cipher,
+                "password": password,
+                "udp": True
+            }
+        except: return None
+    elif any(link.lower().startswith(prefix) for prefix in ["vless://", "trojan://", "hysteria2://", "hy2://"]):
         try:
             parsed = urllib.parse.urlparse(link)
             scheme = "hysteria2" if parsed.scheme == "hy2" else parsed.scheme
@@ -297,28 +442,41 @@ def parse_share_link(link: str) -> dict:
                 "name": urllib.parse.unquote(parsed.fragment) if parsed.fragment else f"{scheme}_node",
                 "udp": True
             }
-            if scheme == "vless": node["uuid"] = parsed.username
-            elif scheme == "trojan" or scheme == "hysteria2": node["password"] = parsed.username
+            if scheme == "vless": node["uuid"] = urllib.parse.unquote(parsed.username or "")
+            elif scheme == "trojan" or scheme == "hysteria2": node["password"] = urllib.parse.unquote(parsed.username or "")
                 
             qs = urllib.parse.parse_qs(parsed.query)
-            if "sni" in qs: node["servername"] = qs["sni"][0]
-            elif "peer" in qs: node["servername"] = qs["peer"][0]
             if "type" in qs: node["network"] = qs["type"][0]
             
             if scheme == "vless":
-                sec = qs.get("security", [""])[0]
+                add_common_tls_fields(node, qs, "servername")
+                sec = first(qs, "security").lower()
                 node["tls"] = sec != "none"
+                encryption = first(qs, "encryption")
+                if encryption:
+                    node["encryption"] = encryption
+                flow = first(qs, "flow")
+                if flow:
+                    node["flow"] = flow
+                packet_encoding = first(qs, "packetEncoding", "packet-encoding")
+                if packet_encoding:
+                    node["packet-encoding"] = packet_encoding
                 if sec == "reality":
                     node["tls"] = True
-                    node["reality-opts"] = {"public-key": qs.get("pbk", [""])[0]}
-                    if "fp" in qs: node["client-fingerprint"] = qs["fp"][0]
+                    node["reality-opts"] = {"public-key": first(qs, "pbk")}
                     if "sid" in qs: node["reality-opts"]["short-id"] = qs["sid"][0]
-                    if "spx" in qs: node["reality-opts"]["spider-x"] = urllib.parse.unquote(qs["spx"][0])
-                if node.get("network") == "ws":
-                    node["ws-opts"] = {"path": qs.get("path", ["/"])[0], "headers": {"Host": qs.get("host", [""])[0]}}
+                    if "spx" in qs: node["reality-opts"]["spider-x"] = qs["spx"][0]
+                add_transport_opts(node, qs)
+            elif scheme == "trojan":
+                add_common_tls_fields(node, qs, "sni")
+                add_transport_opts(node, qs)
             elif scheme == "hysteria2":
+                add_common_tls_fields(node, qs, "sni")
                 if "obfs" in qs: node["obfs"] = qs["obfs"][0]
                 if "obfs-password" in qs: node["obfs-password"] = qs["obfs-password"][0]
+                for field in ["ports", "hop-interval", "up", "down", "obfs-min-packet-size", "obfs-max-packet-size"]:
+                    if field in qs:
+                        node[field] = qs[field][0]
             return node
         except: return None
     return None
@@ -366,7 +524,25 @@ def get_subscription(
         with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
             template_config = yaml.safe_load(f) or {}
 
-        template_config["proxies"] = unique_proxies
+        output_proxy_names = set()
+        proxy_name_map = {}
+        output_proxies = []
+        for proxy in unique_proxies:
+            original_name = proxy["name"]
+            output_name_base = add_flag_to_proxy_name(original_name)
+            output_name = output_name_base
+            collision_count = 2
+            while output_name in output_proxy_names:
+                output_name = f"{output_name_base} ({collision_count})"
+                collision_count += 1
+            output_proxy_names.add(output_name)
+            proxy_name_map[original_name] = output_name
+
+            output_proxy = strip_internal_proxy_fields(proxy)
+            output_proxy["name"] = output_name
+            output_proxies.append(output_proxy)
+
+        template_config["proxies"] = output_proxies
         all_proxy_names = {p["name"] for p in unique_proxies if p.get("name")}
         all_group_names = {g["name"] for g in template_config.get("proxy-groups", []) if g.get("name")}
         valid_manual_proxies = all_proxy_names.union(all_group_names).union({"DIRECT", "REJECT"})
@@ -439,6 +615,8 @@ def get_subscription(
                 # Since we delete 'use' and 'filter', we must ensure 'proxies' is never empty.
                 if not group["proxies"]:
                     group["proxies"] = ["DIRECT"]
+
+                group["proxies"] = [proxy_name_map.get(proxy_name, proxy_name) for proxy_name in group["proxies"]]
                 
                 # Remove proxyforge-specific or mihomo-incompatible fields from the final output
                 for field in ["include-all", "filter", "use", "default"]:

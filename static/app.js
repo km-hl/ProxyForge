@@ -384,7 +384,7 @@ function renderNodes() {
     }
     let html = '';
     state.nodes.forEach((n, index) => {
-        let displayName = getFlagEmoji(n.name);
+        let displayName = n.name || '';
         html += `
             <div class="list-item" draggable="true" data-index="${index}" 
                  ondragstart="handleDragStart(event, ${index})" 
