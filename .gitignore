@@ -13,6 +13,7 @@ data/
 
 # Python
 __pycache__/
+tests/
 *.py[cod]
 *$py.class
 *.so
