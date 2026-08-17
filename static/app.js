@@ -73,6 +73,22 @@ async function fetchAuth(url, options = {}) {
         logout();
         throw new Error('Unauthorized');
     }
+    if (!res.ok) {
+        let message = `HTTP ${res.status}`;
+        try {
+            const payload = await res.clone().json();
+            const detail = payload.detail;
+            if (typeof detail === 'string') {
+                message = detail;
+            } else if (detail && Array.isArray(detail.errors)) {
+                message = `${detail.message || '配置校验失败'}：\n${detail.errors.join('\n')}`;
+            }
+        } catch (_) {
+            const text = await res.text();
+            if (text) message = text;
+        }
+        throw new Error(message);
+    }
     return res;
 }
 
@@ -597,7 +613,7 @@ async function saveAirportsObj() {
             state.airportsInfo = data.info || [];
             renderAirports();
         });
-    } catch(e) { showToast('保存失败', 'error'); }
+    } catch(e) { showToast(`保存失败：${e.message}`, 'error'); }
 }
 
 // === Actions: Proxy Groups ===
@@ -1302,7 +1318,7 @@ async function saveNodesObj() {
         showToast('节点已保存');
         const allProxiesRes = await fetchAuth('/proxies');
         state.allProxies = (await allProxiesRes.json()).proxies || [];
-    } catch(e) { showToast('保存失败', 'error'); }
+    } catch(e) { showToast(`保存失败：${e.message}`, 'error'); }
 }
 
 // === Actions: Rules ===
@@ -1369,7 +1385,7 @@ renderRuleProviders();
             body: JSON.stringify({ content: state.templateRaw })
         });
         showToast('已保存底层模板');
-    } catch(e) { showToast('保存失败', 'error'); }
+    } catch(e) { showToast(`保存失败：${e.message}`, 'error'); }
 }
 
 // === Action: Global Import ===
@@ -1505,7 +1521,7 @@ renderRuleProviders();
             body: JSON.stringify({ content: newYaml })
         });
         showToast('底层配置已覆盖保存');
-    } catch (e) { showToast('YAML解析或保存失败', 'error'); }
+    } catch (e) { showToast(`YAML解析或保存失败：${e.message}`, 'error'); }
 });
 
 // === Actions: Rules & Rule Providers ===

@@ -1,12 +1,14 @@
 import os
+import copy
 import yaml
 import logging
 import base64
 import json
 import urllib.parse
 import requests
+import re
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import FastAPI, HTTPException, Query, Header, Depends, Body
+from fastapi import FastAPI, HTTPException, Query, Header, Depends, Body, Request
 from fastapi.responses import PlainTextResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from cachetools import cached, TTLCache
@@ -184,39 +186,71 @@ def parse_airport_response(text: str) -> list:
     
     return []
 
+def merge_airport_proxies_with_cache(
+    proxies: List[Dict[str, Any]], airports: List[Any]
+):
+    merged = list(proxies or [])
+    cached = load_cache_from_file()
+    available_sources = {
+        str(proxy.get("_airport_name", "")).lower()
+        for proxy in merged if isinstance(proxy, dict)
+    }
+    missing_sources = []
+    for index, airport in enumerate(airports):
+        source_name = get_airport_name(airport, index)
+        source_key = source_name.lower()
+        if source_key not in available_sources:
+            cached_for_source = [
+                proxy for proxy in cached
+                if isinstance(proxy, dict) and str(proxy.get("_airport_name", "")).lower() == source_key
+            ]
+            if cached_for_source:
+                merged.extend(cached_for_source)
+                available_sources.add(source_key)
+        if source_key not in available_sources:
+            missing_sources.append(source_name)
+    return merged, missing_sources
+
+def get_airport_name(item: Any, index: int = 0) -> str:
+    if isinstance(item, dict):
+        configured_name = str(item.get("name", "")).strip()
+        url = str(item.get("url", "")).strip()
+    else:
+        configured_name = ""
+        url = str(item).strip()
+    return configured_name or urllib.parse.urlparse(url).netloc or f"Airport-{index + 1}"
+
+def fetch_airport_item(item: Any, index: int = 0) -> List[Dict[str, Any]]:
+    url = item.get("url", "") if isinstance(item, dict) else item
+    if not isinstance(url, str) or not url.strip():
+        return []
+
+    headers = {"User-Agent": "clash-verge/v1.6.0 clash-meta/1.18.3"}
+    logger.info(f"正在从机场拉取节点: {url.strip()}")
+    try:
+        response = requests.get(url.strip(), headers=headers, timeout=30)
+        response.raise_for_status()
+        proxies = parse_airport_response(response.text)
+        if proxies:
+            airport_name = get_airport_name(item, index)
+            for proxy in proxies:
+                if isinstance(proxy, dict):
+                    proxy["_airport_name"] = airport_name
+            logger.info(f"成功从 {airport_name} 拉取到 {len(proxies)} 个节点")
+            return proxies
+        logger.warning(f"机场订阅内容解析成功，但未找到代理节点: {url.strip()}")
+    except Exception as e:
+        logger.error(f"拉取机场订阅失败 {url.strip()}: {e}")
+    return []
+
 def fetch_airport_proxies() -> List[Dict[str, Any]]:
     urls_data = load_airports()
     if not urls_data:
         logger.warning("未配置机场订阅链接，跳过拉取。")
         return []
         
-    def fetch_one(item):
-        url = item.get("url", "") if isinstance(item, dict) else item
-        if not isinstance(url, str) or not url.strip(): return []
-        
-        headers = {"User-Agent": "clash-verge/v1.6.0 clash-meta/1.18.3"}
-        logger.info(f"正在从机场拉取节点: {url.strip()}")
-        try:
-            response = requests.get(url.strip(), headers=headers, timeout=30)
-            response.raise_for_status()
-            
-            proxies = parse_airport_response(response.text)
-            if proxies:
-                logger.info(f"成功从 {url.strip()} 拉取到 {len(proxies)} 个节点")
-                airport_name = item.get("name", "") if isinstance(item, dict) else ""
-                if not airport_name:
-                    airport_name = urllib.parse.urlparse(url.strip()).netloc
-                for p in proxies:
-                    p["_airport_name"] = airport_name
-                return proxies
-            else:
-                logger.warning(f"机场订阅内容解析成功，但未找到代理节点: {url.strip()}")
-        except Exception as e:
-            logger.error(f"拉取机场订阅失败 {url.strip()}: {e}")
-        return []
-
     with ThreadPoolExecutor(max_workers=5) as executor:
-        results = list(executor.map(fetch_one, urls_data))
+        results = list(executor.map(lambda pair: fetch_airport_item(pair[1], pair[0]), enumerate(urls_data)))
         
     all_proxies = []
     seen_names = set()
@@ -435,17 +469,53 @@ def parse_share_link(link: str) -> dict:
         try:
             parsed = urllib.parse.urlparse(link)
             scheme = "hysteria2" if parsed.scheme == "hy2" else parsed.scheme
+
+            # Hysteria 2 permits both userpass authentication ("user:pass") and
+            # multi-port authorities such as host:443,2000-3000. urllib's
+            # parsed.username/parsed.port either truncates or rejects those valid
+            # forms, so preserve the raw authority for Hysteria 2.
+            raw_authority = parsed.netloc.rsplit("@", 1)
+            raw_auth = urllib.parse.unquote(raw_authority[0]) if len(raw_authority) == 2 else ""
+            raw_host_port = raw_authority[-1]
+            port_value = None
+            ports_value = ""
+            if scheme == "hysteria2":
+                if raw_host_port.startswith("["):
+                    closing_bracket = raw_host_port.find("]")
+                    port_spec = raw_host_port[closing_bracket + 2:] if closing_bracket >= 0 and raw_host_port[closing_bracket + 1:closing_bracket + 2] == ":" else ""
+                else:
+                    host_parts = raw_host_port.rsplit(":", 1)
+                    port_spec = host_parts[1] if len(host_parts) == 2 else ""
+
+                port_spec = urllib.parse.unquote(port_spec)
+                if port_spec and re.fullmatch(r"[0-9,-]+", port_spec):
+                    if "," in port_spec or "-" in port_spec:
+                        ports_value = port_spec
+                        first_port = re.search(r"\d+", port_spec)
+                        port_value = int(first_port.group(0)) if first_port else 443
+                    else:
+                        port_value = int(port_spec)
+                else:
+                    # The Hysteria URI specification defines 443 as the default.
+                    port_value = 443
+            else:
+                port_value = parsed.port
+
             node = {
                 "type": scheme,
                 "server": parsed.hostname,
-                "port": parsed.port,
+                "port": port_value,
                 "name": urllib.parse.unquote(parsed.fragment) if parsed.fragment else f"{scheme}_node",
                 "udp": True
             }
             if scheme == "vless": node["uuid"] = urllib.parse.unquote(parsed.username or "")
-            elif scheme == "trojan" or scheme == "hysteria2": node["password"] = urllib.parse.unquote(parsed.username or "")
+            elif scheme == "trojan": node["password"] = urllib.parse.unquote(parsed.username or "")
+            elif scheme == "hysteria2":
+                node["password"] = raw_auth
+                if ports_value:
+                    node["ports"] = ports_value
                 
-            qs = urllib.parse.parse_qs(parsed.query)
+            qs = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
             if "type" in qs: node["network"] = qs["type"][0]
             
             if scheme == "vless":
@@ -472,14 +542,401 @@ def parse_share_link(link: str) -> dict:
                 add_transport_opts(node, qs)
             elif scheme == "hysteria2":
                 add_common_tls_fields(node, qs, "sni")
-                if "obfs" in qs: node["obfs"] = qs["obfs"][0]
-                if "obfs-password" in qs: node["obfs-password"] = qs["obfs-password"][0]
-                for field in ["ports", "hop-interval", "up", "down", "obfs-min-packet-size", "obfs-max-packet-size"]:
-                    if field in qs:
-                        node[field] = qs[field][0]
+                auth = first(qs, "auth")
+                if auth and not node["password"]:
+                    node["password"] = auth
+                obfs = first(qs, "obfs")
+                if obfs and obfs.lower() != "none":
+                    node["obfs"] = obfs
+                obfs_password = first(qs, "obfs-password", "obfsPassword")
+                if obfs_password and node.get("obfs"):
+                    node["obfs-password"] = obfs_password
+                pin_sha256 = first(qs, "pinSHA256", "pin-sha256")
+                if pin_sha256:
+                    node["fingerprint"] = pin_sha256
+                field_aliases = {
+                    "ports": ("ports", "mport"),
+                    "hop-interval": ("hop-interval", "hopInterval"),
+                    "up": ("up", "upmbps"),
+                    "down": ("down", "downmbps"),
+                    "obfs-min-packet-size": ("obfs-min-packet-size",),
+                    "obfs-max-packet-size": ("obfs-max-packet-size",),
+                }
+                for field, aliases in field_aliases.items():
+                    value = first(qs, *aliases)
+                    if value:
+                        node[field] = value
             return node
         except: return None
     return None
+
+class ConfigValidationError(ValueError):
+    def __init__(self, errors: List[str]):
+        self.errors = errors
+        super().__init__("\n".join(errors))
+
+def _is_valid_port(value: Any) -> bool:
+    try:
+        return 1 <= int(value) <= 65535
+    except (TypeError, ValueError):
+        return False
+
+def validate_proxy_nodes(proxies: Any, location: str = "proxies") -> List[str]:
+    errors = []
+    if not isinstance(proxies, list):
+        return [f"{location} 必须是列表"]
+
+    seen_names = set()
+    for index, proxy in enumerate(proxies, 1):
+        prefix = f"{location}[{index}]"
+        if not isinstance(proxy, dict):
+            errors.append(f"{prefix} 必须是对象")
+            continue
+        name = proxy.get("name")
+        proxy_type = str(proxy.get("type", "")).lower()
+        if not isinstance(name, str) or not name.strip():
+            errors.append(f"{prefix} 缺少有效的 name")
+        elif name in seen_names:
+            errors.append(f"{prefix} 节点名称重复: {name}")
+        else:
+            seen_names.add(name)
+        if not proxy_type:
+            errors.append(f"{prefix} 缺少 type")
+
+        if proxy_type not in {"direct", "reject", "reject-drop", "pass", "dns"}:
+            if not proxy.get("server"):
+                errors.append(f"{prefix} ({name or '未命名'}) 缺少 server")
+            if proxy_type == "hysteria2":
+                ports = proxy.get("ports")
+                if ports and not re.fullmatch(r"\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*", str(ports)):
+                    errors.append(f"{prefix} ({name or '未命名'}) 的 ports 格式无效: {ports}")
+                if not ports and not _is_valid_port(proxy.get("port")):
+                    errors.append(f"{prefix} ({name or '未命名'}) 缺少有效的 port/ports")
+                if not str(proxy.get("password", "")):
+                    errors.append(f"{prefix} ({name or '未命名'}) 缺少 Hysteria2 password")
+                if proxy.get("obfs") not in {None, "", "salamander"}:
+                    errors.append(f"{prefix} ({name or '未命名'}) 的 Mihomo Hysteria2 obfs 不受支持: {proxy.get('obfs')}")
+                if proxy.get("obfs") and not proxy.get("obfs-password"):
+                    errors.append(f"{prefix} ({name or '未命名'}) 启用了 obfs 但缺少 obfs-password")
+            elif not _is_valid_port(proxy.get("port")):
+                errors.append(f"{prefix} ({name or '未命名'}) 缺少有效的 port: {proxy.get('port')}")
+    return errors
+
+def validate_mihomo_config(
+    config: Any,
+    external_proxy_names: Any = None,
+    external_provider_names: Any = None,
+) -> List[str]:
+    """Perform static YAML and Mihomo reference checks before publishing config."""
+    if not isinstance(config, dict):
+        return ["配置根节点必须是 YAML 对象"]
+
+    errors = []
+    proxies = config.get("proxies", [])
+    errors.extend(validate_proxy_nodes(proxies))
+    proxy_names = {
+        proxy.get("name") for proxy in proxies
+        if isinstance(proxy, dict) and isinstance(proxy.get("name"), str)
+    }
+    proxy_names.update(str(name) for name in (external_proxy_names or []) if name)
+
+    providers = config.get("proxy-providers", {}) or {}
+    if not isinstance(providers, dict):
+        errors.append("proxy-providers 必须是对象")
+        providers = {}
+    provider_names = set(providers)
+    provider_names.update(str(name) for name in (external_provider_names or []) if name)
+    for provider_name, provider in providers.items():
+        prefix = f"proxy-providers.{provider_name}"
+        if not isinstance(provider, dict):
+            errors.append(f"{prefix} 必须是对象")
+            continue
+        provider_type = provider.get("type")
+        if provider_type not in {"http", "file", "inline"}:
+            errors.append(f"{prefix} 的 type 无效: {provider_type}")
+        if provider_type == "http" and not provider.get("url"):
+            errors.append(f"{prefix} 缺少 url")
+        if provider_type in {"http", "file"} and not provider.get("path"):
+            errors.append(f"{prefix} 缺少 path")
+
+    groups = config.get("proxy-groups", []) or []
+    if not isinstance(groups, list):
+        errors.append("proxy-groups 必须是列表")
+        groups = []
+    group_names = set()
+    for index, group in enumerate(groups, 1):
+        if not isinstance(group, dict):
+            errors.append(f"proxy-groups[{index}] 必须是对象")
+            continue
+        name = group.get("name")
+        if not isinstance(name, str) or not name.strip():
+            errors.append(f"proxy-groups[{index}] 缺少有效的 name")
+        elif name in group_names:
+            errors.append(f"proxy-groups[{index}] 组名重复: {name}")
+        else:
+            group_names.add(name)
+
+    builtins = {"DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE", "GLOBAL"}
+    group_graph = {name: set() for name in group_names}
+    for index, group in enumerate(groups, 1):
+        if not isinstance(group, dict):
+            continue
+        name = group.get("name")
+        group_type = group.get("type")
+        if not group_type:
+            errors.append(f"proxy-groups[{index}] ({name or '未命名'}) 缺少 type")
+        if group_type in {"url-test", "fallback", "load-balance"} and not group.get("url"):
+            errors.append(f"proxy-groups[{index}] ({name or '未命名'}) 的 {group_type} 缺少测速 url")
+        refs = group.get("proxies", []) or []
+        uses = group.get("use", []) or []
+        if not isinstance(refs, list):
+            errors.append(f"proxy-groups[{index}] ({name or '未命名'}) 的 proxies 必须是列表")
+            refs = []
+        if not isinstance(uses, list):
+            errors.append(f"proxy-groups[{index}] ({name or '未命名'}) 的 use 必须是列表")
+            uses = []
+        if not refs and not uses and not group.get("include-all"):
+            errors.append(f"proxy-groups[{index}] ({name or '未命名'}) 没有任何 proxies 或 use")
+        for provider_name in uses:
+            if provider_name not in provider_names:
+                errors.append(f"proxy-groups[{index}] ({name or '未命名'}) 引用了不存在的 proxy-provider: {provider_name}")
+        for ref in refs:
+            if ref not in proxy_names and ref not in group_names and ref not in builtins:
+                errors.append(f"proxy-groups[{index}] ({name or '未命名'}) 引用了不存在的代理/组: {ref}")
+            if name in group_graph and ref in group_names:
+                group_graph[name].add(ref)
+
+    visiting = set()
+    visited = set()
+    def visit_group(name: str, path: List[str]):
+        if name in visiting:
+            cycle_start = path.index(name) if name in path else 0
+            errors.append(f"代理组存在循环引用: {' -> '.join(path[cycle_start:] + [name])}")
+            return
+        if name in visited:
+            return
+        visiting.add(name)
+        for child in group_graph.get(name, set()):
+            visit_group(child, path + [name])
+        visiting.remove(name)
+        visited.add(name)
+    for group_name in group_graph:
+        visit_group(group_name, [])
+
+    rule_providers = config.get("rule-providers", {}) or {}
+    if not isinstance(rule_providers, dict):
+        errors.append("rule-providers 必须是对象")
+        rule_providers = {}
+    valid_targets = proxy_names | group_names | builtins
+    rules = config.get("rules", []) or []
+    if not isinstance(rules, list):
+        errors.append("rules 必须是列表")
+        rules = []
+    for index, rule in enumerate(rules, 1):
+        if not isinstance(rule, str):
+            errors.append(f"rules[{index}] 必须是字符串")
+            continue
+        parts = [part.strip() for part in rule.split(",")]
+        rule_type = parts[0].upper() if parts else ""
+        if rule_type == "MATCH":
+            target = parts[1] if len(parts) > 1 else ""
+        elif rule_type in {"AND", "OR", "NOT", "SUB-RULE"}:
+            # Logical rules contain nested commas; leave their grammar to Mihomo.
+            continue
+        else:
+            target = parts[2] if len(parts) > 2 else ""
+        if not target:
+            errors.append(f"rules[{index}] 缺少目标策略: {rule}")
+        elif target not in valid_targets:
+            errors.append(f"rules[{index}] 引用了不存在的目标策略 [{target}]: {rule}")
+        if rule_type == "RULE-SET":
+            provider_name = parts[1] if len(parts) > 1 else ""
+            if provider_name not in rule_providers:
+                errors.append(f"rules[{index}] 引用了不存在的 rule-provider [{provider_name}]: {rule}")
+    return errors
+
+def assert_valid_mihomo_config(config: Any, **kwargs):
+    errors = validate_mihomo_config(config, **kwargs)
+    if errors:
+        raise ConfigValidationError(errors)
+
+def build_airport_providers(
+    airports: List[Any], base_url: str, token: str, reserved_names: Any = None
+):
+    providers = {}
+    source_map = {}
+    used_names = set(reserved_names or [])
+    for index, item in enumerate(airports):
+        source_name = get_airport_name(item, index)
+        provider_name = source_name
+        suffix = 2
+        while provider_name in used_names:
+            provider_name = f"{source_name} ({suffix})"
+            suffix += 1
+        used_names.add(provider_name)
+        source_map[source_name.lower()] = provider_name
+        provider_url = f"{base_url.rstrip('/')}/provider/{index}?token={urllib.parse.quote(token, safe='')}"
+        providers[provider_name] = {
+            "type": "http",
+            "url": provider_url,
+            "path": f"./proxy_providers/proxyforge_{index + 1}.yaml",
+            "interval": 14400,
+            "health-check": {
+                "enable": True,
+                "url": "https://www.gstatic.com/generate_204",
+                "interval": 300,
+                "timeout": 5000,
+                "lazy": True,
+            },
+            "override": {"additional-prefix": f"{provider_name} | "},
+        }
+    return providers, source_map
+
+def decorate_proxy_names(proxies: List[Dict[str, Any]]):
+    output = []
+    name_map = {}
+    used_names = set()
+    for proxy in proxies:
+        if not isinstance(proxy, dict) or not proxy.get("name"):
+            continue
+        original_name = proxy["name"]
+        output_name_base = add_flag_to_proxy_name(original_name)
+        output_name = output_name_base
+        suffix = 2
+        while output_name in used_names:
+            output_name = f"{output_name_base} ({suffix})"
+            suffix += 1
+        used_names.add(output_name)
+        name_map[original_name] = output_name
+        cleaned_proxy = strip_internal_proxy_fields(proxy)
+        cleaned_proxy["name"] = output_name
+        output.append(cleaned_proxy)
+    return output, name_map
+
+def build_subscription_config(
+    template_config: Dict[str, Any],
+    custom_proxies: List[Dict[str, Any]],
+    airports: List[Any],
+    base_url: str,
+    token: str,
+) -> Dict[str, Any]:
+    config = copy.deepcopy(template_config)
+    if not isinstance(config, dict):
+        raise ConfigValidationError(["模板根节点必须是 YAML 对象"])
+
+    output_proxies, proxy_name_map = decorate_proxy_names(custom_proxies)
+    config["proxies"] = output_proxies
+
+    existing_providers = config.get("proxy-providers", {}) or {}
+    if not isinstance(existing_providers, dict):
+        existing_providers = {}
+    airport_providers, source_map = build_airport_providers(
+        airports, base_url, token, reserved_names=existing_providers
+    )
+    config["proxy-providers"] = {**existing_providers, **airport_providers}
+    if not config["proxy-providers"]:
+        config.pop("proxy-providers", None)
+
+    all_airport_provider_names = list(airport_providers)
+    custom_names = {proxy.get("name") for proxy in custom_proxies if isinstance(proxy, dict)}
+    groups = config.get("proxy-groups", [])
+    if isinstance(groups, list):
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            existing_refs = group.get("proxies", [])
+            if not isinstance(existing_refs, list):
+                existing_refs = []
+            original_use = group.get("use", [])
+            if not isinstance(original_use, list):
+                original_use = []
+            include_all = bool(group.get("include-all"))
+            filter_pattern = group.get("filter")
+
+            use_names = []
+            include_custom = include_all
+            for source in original_use:
+                if str(source).lower() == "_custom_nodes_":
+                    include_custom = True
+                    continue
+                resolved = source_map.get(str(source).lower(), source)
+                if resolved not in use_names:
+                    use_names.append(resolved)
+
+            # The legacy UI treated a filter without an explicit source as
+            # filtering all airports. Preserve that behaviour with providers.
+            if include_all or (filter_pattern and not original_use):
+                for provider_name in all_airport_provider_names:
+                    if provider_name not in use_names:
+                        use_names.append(provider_name)
+                include_custom = True
+
+            final_refs = []
+            for ref in existing_refs:
+                mapped_ref = proxy_name_map.get(ref, ref)
+                if mapped_ref not in final_refs:
+                    final_refs.append(mapped_ref)
+
+            if include_custom:
+                compiled_filter = None
+                if filter_pattern:
+                    try:
+                        compiled_filter = re.compile(str(filter_pattern))
+                    except re.error as e:
+                        raise ConfigValidationError([
+                            f"代理组 [{group.get('name', '未命名')}] 的 filter 正则无效: {e}"
+                        ])
+                for proxy in custom_proxies:
+                    original_name = proxy.get("name") if isinstance(proxy, dict) else None
+                    if not original_name or original_name not in custom_names:
+                        continue
+                    if compiled_filter and not compiled_filter.search(str(original_name)):
+                        continue
+                    output_name = proxy_name_map.get(original_name, original_name)
+                    if output_name not in final_refs:
+                        final_refs.append(output_name)
+
+            default_value = proxy_name_map.get(group.get("default"), group.get("default"))
+            if default_value in final_refs:
+                final_refs.remove(default_value)
+                final_refs.insert(0, default_value)
+
+            if final_refs:
+                group["proxies"] = final_refs
+            else:
+                group.pop("proxies", None)
+            if use_names:
+                group["use"] = use_names
+            else:
+                group.pop("use", None)
+            if not final_refs and not use_names:
+                group["proxies"] = ["DIRECT"]
+            group.pop("include-all", None)
+            group.pop("default", None)
+
+    rules = config.get("rules", [])
+    if isinstance(rules, list):
+        rewritten_rules = []
+        for rule in rules:
+            if not isinstance(rule, str):
+                rewritten_rules.append(rule)
+                continue
+            parts = rule.split(",")
+            rule_type = parts[0].strip().upper() if parts else ""
+            target_index = 1 if rule_type == "MATCH" else 2
+            if rule_type not in {"AND", "OR", "NOT", "SUB-RULE"} and len(parts) > target_index:
+                target = parts[target_index].strip()
+                if target in proxy_name_map:
+                    parts[target_index] = parts[target_index].replace(target, proxy_name_map[target], 1)
+            rewritten_rules.append(",".join(parts))
+        config["rules"] = rewritten_rules
+
+    assert_valid_mihomo_config(config)
+    # Verify that the emitted YAML survives a dump/load round trip as the final
+    # syntax gate before it reaches Mihomo.
+    round_trip = yaml.safe_load(yaml.safe_dump(config, allow_unicode=True, sort_keys=False))
+    assert_valid_mihomo_config(round_trip)
+    return config
 
 @cached(cache=subscription_cache)
 def get_airport_proxies_cached() -> List[Dict[str, Any]]:
@@ -487,8 +944,39 @@ def get_airport_proxies_cached() -> List[Dict[str, Any]]:
 
 # ================= 订阅下发接口 (对外公开) =================
 
+@app.get("/provider/{airport_index}", response_class=PlainTextResponse)
+def get_airport_provider(
+    airport_index: int,
+    token: str = Query(..., description="安全验证 Token"),
+):
+    if token != SECRET_TOKEN:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    airports = load_airports()
+    if airport_index < 0 or airport_index >= len(airports):
+        raise HTTPException(status_code=404, detail="Airport provider not found")
+
+    airport = airports[airport_index]
+    proxies = fetch_airport_item(airport, airport_index)
+    if not proxies:
+        source_name = get_airport_name(airport, airport_index).lower()
+        proxies = [
+            proxy for proxy in load_cache_from_file()
+            if isinstance(proxy, dict) and str(proxy.get("_airport_name", "")).lower() == source_name
+        ]
+    if not proxies:
+        raise HTTPException(status_code=502, detail="机场订阅暂时不可用，且没有可用缓存")
+
+    output_proxies, _ = decorate_proxy_names(proxies)
+    errors = validate_proxy_nodes(output_proxies, location="payload")
+    if errors:
+        raise HTTPException(status_code=422, detail={"message": "机场节点校验失败", "errors": errors})
+    return PlainTextResponse(
+        content=yaml.safe_dump({"payload": output_proxies}, allow_unicode=True, sort_keys=False),
+    )
+
 @app.get("/sub", response_class=PlainTextResponse)
 def get_subscription(
+    request: Request,
     token: str = Query(..., description="安全验证 Token"),
     name: str = Query("ProxyForge", description="自定义订阅名称")
 ):
@@ -498,25 +986,25 @@ def get_subscription(
     try:
         try:
             airport_proxies = get_airport_proxies_cached()
-            if airport_proxies:
-                save_cache_to_file(airport_proxies)
         except Exception as e:
             logger.error(f"尝试使用本地持久化备份，原因: {e}")
             airport_proxies = load_cache_from_file()
 
+        airports = load_airports()
+        # Fill a temporarily unavailable airport from its last persisted payload,
+        # then require every configured provider to have at least one checked node.
+        airport_proxies, unavailable_sources = merge_airport_proxies_with_cache(
+            airport_proxies, airports
+        )
+        if unavailable_sources:
+            raise ConfigValidationError([
+                f"机场 [{source}] 当前未拉取到节点，且没有可用缓存"
+                for source in unavailable_sources
+            ])
+        if airport_proxies:
+            save_cache_to_file(airport_proxies)
+
         custom_proxies = load_custom_nodes()
-        all_proxies = airport_proxies + custom_proxies
-        
-        # 节点去重，防止多个机场出现同名节点或手动重复添加（保留第一个）
-        seen_names = set()
-        unique_proxies = []
-        for p in all_proxies:
-            if isinstance(p, dict) and p.get("name"):
-                if p["name"] not in seen_names:
-                    seen_names.add(p["name"])
-                    unique_proxies.append(p)
-                
-        proxy_names = [p["name"] for p in unique_proxies]
 
         if not os.path.exists(TEMPLATE_PATH):
             raise HTTPException(status_code=500, detail="Template file not found")
@@ -524,118 +1012,49 @@ def get_subscription(
         with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
             template_config = yaml.safe_load(f) or {}
 
-        output_proxy_names = set()
-        proxy_name_map = {}
-        output_proxies = []
-        for proxy in unique_proxies:
-            original_name = proxy["name"]
-            output_name_base = add_flag_to_proxy_name(original_name)
-            output_name = output_name_base
-            collision_count = 2
-            while output_name in output_proxy_names:
-                output_name = f"{output_name_base} ({collision_count})"
-                collision_count += 1
-            output_proxy_names.add(output_name)
-            proxy_name_map[original_name] = output_name
-
-            output_proxy = strip_internal_proxy_fields(proxy)
-            output_proxy["name"] = output_name
-            output_proxies.append(output_proxy)
-
-        template_config["proxies"] = output_proxies
-        all_proxy_names = {p["name"] for p in unique_proxies if p.get("name")}
-        all_group_names = {g["name"] for g in template_config.get("proxy-groups", []) if g.get("name")}
-        valid_manual_proxies = all_proxy_names.union(all_group_names).union({"DIRECT", "REJECT"})
-
-        if "proxy-groups" in template_config and isinstance(template_config["proxy-groups"], list):
-            for group in template_config["proxy-groups"]:
-                existing_proxies = group.get("proxies", [])
-                if not isinstance(existing_proxies, list):
-                    existing_proxies = []
-                    
-                # 1. Collect candidates based on 'use'
-                candidates = []
-                if "use" in group and isinstance(group["use"], list):
-                    use_list_lower = [str(u).lower() for u in group["use"]]
-                    for p in unique_proxies:
-                        if str(p.get("_airport_name", "")).lower() in use_list_lower:
-                            candidates.append(p)
-                elif "filter" in group or group.get("include-all", False):
-                    candidates = unique_proxies
-                    
-                # 2. Filter candidates with regex if present
-                matched_candidates = []
-                if "filter" in group:
-                    import re
-                    filter_regex = group["filter"]
-                    for p in candidates:
-                        try:
-                            if re.search(filter_regex, str(p.get("name", ""))):
-                                matched_candidates.append(p)
-                        except: pass
-                else:
-                    matched_candidates = candidates
-                    
-                # 3. Construct final proxies list with specific order:
-                # - DIRECT/REJECT/🚀 节点选择 (built-ins / top priority) first
-                # - Custom Nodes second
-                # - Remaining existing proxies (nested groups, manual selections) third
-                # - Airport Nodes last
-                final_proxies = []
-                custom_names = set(p.get("name") for p in custom_proxies if isinstance(p, dict) and p.get("name"))
-                
-                # Top priority items in exact order
-                for top_item in ["DIRECT", "REJECT", "🚀 节点选择", "节点选择"]:
-                    if top_item in existing_proxies and top_item not in final_proxies:
-                        final_proxies.append(top_item)
-                        
-                for p in matched_candidates:
-                    p_name = p.get("name")
-                    if p_name and p_name in custom_names and p_name not in final_proxies:
-                        final_proxies.append(p_name)
-                        
-                for ex_name in existing_proxies:
-                    if ex_name and ex_name in valid_manual_proxies and ex_name not in final_proxies:
-                        final_proxies.append(ex_name)
-                        
-                for p in matched_candidates:
-                    p_name = p.get("name")
-                    if p_name and p_name not in custom_names and p_name not in final_proxies:
-                        final_proxies.append(p_name)
-                        
-                group["proxies"] = final_proxies
-                
-                if "default" in group:
-                    def_val = group["default"]
-                    if def_val in group["proxies"]:
-                        group["proxies"].remove(def_val)
-                        group["proxies"].insert(0, def_val)
-                
-                # Clash will fail to start if a proxy group has neither 'use' nor a non-empty 'proxies' array.
-                # Since we delete 'use' and 'filter', we must ensure 'proxies' is never empty.
-                if not group["proxies"]:
-                    group["proxies"] = ["DIRECT"]
-
-                group["proxies"] = [proxy_name_map.get(proxy_name, proxy_name) for proxy_name in group["proxies"]]
-                
-                # Remove proxyforge-specific or mihomo-incompatible fields from the final output
-                for field in ["include-all", "filter", "use", "default"]:
-                    if field in group:
-                        del group[field]
-        yaml_content = yaml.dump(template_config, allow_unicode=True, sort_keys=False)
+        # Airport nodes remain independent proxy-providers. The already fetched
+        # nodes above are still validated so a broken provider cannot be published
+        # unnoticed merely because its payload is remote.
+        airport_errors = []
+        for index, airport_proxy in enumerate(airport_proxies, 1):
+            # Names may legitimately repeat across different providers; the
+            # provider override prefixes them at load time. Validate each node's
+            # protocol fields here, while the provider endpoint validates its
+            # decorated payload as a whole.
+            airport_errors.extend(
+                validate_proxy_nodes([airport_proxy], location=f"airport-proxies[{index}]")
+            )
+        if airport_errors:
+            raise ConfigValidationError(airport_errors)
+        final_config = build_subscription_config(
+            template_config,
+            custom_proxies,
+            airports,
+            str(request.base_url).rstrip("/"),
+            token,
+        )
+        yaml_content = yaml.safe_dump(final_config, allow_unicode=True, sort_keys=False)
         
         encoded_name = urllib.parse.quote(name)
         headers = {
             "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}",
-            "Profile-Title": name
+            "Profile-Title": encoded_name
         }
         
         return PlainTextResponse(content=yaml_content, headers=headers)
-    except Exception as e:
+    except ConfigValidationError as e:
+        logger.warning("订阅配置校验失败: %s", "; ".join(e.errors))
+        return PlainTextResponse(
+            content="订阅配置校验失败:\n- " + "\n- ".join(e.errors),
+            status_code=422,
+        )
+    except HTTPException:
+        raise
+    except Exception:
         import traceback
         error_msg = traceback.format_exc()
         logger.error(f"Subscription Generation Error: {error_msg}")
-        return PlainTextResponse(content=f"Error generating subscription:\n{error_msg}", status_code=500)
+        return PlainTextResponse(content="生成订阅时发生内部错误，请查看服务端日志。", status_code=500)
 
 # ================= 后台管理 API 接口 (需鉴权) =================
 
@@ -733,11 +1152,21 @@ class ParseLinksModel(BaseModel):
 @app.post("/api/parse-links", dependencies=[Depends(verify_api_token)])
 def parse_links_api(data: ParseLinksModel):
     nodes = []
-    for link in data.links:
+    errors = []
+    for index, link in enumerate(data.links, 1):
         parsed = parse_share_link(link)
         if parsed:
             parsed = {k: v for k, v in parsed.items() if v is not None}
-            nodes.append(parsed)
+            node_errors = validate_proxy_nodes([parsed], location=f"links[{index}]")
+            if node_errors:
+                errors.extend(node_errors)
+            else:
+                nodes.append(parsed)
+        else:
+            scheme = link.split(":", 1)[0] if ":" in link else "未知协议"
+            errors.append(f"links[{index}] ({scheme}) 分享链接格式无效")
+    if errors:
+        raise HTTPException(status_code=400, detail={"message": "分享链接校验失败", "errors": errors})
     return {"nodes": nodes}
 
 @app.get("/api/nodes", dependencies=[Depends(verify_api_token)])
@@ -755,6 +1184,9 @@ class NodesModel(BaseModel):
 
 @app.post("/api/nodes", dependencies=[Depends(verify_api_token)])
 def update_nodes(data: NodesModel):
+    errors = validate_proxy_nodes(data.nodes, location="nodes")
+    if errors:
+        raise HTTPException(status_code=400, detail={"message": "节点配置校验失败", "errors": errors})
     save_custom_nodes(data.nodes)
     return {"status": "ok"}
 
@@ -768,9 +1200,21 @@ class TemplateModel(BaseModel):
 @app.post("/api/template", dependencies=[Depends(verify_api_token)])
 def update_template(data: TemplateModel):
     try:
-        yaml.safe_load(data.content)
+        config = yaml.safe_load(data.content)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"YAML 格式错误: {e}")
+    provider_names = [get_airport_name(item, index) for index, item in enumerate(load_airports())]
+    custom_names = [
+        proxy.get("name") for proxy in load_custom_nodes()
+        if isinstance(proxy, dict) and proxy.get("name")
+    ]
+    errors = validate_mihomo_config(
+        config,
+        external_proxy_names=custom_names,
+        external_provider_names=provider_names,
+    )
+    if errors:
+        raise HTTPException(status_code=400, detail={"message": "Mihomo 配置校验失败", "errors": errors})
     save_template_content(data.content)
     return {"status": "ok"}
 
@@ -787,14 +1231,18 @@ async def background_airport_updater():
             logger.info("后台定时任务触发：开始静默拉取机场节点...")
             # 利用已有的多线程逻辑并发拉取
             proxies = fetch_airport_proxies()
-            if proxies:
+            proxies, missing_sources = merge_airport_proxies_with_cache(proxies, load_airports())
+            if proxies and not missing_sources:
                 save_cache_to_file(proxies)
                 subscription_cache.clear()
                 # 预热内存缓存，后续 /sub 请求将直接 0 延迟命中
                 subscription_cache[hashkey()] = proxies
                 logger.info(f"后台定时任务完成，成功更新了 {len(proxies)} 个机场节点")
             else:
-                logger.warning("后台定时任务：拉取到的节点为空，放弃更新，保留旧缓存")
+                logger.warning(
+                    "后台定时任务：机场数据不完整 (%s)，放弃覆盖旧缓存",
+                    ", ".join(missing_sources) if missing_sources else "无节点",
+                )
         except Exception as e:
             logger.error(f"后台定时任务异常: {e}")
             
