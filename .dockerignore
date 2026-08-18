@@ -1,0 +1,15 @@
+.git
+.env
+.venv
+env
+venv
+ENV
+__pycache__
+*.pyc
+tests
+data
+custom_nodes.yaml
+template.yaml
+HANDOFF.md
+AGENTS.md
+CLAUDE.md

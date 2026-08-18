@@ -1,5 +1,6 @@
 import os
 import copy
+import shutil
 import yaml
 import logging
 import base64
@@ -25,9 +26,12 @@ def get_env_var(key, default=""):
 
 SECRET_TOKEN = get_env_var("SECRET_TOKEN", "my_secret_token")
 
-TEMPLATE_PATH = "template.yaml"
-CUSTOM_NODES_PATH = "custom_nodes.yaml"
 DATA_DIR = "data"
+TEMPLATE_PATH = os.path.join(DATA_DIR, "template.yaml")
+TEMPLATE_EXAMPLE_PATH = "template.example.yaml"
+LEGACY_TEMPLATE_PATH = "template.yaml"
+CUSTOM_NODES_PATH = os.path.join(DATA_DIR, "custom_nodes.yaml")
+LEGACY_CUSTOM_NODES_PATH = "custom_nodes.yaml"
 CACHE_FILE_PATH = os.path.join(DATA_DIR, "airport_cache.yaml")
 AIRPORTS_PATH = os.path.join(DATA_DIR, "airports.yaml")
 
@@ -36,6 +40,54 @@ os.makedirs("static", exist_ok=True)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+def initialize_template_storage() -> str:
+    """Create the persistent runtime template, migrating legacy installs first."""
+    if os.path.isfile(TEMPLATE_PATH):
+        return TEMPLATE_PATH
+    if os.path.isdir(TEMPLATE_PATH):
+        logger.error(f"模板路径是目录而不是文件: {TEMPLATE_PATH}")
+        return ""
+
+    for source, description in [
+        (LEGACY_TEMPLATE_PATH, "旧版运行配置"),
+        (TEMPLATE_EXAMPLE_PATH, "默认模板"),
+    ]:
+        if not os.path.isfile(source):
+            continue
+        try:
+            shutil.copyfile(source, TEMPLATE_PATH)
+            logger.info(f"已从{description}初始化持久化模板: {TEMPLATE_PATH}")
+            return TEMPLATE_PATH
+        except OSError as e:
+            logger.error(f"初始化持久化模板失败: {e}")
+            return ""
+    logger.error(
+        f"找不到模板来源，需要 {TEMPLATE_PATH}、{LEGACY_TEMPLATE_PATH} "
+        f"或 {TEMPLATE_EXAMPLE_PATH} 中的任意一个文件"
+    )
+    return ""
+
+initialize_template_storage()
+
+def initialize_custom_nodes_storage() -> str:
+    """Migrate the legacy custom node file into the persistent data directory."""
+    if os.path.isfile(CUSTOM_NODES_PATH):
+        return CUSTOM_NODES_PATH
+    if os.path.isdir(CUSTOM_NODES_PATH):
+        logger.error(f"自建节点路径是目录而不是文件: {CUSTOM_NODES_PATH}")
+        return ""
+    if not os.path.isfile(LEGACY_CUSTOM_NODES_PATH):
+        return ""
+    try:
+        shutil.copyfile(LEGACY_CUSTOM_NODES_PATH, CUSTOM_NODES_PATH)
+        logger.info(f"已迁移旧版自建节点文件: {CUSTOM_NODES_PATH}")
+        return CUSTOM_NODES_PATH
+    except OSError as e:
+        logger.error(f"迁移自建节点文件失败: {e}")
+        return ""
+
+initialize_custom_nodes_storage()
 
 app = FastAPI(title="ProxyForge", description="专属节点订阅聚合与配置下发中心")
 
@@ -65,6 +117,7 @@ def save_airports(urls: List[str]):
         yaml.dump(urls, f, allow_unicode=True, sort_keys=False)
 
 def load_custom_nodes() -> List[Dict[str, Any]]:
+    initialize_custom_nodes_storage()
     if not os.path.exists(CUSTOM_NODES_PATH):
         return []
     try:
@@ -132,16 +185,18 @@ def save_custom_nodes(nodes: List[Dict[str, Any]]):
         for node in nodes
         if isinstance(node, dict)
     ]
+    os.makedirs(os.path.dirname(CUSTOM_NODES_PATH), exist_ok=True)
     with open(CUSTOM_NODES_PATH, "w", encoding="utf-8") as f:
         yaml.dump(cleaned_nodes, f, allow_unicode=True, sort_keys=False)
 
 def load_template_content() -> str:
-    if not os.path.exists(TEMPLATE_PATH):
+    if not initialize_template_storage():
         return ""
     with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
         return f.read()
 
 def save_template_content(content: str):
+    os.makedirs(os.path.dirname(TEMPLATE_PATH), exist_ok=True)
     with open(TEMPLATE_PATH, "w", encoding="utf-8") as f:
         f.write(content)
 
@@ -1006,11 +1061,10 @@ def get_subscription(
 
         custom_proxies = load_custom_nodes()
 
-        if not os.path.exists(TEMPLATE_PATH):
+        template_content = load_template_content()
+        if not template_content:
             raise HTTPException(status_code=500, detail="Template file not found")
-
-        with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
-            template_config = yaml.safe_load(f) or {}
+        template_config = yaml.safe_load(template_content) or {}
 
         # Airport nodes remain independent proxy-providers. The already fetched
         # nodes above are still validated so a broken provider cannot be published
