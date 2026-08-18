@@ -92,6 +92,16 @@ async function fetchAuth(url, options = {}) {
     return res;
 }
 
+async function reloadTemplateState() {
+    const templateRes = await fetchAuth('/template');
+    state.templateRaw = (await templateRes.json()).content || '';
+    state.templateObj = jsyaml.load(state.templateRaw) || {};
+    rulesEditor.value = state.templateRaw;
+    renderGroups();
+    renderRules();
+    renderRuleProviders();
+}
+
 async function login() {
     const token = tokenInput.value.trim();
     if (!token) return;
@@ -603,11 +613,17 @@ document.getElementById('btn-refresh-airports').addEventListener('click', () => 
 async function saveAirportsObj() {
     renderAirports();
     try {
-        await fetchAuth('/airports', {
+        const response = await fetchAuth('/airports', {
             method: 'POST',
             body: JSON.stringify({ urls: state.airports })
         });
-        showToast('机场配置已保存');
+        const result = await response.json();
+        if (result.cleanedReferences > 0) {
+            await reloadTemplateState();
+            showToast(`机场配置已保存，并清理 ${result.cleanedReferences} 处失效引用`);
+        } else {
+            showToast('机场配置已保存');
+        }
         // Refresh info after saving
         fetchAuth('/airports/info?force_indices=all').then(res => res.json()).then(data => {
             state.airportsInfo = data.info || [];
@@ -1311,11 +1327,17 @@ document.getElementById('btn-bulk-delete-nodes').addEventListener('click', () =>
 async function saveNodesObj() {
     renderNodes();
     try {
-        await fetchAuth('/nodes', {
+        const response = await fetchAuth('/nodes', {
             method: 'POST',
             body: JSON.stringify({ nodes: state.nodes })
         });
-        showToast('节点已保存');
+        const result = await response.json();
+        if (result.cleanedReferences > 0) {
+            await reloadTemplateState();
+            showToast(`节点已保存，并清理 ${result.cleanedReferences} 处失效引用`);
+        } else {
+            showToast('节点已保存');
+        }
         const allProxiesRes = await fetchAuth('/proxies');
         state.allProxies = (await allProxiesRes.json()).proxies || [];
     } catch(e) { showToast(`保存失败：${e.message}`, 'error'); }

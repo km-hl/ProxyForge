@@ -868,6 +868,139 @@ def decorate_proxy_names(proxies: List[Dict[str, Any]]):
         output.append(cleaned_proxy)
     return output, name_map
 
+def cleanup_proxy_group_references(
+    config: Dict[str, Any],
+    valid_proxy_names: Any = None,
+    valid_provider_names: Any = None,
+    removed_proxy_names: Any = None,
+    removed_provider_names: Any = None,
+) -> Dict[str, Any]:
+    """Remove stale group members without changing routing rule targets."""
+    result = {"proxyReferences": [], "providerReferences": [], "total": 0}
+    if not isinstance(config, dict):
+        return result
+    groups = config.get("proxy-groups", [])
+    if not isinstance(groups, list):
+        return result
+
+    builtins = {"DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE", "GLOBAL"}
+    group_names = {
+        group.get("name") for group in groups
+        if isinstance(group, dict) and isinstance(group.get("name"), str)
+    }
+    allowed_proxies = None
+    if valid_proxy_names is not None:
+        # ProxyForge replaces template `proxies` with persisted custom nodes in
+        # the final output, so names that only exist in template `proxies` are
+        # stale rather than valid references.
+        allowed_proxies = builtins | group_names | {
+            str(name) for name in valid_proxy_names if name
+        }
+
+    configured_providers = config.get("proxy-providers", {}) or {}
+    allowed_providers_lower = None
+    if valid_provider_names is not None:
+        allowed_providers_lower = {
+            str(name).lower() for name in valid_provider_names if name
+        }
+        if isinstance(configured_providers, dict):
+            allowed_providers_lower.update(str(name).lower() for name in configured_providers)
+        allowed_providers_lower.add("_custom_nodes_")
+
+    removed_proxies = {str(name) for name in (removed_proxy_names or []) if name}
+    removed_providers_lower = {
+        str(name).lower() for name in (removed_provider_names or []) if name
+    }
+
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        group_name = str(group.get("name", "未命名"))
+        refs = group.get("proxies")
+        if isinstance(refs, list):
+            kept_refs = []
+            for ref in refs:
+                is_removed = isinstance(ref, str) and ref in removed_proxies
+                is_stale = (
+                    allowed_proxies is not None
+                    and isinstance(ref, str)
+                    and ref not in allowed_proxies
+                )
+                if is_removed or is_stale:
+                    result["proxyReferences"].append({"group": group_name, "name": ref})
+                elif ref not in kept_refs:
+                    kept_refs.append(ref)
+            if kept_refs:
+                group["proxies"] = kept_refs
+            else:
+                group.pop("proxies", None)
+
+        uses = group.get("use")
+        if isinstance(uses, list):
+            kept_uses = []
+            for provider_name in uses:
+                provider_key = str(provider_name).lower()
+                is_removed = provider_key in removed_providers_lower
+                is_stale = (
+                    allowed_providers_lower is not None
+                    and provider_key not in allowed_providers_lower
+                )
+                if is_removed or is_stale:
+                    result["providerReferences"].append({
+                        "group": group_name, "name": provider_name
+                    })
+                elif provider_name not in kept_uses:
+                    kept_uses.append(provider_name)
+            if kept_uses:
+                group["use"] = kept_uses
+            else:
+                group.pop("use", None)
+
+        default_value = group.get("default")
+        if isinstance(default_value, str) and (
+            default_value in removed_proxies
+            or (allowed_proxies is not None and default_value not in allowed_proxies)
+        ):
+            group.pop("default", None)
+
+        if not group.get("proxies") and not group.get("use") and not group.get("include-all"):
+            group["proxies"] = ["DIRECT"]
+
+    result["total"] = len(result["proxyReferences"]) + len(result["providerReferences"])
+    return result
+
+def cleanup_runtime_template_references() -> Dict[str, Any]:
+    content = load_template_content()
+    if not content:
+        return {"proxyReferences": [], "providerReferences": [], "total": 0}
+    try:
+        config = yaml.safe_load(content) or {}
+    except yaml.YAMLError as e:
+        logger.error(f"无法清理模板引用，YAML 格式错误: {e}")
+        return {"proxyReferences": [], "providerReferences": [], "total": 0}
+
+    custom_names = [
+        proxy.get("name") for proxy in load_custom_nodes()
+        if isinstance(proxy, dict) and proxy.get("name")
+    ]
+    provider_names = [
+        get_airport_name(item, index) for index, item in enumerate(load_airports())
+    ]
+    result = cleanup_proxy_group_references(
+        config,
+        valid_proxy_names=custom_names,
+        valid_provider_names=provider_names,
+    )
+    if result["total"]:
+        save_template_content(yaml.safe_dump(config, allow_unicode=True, sort_keys=False))
+        logger.warning(
+            "已自动清理 %s 处失效代理组引用（节点 %s，机场 %s）",
+            result["total"],
+            len(result["proxyReferences"]),
+            len(result["providerReferences"]),
+        )
+    return result
+
 def build_subscription_config(
     template_config: Dict[str, Any],
     custom_proxies: List[Dict[str, Any]],
@@ -878,6 +1011,17 @@ def build_subscription_config(
     config = copy.deepcopy(template_config)
     if not isinstance(config, dict):
         raise ConfigValidationError(["模板根节点必须是 YAML 对象"])
+
+    cleanup_proxy_group_references(
+        config,
+        valid_proxy_names=[
+            proxy.get("name") for proxy in custom_proxies
+            if isinstance(proxy, dict) and proxy.get("name")
+        ],
+        valid_provider_names=[
+            get_airport_name(item, index) for index, item in enumerate(airports)
+        ],
+    )
 
     output_proxies, proxy_name_map = decorate_proxy_names(custom_proxies)
     config["proxies"] = output_proxies
@@ -1039,6 +1183,7 @@ def get_subscription(
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
+        cleanup_runtime_template_references()
         try:
             airport_proxies = get_airport_proxies_cached()
         except Exception as e:
@@ -1175,9 +1320,31 @@ class AirportsModel(BaseModel):
 
 @app.post("/api/airports", dependencies=[Depends(verify_api_token)])
 def update_airports(data: AirportsModel):
+    old_airports = load_airports()
+    new_provider_keys = {
+        get_airport_name(item, index).lower() for index, item in enumerate(data.urls)
+    }
+    removed_provider_names = [
+        get_airport_name(item, index) for index, item in enumerate(old_airports)
+        if get_airport_name(item, index).lower() not in new_provider_keys
+    ]
+    cleanup_result = {"proxyReferences": [], "providerReferences": [], "total": 0}
+    if removed_provider_names:
+        try:
+            template_config = yaml.safe_load(load_template_content()) or {}
+        except yaml.YAMLError as e:
+            raise HTTPException(status_code=400, detail=f"无法清理机场引用，模板 YAML 错误: {e}")
+        cleanup_result = cleanup_proxy_group_references(
+            template_config,
+            removed_provider_names=removed_provider_names,
+        )
+        if cleanup_result["total"]:
+            save_template_content(
+                yaml.safe_dump(template_config, allow_unicode=True, sort_keys=False)
+            )
     save_airports(data.urls)
     subscription_cache.clear()
-    return {"status": "ok"}
+    return {"status": "ok", "cleanedReferences": cleanup_result["total"]}
 
 @app.get("/api/airports/info", dependencies=[Depends(verify_api_token)])
 def get_airports_info(force_indices: str = ""):
@@ -1241,8 +1408,31 @@ def update_nodes(data: NodesModel):
     errors = validate_proxy_nodes(data.nodes, location="nodes")
     if errors:
         raise HTTPException(status_code=400, detail={"message": "节点配置校验失败", "errors": errors})
+    old_names = {
+        proxy.get("name") for proxy in load_custom_nodes()
+        if isinstance(proxy, dict) and proxy.get("name")
+    }
+    new_names = {
+        proxy.get("name") for proxy in data.nodes
+        if isinstance(proxy, dict) and proxy.get("name")
+    }
+    removed_names = old_names - new_names
+    cleanup_result = {"proxyReferences": [], "providerReferences": [], "total": 0}
+    if removed_names:
+        try:
+            template_config = yaml.safe_load(load_template_content()) or {}
+        except yaml.YAMLError as e:
+            raise HTTPException(status_code=400, detail=f"无法清理节点引用，模板 YAML 错误: {e}")
+        cleanup_result = cleanup_proxy_group_references(
+            template_config,
+            removed_proxy_names=removed_names,
+        )
+        if cleanup_result["total"]:
+            save_template_content(
+                yaml.safe_dump(template_config, allow_unicode=True, sort_keys=False)
+            )
     save_custom_nodes(data.nodes)
-    return {"status": "ok"}
+    return {"status": "ok", "cleanedReferences": cleanup_result["total"]}
 
 @app.get("/api/template", dependencies=[Depends(verify_api_token)])
 def get_template():
@@ -1305,7 +1495,8 @@ async def background_airport_updater():
 
 @app.on_event("startup")
 async def startup_event():
-    logger.info("系统启动：已注册后台定时更新任务")
+    cleanup_runtime_template_references()
+    logger.info("系统启动：已完成配置引用检查并注册后台定时更新任务")
     asyncio.create_task(background_airport_updater())
 
 # ================= 前端静态页面挂载 =================
