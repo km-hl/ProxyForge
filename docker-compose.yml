@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   proxyforge:
     build: .
@@ -7,10 +5,8 @@ services:
     restart: unless-stopped
     ports:
       - "${WEB_PORT:-8000}:8000"
-    # 将配置文件挂载到容器内部，以便实时修改生效
+    # 所有运行时数据（含 data/template.yaml）统一持久化
     volumes:
-      - ./custom_nodes.yaml:/app/custom_nodes.yaml
-      - ./template.yaml:/app/template.yaml
       - ./data:/app/data
     # 加载环境变量文件
     env_file:

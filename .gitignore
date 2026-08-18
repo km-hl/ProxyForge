@@ -9,6 +9,7 @@ venv.bak/
 
 # Custom Data
 custom_nodes.yaml
+template.yaml
 data/
 
 # Python

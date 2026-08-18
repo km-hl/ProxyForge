@@ -68,10 +68,32 @@ docker compose up -d
 当有新功能推送到 GitHub 后，在 VPS 上更新代码非常简单，且**绝对不会**覆盖或影响您的私有配置：
 
 ```bash
+set -e
 cd ProxyForge
-git pull
+git pull --ff-only
 docker compose up -d --build
 ```
+
+`template.example.yaml` 只是仓库默认模板。Web UI 修改的真实配置保存在
+`data/template.yaml`，因此日常 `git pull` 不会再与用户配置冲突。
+
+### 从旧版 `template.yaml` 一次性升级
+
+旧版服务器首次升级到新存储结构时，需要先保留根目录中的运行配置：
+
+```bash
+set -e
+cd /root/ProxyForge
+cp template.yaml /root/ProxyForge-template.backup.yaml
+git restore template.yaml
+git pull --ff-only
+mkdir -p data
+cp /root/ProxyForge-template.backup.yaml data/template.yaml
+if [ -f custom_nodes.yaml ]; then cp custom_nodes.yaml data/custom_nodes.yaml; fi
+docker compose up -d --build
+```
+
+确认 Web UI 中的代理组和规则正常后，可以删除仓库外的备份文件。此后使用上面的日常更新命令即可。
 
 ---
 
@@ -80,9 +102,7 @@ docker compose up -d --build
 ProxyForge 的所有核心数据和配置均以纯文本文件的形式持久化保存在当前目录下。如果您更换了 VPS 或需要备份，只需带走以下几个核心文件即可完美还原：
 
 - `.env` (您的安全验证密钥)
-- `template.yaml` (底层配置、代理组、路由规则等核心逻辑)
-- `custom_nodes.yaml` (您的自定义节点数据)
-- `data/` 文件夹 (包含 `airports.yaml` 和您的所有缓存数据)
+- `data/` 文件夹（包含 `template.yaml`、`custom_nodes.yaml`、`airports.yaml` 和节点缓存）
 
 **迁移步骤：**
 1. 在新 VPS 上克隆项目并进入目录：
@@ -90,7 +110,7 @@ ProxyForge 的所有核心数据和配置均以纯文本文件的形式持久化
    git clone https://github.com/km-hl/ProxyForge.git
    cd ProxyForge
    ```
-2. 将旧 VPS 上 ProxyForge 目录下的核心文件和文件夹（`.env`, `template.yaml`, `custom_nodes.yaml` 以及整个 `data` 文件夹）复制并覆盖到新 VPS 的 `ProxyForge` 目录中。
+2. 将旧 VPS 上 ProxyForge 目录下的 `.env` 以及整个 `data` 文件夹复制到新服务器。旧版备份中的根目录 `template.yaml` 和 `custom_nodes.yaml` 请分别复制为 `data/template.yaml` 和 `data/custom_nodes.yaml`。
 3. 在新 VPS 上启动容器：
    ```bash
    docker compose up -d
