@@ -1,0 +1,8 @@
+-r requirements.txt
+
+# TestClient used by the API integration tests.
+httpx==0.28.1
+
+# CI linting is intentionally limited to syntax and definite-name errors while
+# the legacy codebase is being split into modules.
+ruff==0.12.10
