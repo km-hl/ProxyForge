@@ -847,6 +847,10 @@ def build_airport_providers(
         }
     return providers, source_map
 
+def build_airport_provider_document(proxies: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Build the YAML document served to a Mihomo HTTP proxy-provider."""
+    return {"proxies": proxies}
+
 def decorate_proxy_names(proxies: List[Dict[str, Any]]):
     output = []
     name_map = {}
@@ -1170,7 +1174,11 @@ def get_airport_provider(
     if errors:
         raise HTTPException(status_code=422, detail={"message": "机场节点校验失败", "errors": errors})
     return PlainTextResponse(
-        content=yaml.safe_dump({"payload": output_proxies}, allow_unicode=True, sort_keys=False),
+        content=yaml.safe_dump(
+            build_airport_provider_document(output_proxies),
+            allow_unicode=True,
+            sort_keys=False,
+        ),
     )
 
 @app.get("/sub", response_class=PlainTextResponse)
