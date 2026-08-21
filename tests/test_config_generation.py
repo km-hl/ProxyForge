@@ -41,6 +41,7 @@ def load_config_functions():
         "re": re,
         "urllib": urllib,
         "yaml": yaml,
+        "CUSTOM_NODES_SOURCE": "_custom_nodes_",
     }
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), "exec"), namespace)
     return namespace
@@ -55,6 +56,40 @@ cleanup_proxy_group_references = FUNCTIONS["cleanup_proxy_group_references"]
 
 
 class ConfigValidationTest(unittest.TestCase):
+    def test_custom_nodes_source_is_allowed_only_for_stored_templates(self):
+        config = {
+            "proxy-groups": [{
+                "name": "Proxy",
+                "type": "select",
+                "use": ["_custom_nodes_"],
+            }],
+            "rules": [
+                "DOMAIN-SUFFIX,example.com,DIRECT",
+                "MATCH,Proxy",
+            ],
+        }
+
+        strict_errors = validate_mihomo_config(config)
+        template_errors = validate_mihomo_config(config, allow_internal_sources=True)
+
+        self.assertTrue(any("_custom_nodes_" in error for error in strict_errors))
+        self.assertEqual(template_errors, [])
+
+    def test_template_mode_still_rejects_unknown_proxy_provider(self):
+        config = {
+            "proxy-groups": [{
+                "name": "Proxy",
+                "type": "select",
+                "use": ["_custom_nodes_", "MissingAirport"],
+            }],
+            "rules": ["MATCH,Proxy"],
+        }
+
+        errors = validate_mihomo_config(config, allow_internal_sources=True)
+
+        self.assertFalse(any("_custom_nodes_" in error for error in errors))
+        self.assertTrue(any("MissingAirport" in error for error in errors))
+
     def test_missing_rule_target_is_reported_with_rule_number(self):
         config = {
             "proxies": [],
@@ -153,6 +188,33 @@ class ConfigValidationTest(unittest.TestCase):
 
         self.assertEqual(document, {"proxies": proxies})
         self.assertNotIn("payload", document)
+
+    def test_custom_nodes_source_is_resolved_before_final_validation(self):
+        config = {
+            "proxy-groups": [{
+                "name": "Proxy",
+                "type": "select",
+                "use": ["_custom_nodes_"],
+            }],
+            "rules": ["MATCH,Proxy"],
+        }
+        custom_nodes = [{
+            "name": "Home HK",
+            "type": "ss",
+            "server": "node.example.com",
+            "port": 8388,
+            "cipher": "aes-256-gcm",
+            "password": "fixture-password",
+        }]
+
+        output = build_subscription_config(
+            config, custom_nodes, [], "https://proxyforge.example", "test-token"
+        )
+
+        self.assertNotIn("use", output["proxy-groups"][0])
+        self.assertEqual(output["proxy-groups"][0]["proxies"], ["🇭🇰 Home HK"])
+        self.assertNotIn("_custom_nodes_", yaml.safe_dump(output, allow_unicode=True))
+        self.assertEqual(validate_mihomo_config(output), [])
 
     def test_stale_group_proxy_and_provider_references_are_cleaned(self):
         config = {

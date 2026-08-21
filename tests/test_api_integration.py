@@ -153,6 +153,38 @@ class ApiIntegrationTest(unittest.TestCase):
         self.assertNotIn(airport["url"], response.text)
         self.assertEqual(document["proxy-groups"][0]["use"], ["Example Airport"])
 
+    def test_template_update_accepts_custom_nodes_source_and_direct_rule(self):
+        template = yaml.safe_dump(
+            {
+                "proxy-groups": [{
+                    "name": "Proxy",
+                    "type": "select",
+                    "use": ["_custom_nodes_"],
+                }],
+                "rules": [
+                    "DOMAIN-SUFFIX,example.com,DIRECT",
+                    "MATCH,Proxy",
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        )
+
+        with (
+            patch.object(self.app_module, "load_airports", return_value=[]),
+            patch.object(self.app_module, "load_custom_nodes", return_value=[]),
+            patch.object(self.app_module, "save_template_content") as save_template,
+        ):
+            response = self.client.post(
+                "/api/template",
+                headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+                json={"content": template},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+        save_template.assert_called_once_with(template)
+
 
 if __name__ == "__main__":
     unittest.main()
