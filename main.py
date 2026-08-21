@@ -34,6 +34,7 @@ CUSTOM_NODES_PATH = os.path.join(DATA_DIR, "custom_nodes.yaml")
 LEGACY_CUSTOM_NODES_PATH = "custom_nodes.yaml"
 CACHE_FILE_PATH = os.path.join(DATA_DIR, "airport_cache.yaml")
 AIRPORTS_PATH = os.path.join(DATA_DIR, "airports.yaml")
+CUSTOM_NODES_SOURCE = "_custom_nodes_"
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs("static", exist_ok=True) 
@@ -126,7 +127,7 @@ def load_custom_nodes() -> List[Dict[str, Any]]:
             if isinstance(nodes, list):
                 for node in nodes:
                     if isinstance(node, dict):
-                        node["_airport_name"] = "_custom_nodes_"
+                        node["_airport_name"] = CUSTOM_NODES_SOURCE
                 return nodes
             return []
     except Exception as e:
@@ -681,6 +682,7 @@ def validate_mihomo_config(
     config: Any,
     external_proxy_names: Any = None,
     external_provider_names: Any = None,
+    allow_internal_sources: bool = False,
 ) -> List[str]:
     """Perform static YAML and Mihomo reference checks before publishing config."""
     if not isinstance(config, dict):
@@ -701,6 +703,11 @@ def validate_mihomo_config(
         providers = {}
     provider_names = set(providers)
     provider_names.update(str(name) for name in (external_provider_names or []) if name)
+    if allow_internal_sources:
+        # Stored ProxyForge templates use this sentinel to mean "inject the
+        # persisted custom nodes". It is resolved by build_subscription_config
+        # and must remain invalid in the final emitted Mihomo configuration.
+        provider_names.add(CUSTOM_NODES_SOURCE)
     for provider_name, provider in providers.items():
         prefix = f"proxy-providers.{provider_name}"
         if not isinstance(provider, dict):
@@ -909,7 +916,7 @@ def cleanup_proxy_group_references(
         }
         if isinstance(configured_providers, dict):
             allowed_providers_lower.update(str(name).lower() for name in configured_providers)
-        allowed_providers_lower.add("_custom_nodes_")
+        allowed_providers_lower.add(CUSTOM_NODES_SOURCE.lower())
 
     removed_proxies = {str(name) for name in (removed_proxy_names or []) if name}
     removed_providers_lower = {
@@ -1059,7 +1066,7 @@ def build_subscription_config(
             use_names = []
             include_custom = include_all
             for source in original_use:
-                if str(source).lower() == "_custom_nodes_":
+                if str(source).lower() == CUSTOM_NODES_SOURCE.lower():
                     include_custom = True
                     continue
                 resolved = source_map.get(str(source).lower(), source)
@@ -1464,6 +1471,7 @@ def update_template(data: TemplateModel):
         config,
         external_proxy_names=custom_names,
         external_provider_names=provider_names,
+        allow_internal_sources=True,
     )
     if errors:
         raise HTTPException(status_code=400, detail={"message": "Mihomo 配置校验失败", "errors": errors})

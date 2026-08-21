@@ -78,6 +78,67 @@ docker compose up -d --build
 `template.example.yaml` 只是仓库默认模板。Web UI 修改的真实配置保存在
 `data/template.yaml`，因此日常 `git pull` 不会再与用户配置冲突。
 
+更新完成后，请在 Clash Verge / Mihomo 中重新更新 ProxyForge 订阅，并刷新一次“代理集合”。机场节点由独立的 `proxy-provider` 二次加载，仅更新主订阅但保留旧 provider 缓存时，客户端可能暂时仍显示旧状态。
+
+### 机场 `proxy-provider` 的工作方式
+
+ProxyForge 不会把所有机场节点平铺到顶层 `proxies`。每个机场会生成一个独立 provider，代理组通过 `use` 引用：
+
+```yaml
+proxy-providers:
+  LiangXin:
+    type: http
+    url: https://proxyforge.example/provider/0?token=YOUR_TOKEN
+    path: ./proxy_providers/proxyforge_1.yaml
+
+proxy-groups:
+  - name: "🚀 节点选择"
+    type: select
+    use:
+      - LiangXin
+      - PeiQian
+      - Mitce
+      - SakuraCat
+```
+
+客户端访问 `/provider/{index}` 时，ProxyForge 会拉取对应机场并返回标准 Mihomo provider 文档：
+
+```yaml
+proxies:
+  - name: Example Node
+    type: vless
+    # ...
+```
+
+原始机场订阅 URL 不会出现在最终配置中。需要注意：HTTP provider 响应顶层必须是 `proxies`；`payload` 仅用于 `type: inline`，不能作为 HTTP provider 文件的顶层键。
+
+### 机场组显示 `COMPATIBLE` 且没有节点
+
+这通常表示代理组还在，但 Clash/Mihomo 没有成功下载或解析 provider，并不代表机场已被删除。请按顺序检查：
+
+1. 确认服务器已拉取最新代码并重新构建容器。
+2. 在客户端更新主订阅，再到“代理集合”中强制刷新各机场 provider；必要时重启 Mihomo 内核。
+3. 在服务器或可信终端测试 provider 接口（请勿泄露真实 Token）：
+
+   ```bash
+   curl -fsS "https://<ProxyForge域名>/provider/0?token=<TOKEN>" | head
+   ```
+
+   正常响应第一行应为 `proxies:`。
+4. 检查最终订阅中 `proxy-providers.*.url` 是否是客户端能访问的公网 HTTPS 地址。若使用 Nginx、Caddy 或 Cloudflare 反向代理，请确保正确传递 Host 和原始协议。
+5. 查看服务日志：
+
+   ```bash
+   docker compose logs --tail=200 proxyforge
+   ```
+
+常见状态码：
+
+- `401`：provider URL 中的 Token 不正确。
+- `404`：机场索引不存在，通常需要重新更新主订阅。
+- `422`：机场节点字段未通过 Mihomo 静态校验。
+- `502`：机场当前拉取失败，并且没有该机场的可用缓存。
+
 ### 从旧版 `template.yaml` 一次性升级
 
 旧版服务器首次升级到新存储结构时，需要先保留根目录中的运行配置：
