@@ -190,6 +190,11 @@
                                 <button class="btn btn-success" id="btn-import-rules">📥 批量导入</button>
                             </div>
                         </div>
+                        <div class="rule-search-bar">
+                            <input type="search" id="rule-search-input" placeholder="搜索规则类型、域名、IP、规则集或目标策略" autocomplete="off">
+                            <span id="rule-search-count" class="rule-search-count" aria-live="polite"></span>
+                            <button type="button" class="btn btn-sm" id="btn-clear-rule-search">清空</button>
+                        </div>
                         <div id="rules-list" style="margin-top: 15px;">
                             <!-- Rendered by JS -->
                             <div class="empty-state">加载中...</div>
@@ -249,6 +254,7 @@
         </div>
     </div>
 
+    <script src="/static/rule-utils.js"></script>
     <script src="/static/app.js"></script>
 </body>
 </html>

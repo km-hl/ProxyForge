@@ -39,6 +39,9 @@ const secretToken = document.getElementById('secret-token');
 const saveConfigBtn = document.getElementById('save-config-btn');
 const rulesEditor = document.getElementById('rules-editor');
 const saveRulesBtn = document.getElementById('save-rules-btn');
+const ruleSearchInput = document.getElementById('rule-search-input');
+const ruleSearchCount = document.getElementById('rule-search-count');
+const clearRuleSearchBtn = document.getElementById('btn-clear-rule-search');
 
 function showToast(msg, type = 'success') {
     toast.textContent = msg;
@@ -472,12 +475,25 @@ function renderRuleProviders() {
 function renderRules() {
     const list = document.getElementById('rules-list');
     let rules = state.templateObj['rules'] || [];
+    const searchQuery = ruleSearchInput.value.trim();
+    const visibleRules = ProxyForgeRuleUtils.filterRules(rules, searchQuery);
+    const isFiltering = searchQuery.length > 0;
+
+    ruleSearchCount.textContent = isFiltering
+        ? `显示 ${visibleRules.length} / 共 ${rules.length} 条`
+        : `共 ${rules.length} 条`;
+    clearRuleSearchBtn.disabled = !isFiltering;
+
     if (!rules.length) {
         list.innerHTML = `<div class="empty-state">暂无路由规则</div>`;
         return;
     }
+    if (!visibleRules.length) {
+        list.innerHTML = `<div class="empty-state">没有找到匹配的路由规则</div>`;
+        return;
+    }
     let html = '';
-    rules.forEach((r, index) => {
+    visibleRules.forEach(({ rule: r, index }) => {
         let parts = r.split(',');
         let type = parts[0] || '';
         
@@ -489,14 +505,15 @@ function renderRules() {
         else if (type === 'RULE-SET') typeColor = '#fd7e14';
         
         html += `
-            <div class="list-item" draggable="true" data-index="${index}"
+            <div class="list-item" draggable="${isFiltering ? 'false' : 'true'}" data-index="${index}"
                  ondragstart="handleRuleDragStart(event, ${index})"
                  ondragover="handleRuleDragOver(event)"
                  ondragenter="handleRuleDragEnter(event)"
                  ondragleave="handleRuleDragLeave(event)"
                  ondrop="handleRuleDrop(event, ${index})"
                  ondragend="handleRuleDragEnd(event)">
-                <span class="drag-handle" style="cursor: grab; margin-right: 10px; color: #999;">⠿</span>
+                <span class="drag-handle" title="${isFiltering ? '清空搜索后可拖拽排序' : '拖拽排序'}"
+                      style="cursor: ${isFiltering ? 'not-allowed' : 'grab'}; margin-right: 10px; color: #999;">⠿</span>
                 ${getCheckboxHTML('cb-rule', index)}
                 <span class="type-badge" style="background:${typeColor}; min-width: 90px; text-align: center;">${type}</span>
                 <div class="item-info" style="font-family: monospace; display:flex; align-items:center;">
@@ -513,6 +530,13 @@ function renderRules() {
     list.innerHTML = html;
     if (window.twemoji) twemoji.parse(list, { folder: 'svg', ext: '.svg' });
 }
+
+ruleSearchInput.addEventListener('input', renderRules);
+clearRuleSearchBtn.addEventListener('click', () => {
+    ruleSearchInput.value = '';
+    renderRules();
+    ruleSearchInput.focus();
+});
 
 // === Actions: Airports ===
 document.getElementById('btn-add-airport').addEventListener('click', () => {
@@ -1622,13 +1646,8 @@ window.editRule = function(index) {
         
         if (!state.templateObj['rules']) state.templateObj['rules'] = [];
         if (isNew) {
-            // MATCH 规则应始终在最后
-            let matchIndex = state.templateObj['rules'].findIndex(x => x.startsWith('MATCH,'));
-            if (matchIndex >= 0 && nType !== 'MATCH') {
-                state.templateObj['rules'].splice(matchIndex, 0, newRule);
-            } else {
-                state.templateObj['rules'].push(newRule);
-            }
+            // New routing rules take highest priority; MATCH remains the final fallback.
+            ProxyForgeRuleUtils.insertNewRule(state.templateObj['rules'], newRule);
         } else {
             state.templateObj['rules'][index] = newRule;
         }
