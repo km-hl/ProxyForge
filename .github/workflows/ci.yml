@@ -51,7 +51,12 @@ jobs:
         run: python -m py_compile main.py
 
       - name: Check frontend JavaScript syntax
-        run: node --check static/app.js
+        run: |
+          node --check static/rule-utils.js
+          node --check static/app.js
+
+      - name: Run frontend behavior tests
+        run: node --test tests/rule_order.test.js
 
       - name: Check pull request whitespace errors
         if: github.event_name == 'pull_request'

@@ -365,6 +365,43 @@ body {
     gap: 4px;
 }
 
+.rule-search-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 16px;
+}
+.rule-search-bar input {
+    flex: 1;
+    min-width: 180px;
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: #fafbfc;
+    color: var(--text);
+    font-size: 0.875rem;
+}
+.rule-search-bar input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(79, 110, 247, 0.1);
+    background: #fff;
+}
+.rule-search-count {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+    .rule-search-bar {
+        flex-wrap: wrap;
+    }
+    .rule-search-bar input {
+        flex-basis: 100%;
+    }
+}
+
 /* Badges */
 .type-badge {
     display: inline-block;
