@@ -9,7 +9,7 @@ User=root
 WorkingDirectory=/root/ProxyForge
 
 # 【注意】请确保使用您 VPS 环境中实际的 uvicorn 路径（例如虚拟环境或全局）
-ExecStart=/usr/local/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+ExecStart=/usr/local/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --no-access-log
 
 # 崩溃自动重启
 Restart=always
