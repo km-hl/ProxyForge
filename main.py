@@ -350,29 +350,30 @@ def get_airport_name(item: Any, index: int = 0) -> str:
     else:
         configured_name = ""
         url = str(item).strip()
-    return configured_name or urllib.parse.urlparse(url).netloc or f"Airport-{index + 1}"
+    hostname = urllib.parse.urlparse(url).hostname or ""
+    return configured_name or hostname or f"Airport-{index + 1}"
 
 def fetch_airport_item(item: Any, index: int = 0) -> List[Dict[str, Any]]:
     url = item.get("url", "") if isinstance(item, dict) else item
     if not isinstance(url, str) or not url.strip():
         return []
 
+    airport_name = get_airport_name(item, index)
     headers = {"User-Agent": "clash-verge/v1.6.0 clash-meta/1.18.3"}
-    logger.info(f"正在从机场拉取节点: {url.strip()}")
+    logger.info(f"正在从 {airport_name} 拉取节点")
     try:
         response = requests.get(url.strip(), headers=headers, timeout=30)
         response.raise_for_status()
         proxies = parse_airport_response(response.text)
         if proxies:
-            airport_name = get_airport_name(item, index)
             for proxy in proxies:
                 if isinstance(proxy, dict):
                     proxy["_airport_name"] = airport_name
             logger.info(f"成功从 {airport_name} 拉取到 {len(proxies)} 个节点")
             return proxies
-        logger.warning(f"机场订阅内容解析成功，但未找到代理节点: {url.strip()}")
+        logger.warning(f"{airport_name} 订阅内容解析成功，但未找到代理节点")
     except Exception as e:
-        logger.error(f"拉取机场订阅失败 {url.strip()}: {e}")
+        logger.error(f"拉取 {airport_name} 订阅失败（{type(e).__name__}）")
     return []
 
 def fetch_airport_proxies() -> List[Dict[str, Any]]:

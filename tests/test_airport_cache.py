@@ -13,6 +13,7 @@ def load_cache_functions():
     source = Path(__file__).resolve().parents[1] / "main.py"
     tree = ast.parse(source.read_text(encoding="utf-8"))
     wanted = {
+        "fetch_airport_item",
         "load_cache_from_file",
         "get_airport_name",
         "merge_airport_proxies_with_cache",
@@ -95,6 +96,42 @@ class AirportCacheFallbackTest(unittest.TestCase):
 
         self.assertEqual(merged, [])
         self.assertEqual(missing, ["Airport A"])
+
+    def test_fetch_failure_does_not_log_subscription_url(self):
+        secret_url = "https://private-user:private-pass@airport.invalid/sub?token=test-token"
+        messages = []
+
+        class CapturingLogger:
+            @staticmethod
+            def info(message):
+                messages.append(message)
+
+            @staticmethod
+            def warning(message):
+                messages.append(message)
+
+            @staticmethod
+            def error(message):
+                messages.append(message)
+
+        class FailingRequests:
+            @staticmethod
+            def get(url, **kwargs):
+                raise RuntimeError(f"failed to reach {url}")
+
+        fetch = self.functions["fetch_airport_item"]
+        fetch.__globals__["logger"] = CapturingLogger()
+        fetch.__globals__["requests"] = FailingRequests()
+
+        proxies = fetch(secret_url)
+
+        self.assertEqual(proxies, [])
+        combined_logs = "\n".join(messages)
+        self.assertIn("airport.invalid", combined_logs)
+        self.assertNotIn(secret_url, combined_logs)
+        self.assertNotIn("test-token", combined_logs)
+        self.assertNotIn("private-user", combined_logs)
+        self.assertNotIn("private-pass", combined_logs)
 
 
 if __name__ == "__main__":
