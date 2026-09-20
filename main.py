@@ -8,6 +8,7 @@ import json
 import urllib.parse
 import requests
 import re
+import secrets
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, HTTPException, Query, Header, Depends, Body, Request
 from fastapi.responses import PlainTextResponse, FileResponse
@@ -19,14 +20,95 @@ from pydantic import BaseModel
 
 # ================= 加载环境变量 =================
 load_dotenv()
-ENV_FILE = ".env"
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+DATA_DIR = "data"
+RUNTIME_CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
+INSECURE_DEFAULT_TOKENS = {"", "my_secret_token"}
+
+os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs("static", exist_ok=True)
 
 def get_env_var(key, default=""):
     return os.environ.get(key) or os.getenv(key, default)
 
-SECRET_TOKEN = get_env_var("SECRET_TOKEN", "my_secret_token")
+def save_runtime_config(secret_token: str) -> None:
+    """Atomically persist mutable application settings outside the container layer."""
+    os.makedirs(os.path.dirname(RUNTIME_CONFIG_PATH), exist_ok=True)
+    temporary_path = f"{RUNTIME_CONFIG_PATH}.tmp"
+    with open(temporary_path, "w", encoding="utf-8") as config_file:
+        json.dump(
+            {"secret_token": secret_token},
+            config_file,
+            ensure_ascii=False,
+            indent=2,
+        )
+        config_file.write("\n")
+        config_file.flush()
+        os.fsync(config_file.fileno())
+    os.replace(temporary_path, RUNTIME_CONFIG_PATH)
+    try:
+        os.chmod(RUNTIME_CONFIG_PATH, 0o600)
+    except OSError:
+        # Some filesystems (notably Windows development environments) do not
+        # implement POSIX modes. The Docker/Linux deployment still gets 0600.
+        pass
 
-DATA_DIR = "data"
+def load_or_create_secret_token() -> str:
+    """Load the persisted token, migrate a safe environment token, or create one."""
+    if os.path.exists(RUNTIME_CONFIG_PATH):
+        try:
+            if not os.path.isfile(RUNTIME_CONFIG_PATH):
+                raise ValueError("运行配置路径不是普通文件")
+            with open(RUNTIME_CONFIG_PATH, "r", encoding="utf-8") as config_file:
+                config = json.load(config_file)
+            if not isinstance(config, dict):
+                raise ValueError("运行配置根节点必须是对象")
+            stored_token = str(config.get("secret_token", "")).strip()
+            if not stored_token:
+                raise ValueError("持久化配置中缺少有效 Token")
+            if stored_token in INSECURE_DEFAULT_TOKENS:
+                token = secrets.token_urlsafe(32)
+                logger.warning("持久化配置使用公开默认 Token，已自动替换为强随机 Token")
+                save_runtime_config(token)
+                logger.info(
+                    "可使用 docker compose exec proxyforge python -c "
+                    "\"import json; print(json.load(open('/app/data/config.json'))['secret_token'])\" "
+                    "查看新的登录 Token"
+                )
+                return token
+            return stored_token
+        except (OSError, ValueError, TypeError) as exc:
+            logger.critical("读取持久化运行配置失败，拒绝回退旧环境变量: %s", exc)
+            raise RuntimeError(
+                f"无法读取 {RUNTIME_CONFIG_PATH}，请恢复备份或修复该文件"
+            ) from exc
+
+    environment_token = str(get_env_var("SECRET_TOKEN", "")).strip()
+    if environment_token and environment_token not in INSECURE_DEFAULT_TOKENS:
+        token = environment_token
+        logger.info("已将环境变量中的 Token 迁移到持久化运行配置")
+        if len(token) < 16:
+            logger.warning("迁移的现有 Token 少于 16 个字符，请登录后尽快更换")
+    else:
+        token = secrets.token_urlsafe(32)
+        if environment_token in INSECURE_DEFAULT_TOKENS and environment_token:
+            logger.warning("检测到公开的默认 Token，已自动替换为强随机 Token")
+        else:
+            logger.info("未配置 Token，已生成强随机 Token")
+        logger.info(
+            "可使用 docker compose exec proxyforge python -c "
+            "\"import json; print(json.load(open('/app/data/config.json'))['secret_token'])\" "
+            "查看首次登录 Token"
+        )
+
+    save_runtime_config(token)
+    return token
+
+SECRET_TOKEN = load_or_create_secret_token()
+
 TEMPLATE_PATH = os.path.join(DATA_DIR, "template.yaml")
 TEMPLATE_EXAMPLE_PATH = "template.example.yaml"
 LEGACY_TEMPLATE_PATH = "template.yaml"
@@ -35,12 +117,6 @@ LEGACY_CUSTOM_NODES_PATH = "custom_nodes.yaml"
 CACHE_FILE_PATH = os.path.join(DATA_DIR, "airport_cache.yaml")
 AIRPORTS_PATH = os.path.join(DATA_DIR, "airports.yaml")
 CUSTOM_NODES_SOURCE = "_custom_nodes_"
-
-os.makedirs(DATA_DIR, exist_ok=True)
-os.makedirs("static", exist_ok=True) 
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 def initialize_template_storage() -> str:
     """Create the persistent runtime template, migrating legacy installs first."""
@@ -1298,32 +1374,16 @@ class ConfigModel(BaseModel):
 @app.post("/api/config", dependencies=[Depends(verify_api_token)])
 def update_config(config: ConfigModel):
     global SECRET_TOKEN
-    
-    lines = []
-    if os.path.exists(ENV_FILE):
-        with open(ENV_FILE, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-    
-    new_lines = []
-    token_updated = False
-    for line in lines:
-        if line.startswith("SECRET_TOKEN="):
-            new_lines.append(f'SECRET_TOKEN="{config.SECRET_TOKEN}"\n')
-            token_updated = True
-        elif line.startswith("AIRPORT_SUB_URL="):
-            continue 
-        else:
-            new_lines.append(line)
-            
-    if not token_updated:
-        new_lines.append(f'SECRET_TOKEN="{config.SECRET_TOKEN}"\n')
+    new_token = config.SECRET_TOKEN.strip()
+    if len(new_token) < 16:
+        raise HTTPException(status_code=400, detail="Token 至少需要 16 个字符")
+    if new_token in INSECURE_DEFAULT_TOKENS:
+        raise HTTPException(status_code=400, detail="不能使用公开的默认 Token")
 
-    with open(ENV_FILE, "w", encoding="utf-8") as f:
-        f.writelines(new_lines)
-    
-    SECRET_TOKEN = config.SECRET_TOKEN
+    save_runtime_config(new_token)
+    SECRET_TOKEN = new_token
     os.environ["SECRET_TOKEN"] = SECRET_TOKEN
-    
+
     return {"status": "ok"}
 
 @app.get("/api/airports", dependencies=[Depends(verify_api_token)])
