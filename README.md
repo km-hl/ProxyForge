@@ -28,8 +28,8 @@ ProxyForge 是一个**全可视化**的专属节点订阅聚合与配置下发�
    - **全自动缓存刷新**：内置后台守护协程，每 4 小时静默拉取并更新所有机场数据。
    - **0 延迟体验**：当您的代理客户端发起拉取请求时，服务器会直接下发热腾腾的缓存数据，不再有转圈等待。
 
-6. **🔒 极致安全的持久化备份**
-   - 所有的配置更改均会实时持久化到本地。当机场服务器宕机时，服务会自动回退到最新的持久化备份，确保**永不掉线**。
+6. **🔒 持久化备份与故障回退**
+   - 所有配置更改都会持久化到 `data/`。机场服务器暂时不可用时，服务会按机场回退到最近一次成功缓存；如果该机场从未成功缓存，则明确返回错误而不是下发空配置。
 
 ---
 
@@ -43,10 +43,23 @@ git clone https://github.com/km-hl/ProxyForge.git
 cd ProxyForge
 ```
 
-### 2. 启动服务 (Docker)
-确保您的 VPS 安装了 Docker 和 Docker Compose，然后执行一键启动命令：
+### 2. 创建环境配置
 ```bash
-docker compose up -d
+cp .env.example .env
+```
+
+您可以编辑 `.env` 修改监听端口。`SECRET_TOKEN` 留空时，首次启动会自动生成强随机 Token，并持久化到 `data/config.json`。
+
+### 3. 启动服务 (Docker)
+确保您的 VPS 安装了 Docker 和 Docker Compose，然后执行：
+```bash
+docker compose up -d --build
+```
+
+首次启动后可使用下面的命令读取登录 Token：
+
+```bash
+docker compose exec proxyforge python -c "import json; print(json.load(open('/app/data/config.json'))['secret_token'])"
 ```
 您的服务现在已经可以在后台安全运行了，并且会在 VPS 崩溃或重启时自动恢复！
 
@@ -54,7 +67,7 @@ docker compose up -d
 
 ## 🎮 如何使用 Web 控制台
 
-1. 浏览器访问：`http://<您的VPS公网IP>:8000` (首次访问会自动提示设置您的安全密钥 `Token`，可以在`.env`文件中自定义端口号)。
+1. 浏览器访问：`http://<您的VPS公网IP>:8000`，输入上一步获得的 Token。生产环境建议使用带 HTTPS 的反向代理。
 2. 登录后，您可以在界面上：
    - 在 **概览设置** 生成您的专属客户端订阅链接。
    - 在 **机场订阅** 中批量添加您购买的机场链接。
@@ -62,7 +75,7 @@ docker compose up -d
    - 在 **代理组** 中设计您的多层级分流逻辑，使用**智能筛选**一键匹配节点。
    - 在 **路由规则** 中拖拽排布分流优先级。
 
-将生成的订阅链接添加到您的 Clash Verge / Mihomo / Sing-box 即可享受私人定制的科学上网体验！
+将生成的订阅链接添加到 Mihomo / Clash.Meta 兼容客户端（例如 Clash Verge Rev）即可使用。当前 `/sub` 输出为 Mihomo YAML，不是原生 Sing-box JSON。
 
 ## 🔄 日常更新代码指南
 
@@ -77,6 +90,8 @@ docker compose up -d --build
 
 `template.example.yaml` 只是仓库默认模板。Web UI 修改的真实配置保存在
 `data/template.yaml`，因此日常 `git pull` 不会再与用户配置冲突。
+
+升级到使用 `data/config.json` 的版本时，现有 `.env` 中的非默认 Token 会在首次启动时自动迁移，登录凭据不会变化。如果仍在使用公开示例值 `my_secret_token`，系统会自动生成新的强随机 Token；可用部署章节中的命令读取新 Token。
 
 更新完成后，请在 Clash Verge / Mihomo 中重新更新 ProxyForge 订阅，并刷新一次“代理集合”。机场节点由独立的 `proxy-provider` 二次加载，仅更新主订阅但保留旧 provider 缓存时，客户端可能暂时仍显示旧状态。
 
@@ -163,8 +178,8 @@ docker compose up -d --build
 
 ProxyForge 的所有核心数据和配置均以纯文本文件的形式持久化保存在当前目录下。如果您更换了 VPS 或需要备份，只需带走以下几个核心文件即可完美还原：
 
-- `.env` (您的安全验证密钥)
-- `data/` 文件夹（包含 `template.yaml`、`custom_nodes.yaml`、`airports.yaml` 和节点缓存）
+- `.env`（监听端口和首次迁移参数）
+- `data/` 文件夹（包含 `config.json`、`template.yaml`、`custom_nodes.yaml`、`airports.yaml` 和节点缓存）
 
 **迁移步骤：**
 1. 在新 VPS 上克隆项目并进入目录：

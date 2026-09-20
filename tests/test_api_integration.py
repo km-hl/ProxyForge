@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import sys
 import tempfile
@@ -52,7 +53,7 @@ def load_isolated_application(runtime_root: Path):
     module.CUSTOM_NODES_PATH = str(data_dir / "custom_nodes.yaml")
     module.CACHE_FILE_PATH = str(data_dir / "airport_cache.yaml")
     module.AIRPORTS_PATH = str(data_dir / "airports.yaml")
-    module.ENV_FILE = str(runtime_root / ".env")
+    module.RUNTIME_CONFIG_PATH = str(data_dir / "config.json")
     module.SECRET_TOKEN = TEST_TOKEN
     return module
 
@@ -184,6 +185,40 @@ class ApiIntegrationTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
         save_template.assert_called_once_with(template)
+
+    def test_config_update_rejects_short_token(self):
+        response = self.client.post(
+            "/api/config",
+            headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+            json={"SECRET_TOKEN": "too-short"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_token_update_is_persisted_outside_the_container_env_file(self):
+        new_token = "updated-integration-token"
+        previous_environment_token = os.environ.get("SECRET_TOKEN")
+        try:
+            response = self.client.post(
+                "/api/config",
+                headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+                json={"SECRET_TOKEN": new_token},
+            )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {"status": "ok"})
+            config = json.loads(
+                Path(self.app_module.RUNTIME_CONFIG_PATH).read_text(encoding="utf-8")
+            )
+            self.assertEqual(config["secret_token"], new_token)
+            self.assertFalse((Path(self.runtime.name) / ".env").exists())
+        finally:
+            self.app_module.SECRET_TOKEN = TEST_TOKEN
+            self.app_module.save_runtime_config(TEST_TOKEN)
+            if previous_environment_token is None:
+                os.environ.pop("SECRET_TOKEN", None)
+            else:
+                os.environ["SECRET_TOKEN"] = previous_environment_token
 
 
 if __name__ == "__main__":

@@ -1539,7 +1539,12 @@ copyBtn.addEventListener('click', () => {
 
 saveConfigBtn.addEventListener('click', async () => {
     try {
-        const payload = { SECRET_TOKEN: secretToken.value };
+        const newToken = secretToken.value.trim();
+        if (newToken.length < 16) {
+            showToast('密钥至少需要 16 个字符', 'error');
+            return;
+        }
+        const payload = { SECRET_TOKEN: newToken };
         await fetchAuth('/config', {
             method: 'POST',
             body: JSON.stringify(payload)
@@ -1551,7 +1556,7 @@ saveConfigBtn.addEventListener('click', async () => {
             currentToken = payload.SECRET_TOKEN;
             localStorage.setItem('proxyforge_token', currentToken);
         }
-    } catch (e) { showToast('保存密钥失败', 'error'); }
+    } catch (e) { showToast(`保存密钥失败：${e.message}`, 'error'); }
 });
 
 saveRulesBtn.addEventListener('click', async () => {
