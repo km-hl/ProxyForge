@@ -6,7 +6,7 @@ ProxyForge 是一个**全可视化**的专属节点订阅聚合与配置下发�
 
 1. **🎨 全可视化 Web 仪表盘 (Web UI)**
    - 抛弃繁琐的 YAML 文本编辑。只需在浏览器中打开 Web UI，即可通过现代化的界面管理一切。
-   - 所有接口与界面均受您的专属 `Token` 保护。
+   - Web 控制台使用独立管理密钥和 HttpOnly 会话 Cookie；客户端订阅密钥只允许访问 `/sub` 与 `/provider`，不能调用管理 API。
 
 2. **✈️ 多机场聚合与自建节点融合**
    - 支持添加任意数量的机场订阅。
@@ -48,7 +48,7 @@ cd ProxyForge
 cp .env.example .env
 ```
 
-您可以编辑 `.env` 修改监听端口。`SECRET_TOKEN` 留空时，首次启动会自动生成强随机 Token，并持久化到 `data/config.json`。
+您可以编辑 `.env` 修改监听端口。`SECRET_TOKEN` 是客户端订阅密钥；`ADMIN_TOKEN` 是 Web 控制台管理密钥，两者必须分开。留空时系统会分别自动生成：订阅密钥持久化到 `data/config.json`，首次管理密钥写入权限为 `0600` 的 `data/admin_token.txt`。
 
 ### 3. 启动服务 (Docker)
 确保您的 VPS 安装了 Docker 和 Docker Compose，然后执行：
@@ -56,10 +56,16 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-首次启动后可使用下面的命令读取登录 Token：
+首次启动或从旧版本升级后，可使用下面的命令读取管理密钥：
 
 ```bash
-docker compose exec proxyforge python -c "import json; print(json.load(open('/app/data/config.json'))['secret_token'])"
+docker compose exec proxyforge cat /app/data/admin_token.txt
+```
+
+登录后请在 WebUI 中更换管理密钥；更换后 `admin_token.txt` 会自动删除。需要查看客户端订阅密钥时使用：
+
+```bash
+docker compose exec proxyforge python -c "import json; print(json.load(open('/app/data/config.json'))['subscription_token'])"
 ```
 您的服务现在已经可以在后台安全运行了，并且会在 VPS 崩溃或重启时自动恢复！
 
@@ -67,7 +73,7 @@ docker compose exec proxyforge python -c "import json; print(json.load(open('/ap
 
 ## 🎮 如何使用 Web 控制台
 
-1. 浏览器访问：`http://<您的VPS公网IP>:8000`，输入上一步获得的 Token。生产环境建议使用带 HTTPS 的反向代理。
+1. 浏览器访问：`http://<您的VPS公网IP>:8000`，输入上一步获得的管理密钥。生产环境建议使用带 HTTPS 的反向代理。
 2. 登录后，您可以在界面上：
    - 在 **概览设置** 生成您的专属客户端订阅链接。
    - 在 **机场订阅** 中批量添加您购买的机场链接。
@@ -91,7 +97,7 @@ docker compose up -d --build
 `template.example.yaml` 只是仓库默认模板。Web UI 修改的真实配置保存在
 `data/template.yaml`，因此日常 `git pull` 不会再与用户配置冲突。
 
-升级到使用 `data/config.json` 的版本时，现有 `.env` 中的非默认 Token 会在首次启动时自动迁移，登录凭据不会变化。如果仍在使用公开示例值 `my_secret_token`，系统会自动生成新的强随机 Token；可用部署章节中的命令读取新 Token。
+升级到凭据分离版本时，原有 `secret_token` 会原样迁移为客户端订阅密钥，因此现有客户端链接不会变化。系统会另行生成管理密钥，其 PBKDF2 哈希保存在 `data/config.json`，首次明文写入 `data/admin_token.txt`；请用部署章节中的命令读取并登录，然后在 WebUI 中更换。公开示例订阅密钥 `my_secret_token` 仍会自动轮换。
 
 更新完成后，请在 Clash Verge / Mihomo 中重新更新 ProxyForge 订阅，并刷新一次“代理集合”。机场节点由独立的 `proxy-provider` 二次加载，仅更新主订阅但保留旧 provider 缓存时，客户端可能暂时仍显示旧状态。
 
@@ -179,7 +185,7 @@ docker compose up -d --build
 ProxyForge 的所有核心数据和配置均以纯文本文件的形式持久化保存在当前目录下。如果您更换了 VPS 或需要备份，只需带走以下几个核心文件即可完美还原：
 
 - `.env`（监听端口和首次迁移参数）
-- `data/` 文件夹（包含 `config.json`、`template.yaml`、`custom_nodes.yaml`、`airports.yaml` 和节点缓存）
+- `data/` 文件夹（包含 `config.json`、`template.yaml`、`custom_nodes.yaml`、`airports.yaml` 和节点缓存；若尚未在 WebUI 更换首次管理密钥，还包括 `admin_token.txt`）
 
 **迁移步骤：**
 1. 在新 VPS 上克隆项目并进入目录：

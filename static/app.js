@@ -1,5 +1,5 @@
 const API_BASE = '/api';
-let currentToken = localStorage.getItem('proxyforge_token') || '';
+const { escapeHtml } = ProxyForgeHtmlUtils;
 
 // Data State
 let state = {
@@ -37,6 +37,8 @@ const subLink = document.getElementById('sub-link');
 const copyBtn = document.getElementById('copy-btn');
 const secretToken = document.getElementById('secret-token');
 const saveConfigBtn = document.getElementById('save-config-btn');
+const newAdminToken = document.getElementById('new-admin-token');
+const saveAdminTokenBtn = document.getElementById('save-admin-token-btn');
 const rulesEditor = document.getElementById('rules-editor');
 const saveRulesBtn = document.getElementById('save-rules-btn');
 const ruleSearchInput = document.getElementById('rule-search-input');
@@ -69,11 +71,11 @@ modalConfirm.addEventListener('click', () => {
 // === Auth Logic ===
 async function fetchAuth(url, options = {}) {
     if (!options.headers) options.headers = {};
-    options.headers['Authorization'] = `Bearer ${currentToken}`;
     options.headers['Content-Type'] = 'application/json';
+    options.credentials = 'same-origin';
     const res = await fetch(`${API_BASE}${url}`, options);
     if (res.status === 401) {
-        logout();
+        showLogin();
         throw new Error('Unauthorized');
     }
     if (!res.ok) {
@@ -111,15 +113,15 @@ async function login() {
     try {
         const res = await fetch(`${API_BASE}/auth`, {
             method: 'POST',
+            credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ token })
         });
         if (res.ok) {
-            currentToken = token;
-            localStorage.setItem('proxyforge_token', token);
             loginOverlay.classList.remove('active');
             dashboard.style.display = 'flex';
             dashboard.classList.remove('hidden');
+            tokenInput.value = '';
             loadData();
         } else throw new Error('Invalid');
     } catch (err) {
@@ -129,33 +131,38 @@ async function login() {
     }
 }
 
-function logout() {
-    currentToken = '';
-    localStorage.removeItem('proxyforge_token');
+function showLogin() {
     dashboard.style.display = 'none';
     loginOverlay.classList.add('active');
     tokenInput.value = '';
     loginError.style.display = 'none';
 }
 
+async function logout() {
+    try {
+        await fetch(`${API_BASE}/logout`, {
+            method: 'POST',
+            credentials: 'same-origin'
+        });
+    } finally {
+        showLogin();
+    }
+}
+
 loginBtn.addEventListener('click', login);
 tokenInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') login(); });
 logoutBtn.addEventListener('click', logout);
 
-if (currentToken) {
-    fetch(`${API_BASE}/auth`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: currentToken })
-    }).then(res => {
-        if (res.ok) {
-            loginOverlay.classList.remove('active');
-            dashboard.style.display = 'flex';
-            dashboard.classList.remove('hidden');
-            loadData();
-        } else logout();
-    }).catch(logout);
-}
+fetch(`${API_BASE}/auth`, { credentials: 'same-origin' }).then(res => {
+    if (res.ok) {
+        loginOverlay.classList.remove('active');
+        dashboard.style.display = 'flex';
+        dashboard.classList.remove('hidden');
+        loadData();
+    } else {
+        showLogin();
+    }
+}).catch(showLogin);
 
 // === Navigation ===
 sidebarItems.forEach(item => {
@@ -172,10 +179,10 @@ async function loadData() {
     try {
         const configRes = await fetchAuth('/config');
         state.config = await configRes.json();
-        secretToken.value = state.config.SECRET_TOKEN;
+        secretToken.value = state.config.SUBSCRIPTION_TOKEN;
         const updateSubLink = () => {
             const name = encodeURIComponent(document.getElementById('sub-name').value.trim() || 'ProxyForge');
-            subLink.value = `${window.location.origin}/sub?token=${state.config.SECRET_TOKEN}&name=${name}`;
+            subLink.value = `${window.location.origin}/sub?token=${state.config.SUBSCRIPTION_TOKEN}&name=${name}`;
         };
         updateSubLink();
         document.getElementById('sub-name').addEventListener('input', updateSubLink);
@@ -291,12 +298,15 @@ function renderAirports() {
                 }
             }
             let displayName = customName || info.name || '机场';
+            let safeDisplayName = escapeHtml(displayName);
+            let safeUrl = escapeHtml(url);
+            let safeError = escapeHtml(info.error || '');
             html += `
                 <div class="list-item" style="flex-direction:column; align-items:flex-start;">
                     <div style="display:flex; width:100%; align-items:center;">
                         ${getCheckboxHTML('cb-airport', index)}
-                        <span class="type-badge badge-select" style="margin-right:8px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${displayName}</span>
-                        <div class="item-info" style="flex:1; word-break:break-all; font-size:0.8rem; color:#666;">${url}</div>
+                        <span class="type-badge badge-select" style="margin-right:8px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${safeDisplayName}</span>
+                        <div class="item-info" style="flex:1; word-break:break-all; font-size:0.8rem; color:#666;">${safeUrl}</div>
                         <div class="item-actions">
                             <button class="btn btn-sm btn-primary" onclick="editAirport(${index})">编辑</button>
                             <button class="btn btn-sm btn-danger" onclick="deleteAirport(${index})">删除</button>
@@ -308,16 +318,18 @@ function renderAirports() {
                         <span style="color:#e65100;"><b>⏳ 到期:</b> ${info.expire ? formatDate(info.expire) : '长期有效'}</span>
                         <span style="color:#607d8b;"><b>🔄 刷新:</b> ${info._timestamp ? new Date(info._timestamp * 1000).toLocaleString('zh-CN', {month: 'numeric', day: 'numeric', hour: '2-digit', minute:'2-digit'}) : '未知'}</span>
                     </div>
-                    ${info.error ? `<div style="color:red; font-size:0.75rem; margin-left:34px; margin-top:4px;">抓取失败: ${info.error}</div>` : ''}
+                    ${info.error ? `<div style="color:red; font-size:0.75rem; margin-left:34px; margin-top:4px;">抓取失败: ${safeError}</div>` : ''}
                 </div>
             `;
         } else {
             let displayName = customName || '机场';
+            let safeDisplayName = escapeHtml(displayName);
+            let safeUrl = escapeHtml(url);
             html += `
                 <div class="list-item">
                     ${getCheckboxHTML('cb-airport', index)}
-                    <span class="type-badge badge-select" style="margin-right:8px;">${displayName}</span>
-                    <div class="item-info" style="word-break:break-all;">${url}</div>
+                    <span class="type-badge badge-select" style="margin-right:8px;">${safeDisplayName}</span>
+                    <div class="item-info" style="word-break:break-all;">${safeUrl}</div>
                     <span style="font-size:0.8rem; color:#999;">动态数据加载中...</span>
                     <div class="item-actions">
                         <button class="btn btn-sm btn-primary" onclick="editAirport(${index})">编辑</button>
@@ -388,10 +400,10 @@ function renderGroups() {
                  ondragend="handleGroupDragEnd(event)">
                 <span class="drag-handle" style="cursor: grab; margin-right: 10px; color: #999;">⠿</span>
                 ${getCheckboxHTML('cb-group', index)}
-                <span class="type-badge ${badgeCls}">${g.type || 'unknown'}</span>
+                <span class="type-badge ${badgeCls}">${escapeHtml(g.type || 'unknown')}</span>
                 <div class="item-info">
-                    <div class="item-name">${displayName}</div>
-                    <div class="item-detail" style="color: #666; font-size: 0.8rem; margin-top: 4px;">包含: ${proxiesPreview}</div>
+                    <div class="item-name">${escapeHtml(displayName)}</div>
+                    <div class="item-detail" style="color: #666; font-size: 0.8rem; margin-top: 4px;">包含: ${escapeHtml(proxiesPreview)}</div>
                 </div>
                 <div class="item-actions">
                     <button class="btn btn-sm" onclick="editGroup(${index})">编辑</button>
@@ -424,10 +436,10 @@ function renderNodes() {
                  ondragend="handleDragEnd(event)">
                 <span class="drag-handle" style="cursor: grab; margin-right: 10px; color: #999;">⠿</span>
                 ${getCheckboxHTML('cb-node', index)}
-                <span class="type-badge badge-node">${n.type || 'unknown'}</span>
+                <span class="type-badge badge-node">${escapeHtml(n.type || 'unknown')}</span>
                 <div class="item-info">
-                    <div class="item-name">${displayName}</div>
-                    <div class="item-detail">${n.server || ''} ${n.port ? ':'+n.port : ''}</div>
+                    <div class="item-name">${escapeHtml(displayName)}</div>
+                    <div class="item-detail">${escapeHtml(n.server || '')} ${escapeHtml(n.port ? ':'+n.port : '')}</div>
                 </div>
                 <div class="item-actions">
                     ${index > 0 ? `<button class="btn btn-sm" onclick="moveNodeUp(${index})" title="上移">⬆️</button>` : ''}
@@ -452,18 +464,18 @@ function renderRuleProviders() {
         return;
     }
     let html = '';
-    keys.forEach(key => {
+    keys.forEach((key, providerIndex) => {
         let p = providers[key];
         html += `
             <div class="list-item">
-                <span class="type-badge badge-node">${p.type || 'http'}</span>
+                <span class="type-badge badge-node">${escapeHtml(p.type || 'http')}</span>
                 <div class="item-info">
-                    <div class="item-name">${key}</div>
-                    <div class="item-detail">${p.url ? p.url : (p.path || '')}</div>
+                    <div class="item-name">${escapeHtml(key)}</div>
+                    <div class="item-detail">${escapeHtml(p.url ? p.url : (p.path || ''))}</div>
                 </div>
                 <div class="item-actions">
-                    <button class="btn btn-sm" onclick="editRuleProvider('${key}')">编辑</button>
-                    <button class="btn btn-sm btn-danger" onclick="deleteRuleProvider('${key}')">删除</button>
+                    <button class="btn btn-sm" onclick="editRuleProviderByIndex(${providerIndex})">编辑</button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteRuleProviderByIndex(${providerIndex})">删除</button>
                 </div>
             </div>
         `;
@@ -515,10 +527,10 @@ function renderRules() {
                 <span class="drag-handle" title="${isFiltering ? '清空搜索后可拖拽排序' : '拖拽排序'}"
                       style="cursor: ${isFiltering ? 'not-allowed' : 'grab'}; margin-right: 10px; color: #999;">⠿</span>
                 ${getCheckboxHTML('cb-rule', index)}
-                <span class="type-badge" style="background:${typeColor}; min-width: 90px; text-align: center;">${type}</span>
+                <span class="type-badge" style="background:${typeColor}; min-width: 90px; text-align: center;">${escapeHtml(type)}</span>
                 <div class="item-info" style="font-family: monospace; display:flex; align-items:center;">
-                    <span style="font-weight:600; color:#333; margin-right:8px;">${parts.slice(1, -1).join(',')}</span>
-                    <span style="color:#888; font-size:0.85em;">➔ ${parts[parts.length-1] || ''}</span>
+                    <span style="font-weight:600; color:#333; margin-right:8px;">${escapeHtml(parts.slice(1, -1).join(','))}</span>
+                    <span style="color:#888; font-size:0.85em;">➔ ${escapeHtml(parts[parts.length-1] || '')}</span>
                 </div>
                 <div class="item-actions">
                     <button class="btn btn-sm" onclick="editRule(${index})">编辑</button>
@@ -571,11 +583,11 @@ window.editAirport = (idx) => {
     const html = `
         <div class="form-group full-width">
             <label>机场名称 (可选)</label>
-            <input type="text" id="m-airport-name" value="${customName}" placeholder="比如: 良心云">
+            <input type="text" id="m-airport-name" value="${escapeHtml(customName)}" placeholder="比如: 良心云">
         </div>
         <div class="form-group full-width">
             <label>订阅链接</label>
-            <input type="text" id="m-airport-url" value="${url}" placeholder="https://...">
+            <input type="text" id="m-airport-url" value="${escapeHtml(url)}" placeholder="https://...">
         </div>
     `;
     openModal('编辑机场', html, async () => {
@@ -681,7 +693,7 @@ window.editGroup = function(index) {
     const html = `
         <div class="form-group full-width">
             <label>名称 (Name)</label>
-            <input type="text" id="m-group-name" value="${g.name || ''}">
+            <input type="text" id="m-group-name" value="${escapeHtml(g.name || '')}">
         </div>
         <div class="form-group full-width">
             <label>类型 (Type)</label>
@@ -695,15 +707,15 @@ window.editGroup = function(index) {
         
         <div class="form-group full-width" id="wrap-group-url" style="${g.type==='select'?'display:none':''}">
             <label>测试链接 (URL)</label>
-            <input type="text" id="m-group-url" value="${g.url || 'http://www.gstatic.com/generate_204'}">
+            <input type="text" id="m-group-url" value="${escapeHtml(g.url || 'http://www.gstatic.com/generate_204')}">
         </div>
         <div class="form-group full-width" id="wrap-group-interval" style="${g.type==='select'?'display:none':''}">
             <label>测试间隔 (Interval / s)</label>
-            <input type="number" id="m-group-interval" value="${g.interval || 300}">
+            <input type="number" id="m-group-interval" value="${escapeHtml(g.interval || 300)}">
         </div>
         <div class="form-group full-width" id="wrap-group-default" style="${g.type!=='select'?'display:none':''}">
             <label>默认选中项 (例如: 🚀 节点选择)</label>
-            <input type="text" id="m-group-default" value="${g.default || ''}" placeholder="留空则默认选中第一项">
+            <input type="text" id="m-group-default" value="${escapeHtml(g.default || '')}" placeholder="留空则默认选中第一项">
         </div>
         
         <div class="form-group full-width" style="margin-top: 10px; border-top: 1px dashed #ddd; padding-top: 15px;">
@@ -721,12 +733,12 @@ window.editGroup = function(index) {
             
             <div style="font-size:0.8rem; margin:8px 0 4px 0; color:#666; font-weight: 600;">2. 快速选择节点来源:</div>
             <div class="filter-tags" id="tags-sources">
-                ${Array.from(airportNames).map(name => `<div class="filter-tag" data-val="${name}">✈️ ${name}</div>`).join('')}
+                ${Array.from(airportNames).map(name => `<div class="filter-tag" data-val="${escapeHtml(name)}">✈️ ${escapeHtml(name)}</div>`).join('')}
                 <div class="filter-tag" data-val="_custom_nodes_">🌐 自建节点</div>
             </div>
             
             <div style="font-size:0.8rem; margin:8px 0 4px 0; color:#666; font-weight: 600;">底层正则表达式 (可手动修改):</div>
-            <input type="text" id="m-group-filter" value="${g.filter || ''}" placeholder="例如: (?i)hk|香港">
+            <input type="text" id="m-group-filter" value="${escapeHtml(g.filter || '')}" placeholder="例如: (?i)hk|香港">
         </div>
         
         <div class="form-group full-width">
@@ -939,8 +951,8 @@ window.editGroup = function(index) {
             let emojiName = getFlagEmoji(name);
             html += `
                 <label class="preview-item">
-                    <input type="checkbox" value="${name}" ${isManuallySelected ? 'checked' : ''}>
-                    <span>${emojiName}</span>
+                    <input type="checkbox" value="${escapeHtml(name)}" ${isManuallySelected ? 'checked' : ''}>
+                    <span>${escapeHtml(emojiName)}</span>
                 </label>
             `;
         });
@@ -982,8 +994,8 @@ window.editGroup = function(index) {
             
             html += `
                 <label class="preview-item">
-                    <input type="checkbox" value="${name}" ${isChecked ? 'checked' : ''} ${isMatchedByFilter ? 'disabled title="已由智能筛选器自动包含"' : ''}>
-                    <span style="${labelStyle}">${emojiName}</span>
+                    <input type="checkbox" value="${escapeHtml(name)}" ${isChecked ? 'checked' : ''} ${isMatchedByFilter ? 'disabled title="已由智能筛选器自动包含"' : ''}>
+                    <span style="${labelStyle}">${escapeHtml(emojiName)}</span>
                 </label>
             `;
         });
@@ -1034,8 +1046,8 @@ document.getElementById('btn-bulk-add-nodes').addEventListener('click', () => {
         let emojiName = getFlagEmoji(name);
         html += `
             <label class="preview-item">
-                <input type="checkbox" value="${name}" class="bulk-add-cb">
-                <span>${emojiName}</span>
+                <input type="checkbox" value="${escapeHtml(name)}" class="bulk-add-cb">
+                <span>${escapeHtml(emojiName)}</span>
             </label>
         `;
     });
@@ -1106,7 +1118,7 @@ document.getElementById('btn-bulk-smart-filter').addEventListener('click', () =>
             
             <div style="font-size:0.8rem; margin:8px 0 4px 0; color:#666; font-weight: 600;">2. 快速选择节点来源 (覆盖来源):</div>
             <div class="filter-tags" id="bulk-tags-sources">
-                ${Array.from(airportNames).map(name => `<div class="filter-tag" data-val="${name}">✈️ ${name}</div>`).join('')}
+                ${Array.from(airportNames).map(name => `<div class="filter-tag" data-val="${escapeHtml(name)}">✈️ ${escapeHtml(name)}</div>`).join('')}
                 <div class="filter-tag" data-val="_custom_nodes_">🌐 自建节点</div>
             </div>
             
@@ -1190,7 +1202,7 @@ window.editNode = function(index) {
     const html = `
         <div class="form-group full-width">
             <label>节点配置 (YAML格式) - 或者直接粘贴 vless:// 等分享链接</label>
-            <textarea id="m-node-raw" style="min-height:250px; font-family:monospace;">${yamlStr}</textarea>
+            <textarea id="m-node-raw" style="min-height:250px; font-family:monospace;">${escapeHtml(yamlStr)}</textarea>
         </div>
     `;
     openModal(isNew ? '新建自建节点' : '编辑自建节点', html, async () => {
@@ -1544,19 +1556,32 @@ saveConfigBtn.addEventListener('click', async () => {
             showToast('密钥至少需要 16 个字符', 'error');
             return;
         }
-        const payload = { SECRET_TOKEN: newToken };
+        const payload = { SUBSCRIPTION_TOKEN: newToken };
         await fetchAuth('/config', {
             method: 'POST',
             body: JSON.stringify(payload)
         });
-        showToast('密钥已保存');
+        state.config.SUBSCRIPTION_TOKEN = newToken;
+        showToast('订阅密钥已保存');
         const name = encodeURIComponent(document.getElementById('sub-name').value.trim() || 'ProxyForge');
-        subLink.value = `${window.location.origin}/sub?token=${payload.SECRET_TOKEN}&name=${name}`;
-        if (payload.SECRET_TOKEN !== currentToken) {
-            currentToken = payload.SECRET_TOKEN;
-            localStorage.setItem('proxyforge_token', currentToken);
-        }
+        subLink.value = `${window.location.origin}/sub?token=${payload.SUBSCRIPTION_TOKEN}&name=${name}`;
     } catch (e) { showToast(`保存密钥失败：${e.message}`, 'error'); }
+});
+
+saveAdminTokenBtn.addEventListener('click', async () => {
+    try {
+        const token = newAdminToken.value.trim();
+        if (token.length < 16) {
+            showToast('管理密钥至少需要 16 个字符', 'error');
+            return;
+        }
+        await fetchAuth('/admin-token', {
+            method: 'POST',
+            body: JSON.stringify({ ADMIN_TOKEN: token })
+        });
+        newAdminToken.value = '';
+        showToast('管理密钥已更新，其他登录会话已失效');
+    } catch (e) { showToast(`更新管理密钥失败：${e.message}`, 'error'); }
 });
 
 saveRulesBtn.addEventListener('click', async () => {
@@ -1597,6 +1622,16 @@ window.deleteRuleProvider = function(key) {
     }
 };
 
+window.editRuleProviderByIndex = function(index) {
+    const key = Object.keys(state.templateObj['rule-providers'] || {})[index];
+    if (key !== undefined) editRuleProvider(key);
+};
+
+window.deleteRuleProviderByIndex = function(index) {
+    const key = Object.keys(state.templateObj['rule-providers'] || {})[index];
+    if (key !== undefined) deleteRuleProvider(key);
+};
+
 const RULE_TYPES = ['DOMAIN-SUFFIX', 'DOMAIN-KEYWORD', 'DOMAIN', 'IP-CIDR', 'GEOIP', 'MATCH', 'RULE-SET'];
 
 window.editRule = function(index) {
@@ -1627,12 +1662,12 @@ window.editRule = function(index) {
         </div>
         <div class="form-group full-width" id="m-rule-payload-group" style="${type==='MATCH' ? 'display:none;' : ''}">
             <label>匹配内容 (Payload)</label>
-            <input type="text" id="m-rule-payload" value="${payload}" placeholder="如 google.com 或 reject_list">
+            <input type="text" id="m-rule-payload" value="${escapeHtml(payload)}" placeholder="如 google.com 或 reject_list">
         </div>
         <div class="form-group full-width">
             <label>目标策略 (Target)</label>
             <select id="m-rule-target">
-                ${targetsHtml.map(t => `<option value="${t}" ${t===target?'selected':''}>${t}</option>`).join('')}
+                ${targetsHtml.map(t => `<option value="${escapeHtml(t)}" ${t===target?'selected':''}>${escapeHtml(t)}</option>`).join('')}
             </select>
         </div>
     `;
@@ -1675,7 +1710,7 @@ window.editRuleProvider = function(keyToEdit) {
     let html = `
         <div class="form-group full-width">
             <label>规则集名称 (Name)</label>
-            <input type="text" id="m-rp-name" value="${isNew ? '' : keyToEdit}" ${isNew ? '' : 'readonly'} placeholder="英文，如 reject_list">
+            <input type="text" id="m-rp-name" value="${escapeHtml(isNew ? '' : keyToEdit)}" ${isNew ? '' : 'readonly'} placeholder="英文，如 reject_list">
         </div>
         <div class="form-group">
             <label>类型 (Type)</label>
@@ -1694,15 +1729,15 @@ window.editRuleProvider = function(keyToEdit) {
         </div>
         <div class="form-group full-width" id="m-rp-url-group" style="${p.type==='file'?'display:none;':''}">
             <label>下载地址 (URL)</label>
-            <input type="text" id="m-rp-url" value="${p.url || ''}" placeholder="https://...">
+            <input type="text" id="m-rp-url" value="${escapeHtml(p.url || '')}" placeholder="https://...">
         </div>
         <div class="form-group full-width">
             <label>本地路径 (Path)</label>
-            <input type="text" id="m-rp-path" value="${p.path || './ruleset/' + (isNew ? 'my_ruleset.yaml' : keyToEdit + '.yaml')}" placeholder="./ruleset/...">
+            <input type="text" id="m-rp-path" value="${escapeHtml(p.path || './ruleset/' + (isNew ? 'my_ruleset.yaml' : keyToEdit + '.yaml'))}" placeholder="./ruleset/...">
         </div>
         <div class="form-group full-width" id="m-rp-interval-group" style="${p.type==='file'?'display:none;':''}">
             <label>更新间隔 (Interval 单位:秒)</label>
-            <input type="number" id="m-rp-interval" value="${p.interval || 86400}">
+            <input type="number" id="m-rp-interval" value="${escapeHtml(p.interval || 86400)}">
         </div>
     `;
     openModal(isNew ? '添加规则集' : '编辑规则集', html, () => {
@@ -1808,7 +1843,7 @@ const refreshPreviewBtn = document.getElementById('refresh-preview-btn');
 async function loadFinalPreview() {
     previewEditor.value = '正在从后端生成最终订阅配置...\n如果数据量大可能会需要几秒钟，请稍候...';
     try {
-        let res = await fetch(`/sub?token=${encodeURIComponent(currentToken)}`);
+        let res = await fetch(`/sub?token=${encodeURIComponent(state.config.SUBSCRIPTION_TOKEN)}`);
         if (!res.ok) {
             let errText = await res.text();
             throw new Error(`HTTP ${res.status}: ${errText}`);

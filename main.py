@@ -6,17 +6,24 @@ import logging
 import base64
 import json
 import urllib.parse
-import requests
 import re
-import secrets
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, HTTPException, Query, Header, Depends, Body, Request
-from fastapi.responses import PlainTextResponse, FileResponse
+from fastapi.responses import PlainTextResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from cachetools import cached, TTLCache
 from typing import List, Dict, Any
 from dotenv import load_dotenv
 from pydantic import BaseModel
+
+from runtime_security import (
+    ADMIN_TOKEN_MIN_LENGTH,
+    INSECURE_DEFAULT_TOKENS,
+    RuntimeConfigError,
+    RuntimeConfigStore,
+)
+from network_security import UnsafeOutboundUrl, safe_get, validate_outbound_url
+from auth_rate_limit import LoginRateLimiter
 
 # ================= 加载环境变量 =================
 load_dotenv()
@@ -26,7 +33,9 @@ logger = logging.getLogger(__name__)
 
 DATA_DIR = "data"
 RUNTIME_CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
-INSECURE_DEFAULT_TOKENS = {"", "my_secret_token"}
+ADMIN_BOOTSTRAP_PATH = os.path.join(DATA_DIR, "admin_token.txt")
+SESSION_COOKIE_NAME = "proxyforge_session"
+SESSION_TTL_SECONDS = 12 * 60 * 60
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs("static", exist_ok=True)
@@ -34,80 +43,21 @@ os.makedirs("static", exist_ok=True)
 def get_env_var(key, default=""):
     return os.environ.get(key) or os.getenv(key, default)
 
-def save_runtime_config(secret_token: str) -> None:
-    """Atomically persist mutable application settings outside the container layer."""
-    os.makedirs(os.path.dirname(RUNTIME_CONFIG_PATH), exist_ok=True)
-    temporary_path = f"{RUNTIME_CONFIG_PATH}.tmp"
-    with open(temporary_path, "w", encoding="utf-8") as config_file:
-        json.dump(
-            {"secret_token": secret_token},
-            config_file,
-            ensure_ascii=False,
-            indent=2,
-        )
-        config_file.write("\n")
-        config_file.flush()
-        os.fsync(config_file.fileno())
-    os.replace(temporary_path, RUNTIME_CONFIG_PATH)
-    try:
-        os.chmod(RUNTIME_CONFIG_PATH, 0o600)
-    except OSError:
-        # Some filesystems (notably Windows development environments) do not
-        # implement POSIX modes. The Docker/Linux deployment still gets 0600.
-        pass
 
-def load_or_create_secret_token() -> str:
-    """Load the persisted token, migrate a safe environment token, or create one."""
-    if os.path.exists(RUNTIME_CONFIG_PATH):
-        try:
-            if not os.path.isfile(RUNTIME_CONFIG_PATH):
-                raise ValueError("运行配置路径不是普通文件")
-            with open(RUNTIME_CONFIG_PATH, "r", encoding="utf-8") as config_file:
-                config = json.load(config_file)
-            if not isinstance(config, dict):
-                raise ValueError("运行配置根节点必须是对象")
-            stored_token = str(config.get("secret_token", "")).strip()
-            if not stored_token:
-                raise ValueError("持久化配置中缺少有效 Token")
-            if stored_token in INSECURE_DEFAULT_TOKENS:
-                token = secrets.token_urlsafe(32)
-                logger.warning("持久化配置使用公开默认 Token，已自动替换为强随机 Token")
-                save_runtime_config(token)
-                logger.info(
-                    "可使用 docker compose exec proxyforge python -c "
-                    "\"import json; print(json.load(open('/app/data/config.json'))['secret_token'])\" "
-                    "查看新的登录 Token"
-                )
-                return token
-            return stored_token
-        except (OSError, ValueError, TypeError) as exc:
-            logger.critical("读取持久化运行配置失败，拒绝回退旧环境变量: %s", exc)
-            raise RuntimeError(
-                f"无法读取 {RUNTIME_CONFIG_PATH}，请恢复备份或修复该文件"
-            ) from exc
+RUNTIME_STORE = RuntimeConfigStore(RUNTIME_CONFIG_PATH, ADMIN_BOOTSTRAP_PATH)
+try:
+    RUNTIME_STORE.load_or_create()
+except RuntimeConfigError as exc:
+    logger.critical("读取持久化运行配置失败，拒绝不安全降级: %s", exc)
+    raise
 
-    environment_token = str(get_env_var("SECRET_TOKEN", "")).strip()
-    if environment_token and environment_token not in INSECURE_DEFAULT_TOKENS:
-        token = environment_token
-        logger.info("已将环境变量中的 Token 迁移到持久化运行配置")
-        if len(token) < 16:
-            logger.warning("迁移的现有 Token 少于 16 个字符，请登录后尽快更换")
-    else:
-        token = secrets.token_urlsafe(32)
-        if environment_token in INSECURE_DEFAULT_TOKENS and environment_token:
-            logger.warning("检测到公开的默认 Token，已自动替换为强随机 Token")
-        else:
-            logger.info("未配置 Token，已生成强随机 Token")
-        logger.info(
-            "可使用 docker compose exec proxyforge python -c "
-            "\"import json; print(json.load(open('/app/data/config.json'))['secret_token'])\" "
-            "查看首次登录 Token"
-        )
-
-    save_runtime_config(token)
-    return token
-
-SECRET_TOKEN = load_or_create_secret_token()
+SUBSCRIPTION_TOKEN = RUNTIME_STORE.subscription_token
+LOGIN_RATE_LIMITER = LoginRateLimiter()
+if os.path.exists(ADMIN_BOOTSTRAP_PATH):
+    logger.warning(
+        "已生成独立管理密钥；请使用 docker compose exec proxyforge "
+        "cat /app/data/admin_token.txt 读取，并登录后立即更换"
+    )
 
 TEMPLATE_PATH = os.path.join(DATA_DIR, "template.yaml")
 TEMPLATE_EXAMPLE_PATH = "template.example.yaml"
@@ -167,6 +117,21 @@ def initialize_custom_nodes_storage() -> str:
 initialize_custom_nodes_storage()
 
 app = FastAPI(title="ProxyForge", description="专属节点订阅聚合与配置下发中心")
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    forwarded_scheme = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip()
+    if request.url.scheme == "https" or forwarded_scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000"
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 subscription_cache = TTLCache(maxsize=1, ttl=12 * 60 * 60)
 
@@ -362,7 +327,7 @@ def fetch_airport_item(item: Any, index: int = 0) -> List[Dict[str, Any]]:
     headers = {"User-Agent": "clash-verge/v1.6.0 clash-meta/1.18.3"}
     logger.info(f"正在从 {airport_name} 拉取节点")
     try:
-        response = requests.get(url.strip(), headers=headers, timeout=30)
+        response = safe_get(url.strip(), headers=headers, timeout=30)
         response.raise_for_status()
         proxies = parse_airport_response(response.text)
         if proxies:
@@ -441,7 +406,7 @@ def fetch_single_airport_info(item, force=False) -> dict:
             
     try:
         headers = {"User-Agent": "clash-verge/v1.6.0 clash-meta/1.18.3"}
-        res = requests.get(url, headers=headers, timeout=30)
+        res = safe_get(url, headers=headers, timeout=30)
         res.raise_for_status()
         
         # 尝试提取名称
@@ -466,7 +431,7 @@ def fetch_single_airport_info(item, force=False) -> dict:
         info["nodesCount"] = len(proxies)
             
     except Exception as e:
-        info["error"] = str(e)
+        info["error"] = type(e).__name__
         
     import time
     timestamp = time.time()
@@ -1236,7 +1201,7 @@ def get_airport_provider(
     airport_index: int,
     token: str = Query(..., description="安全验证 Token"),
 ):
-    if token != SECRET_TOKEN:
+    if token != SUBSCRIPTION_TOKEN:
         raise HTTPException(status_code=401, detail="Unauthorized")
     airports = load_airports()
     if airport_index < 0 or airport_index >= len(airports):
@@ -1271,7 +1236,7 @@ def get_subscription(
     token: str = Query(..., description="安全验证 Token"),
     name: str = Query("ProxyForge", description="自定义订阅名称")
 ):
-    if token != SECRET_TOKEN:
+    if token != SUBSCRIPTION_TOKEN:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
@@ -1349,42 +1314,147 @@ def get_subscription(
 
 # ================= 后台管理 API 接口 (需鉴权) =================
 
-def verify_api_token(authorization: str = Header(None)):
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Missing Token")
-    token = authorization.replace("Bearer ", "").strip()
-    if token != SECRET_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid Token")
-    return True
+def set_management_session(response: Response, request: Request) -> None:
+    forwarded_scheme = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip()
+    is_https = request.url.scheme == "https" or forwarded_scheme == "https"
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=RUNTIME_STORE.create_session(SESSION_TTL_SECONDS),
+        max_age=SESSION_TTL_SECONDS,
+        httponly=True,
+        secure=is_https,
+        samesite="strict",
+        path="/",
+    )
+
+
+def is_same_origin_request(request: Request) -> bool:
+    origin = request.headers.get("origin", "").strip()
+    if not origin:
+        return False
+    try:
+        supplied = urllib.parse.urlsplit(origin)
+        expected = urllib.parse.urlsplit(str(request.base_url))
+    except ValueError:
+        return False
+
+    def normalized_port(parsed, effective_scheme=None):
+        if parsed.port is not None:
+            return parsed.port
+        scheme = effective_scheme or parsed.scheme
+        return 443 if scheme == "https" else 80
+
+    forwarded_scheme = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip()
+    expected_scheme = forwarded_scheme if forwarded_scheme in {"http", "https"} else expected.scheme
+    return (
+        supplied.scheme.lower() == expected_scheme.lower()
+        and (supplied.hostname or "").lower() == (expected.hostname or "").lower()
+        and normalized_port(supplied) == normalized_port(expected, expected_scheme)
+    )
+
+
+def verify_api_token(request: Request, authorization: str = Header(None)):
+    session_token = request.cookies.get(SESSION_COOKIE_NAME, "")
+    if session_token and RUNTIME_STORE.verify_session(session_token, SESSION_TTL_SECONDS):
+        if request.method not in {"GET", "HEAD", "OPTIONS"} and not is_same_origin_request(request):
+            raise HTTPException(status_code=403, detail="Cross-origin request rejected")
+        return True
+
+    if authorization and authorization.startswith("Bearer "):
+        admin_token = authorization[len("Bearer "):].strip()
+        if admin_token and RUNTIME_STORE.verify_admin_token(admin_token):
+            return True
+
+    raise HTTPException(status_code=401, detail="Invalid management credentials")
 
 @app.post("/api/auth")
-def auth_login(token: str = Body(..., embed=True)):
-    if token == SECRET_TOKEN:
-        return {"status": "ok"}
-    raise HTTPException(status_code=401, detail="Invalid Token")
+def auth_login(
+    request: Request,
+    response: Response,
+    token: str = Body(..., embed=True),
+):
+    client_key = request.client.host if request.client else "unknown"
+    retry_after = LOGIN_RATE_LIMITER.retry_after(client_key)
+    if retry_after:
+        raise HTTPException(
+            status_code=429,
+            detail="登录失败次数过多，请稍后重试",
+            headers={"Retry-After": str(retry_after)},
+        )
+    if not RUNTIME_STORE.verify_admin_token(token):
+        LOGIN_RATE_LIMITER.record_failure(client_key)
+        raise HTTPException(status_code=401, detail="Invalid management credentials")
+    LOGIN_RATE_LIMITER.reset(client_key)
+    set_management_session(response, request)
+    return {"status": "ok"}
+
+
+@app.get("/api/auth", dependencies=[Depends(verify_api_token)])
+def auth_status():
+    return {"status": "ok"}
+
+
+@app.post("/api/logout", dependencies=[Depends(verify_api_token)])
+def auth_logout(response: Response):
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        path="/",
+        httponly=True,
+        samesite="strict",
+    )
+    return {"status": "ok"}
 
 @app.get("/api/config", dependencies=[Depends(verify_api_token)])
 def get_config():
     return {
-        "SECRET_TOKEN": SECRET_TOKEN
+        "SUBSCRIPTION_TOKEN": SUBSCRIPTION_TOKEN
     }
 
 class ConfigModel(BaseModel):
-    SECRET_TOKEN: str
+    SUBSCRIPTION_TOKEN: str
 
 @app.post("/api/config", dependencies=[Depends(verify_api_token)])
 def update_config(config: ConfigModel):
-    global SECRET_TOKEN
-    new_token = config.SECRET_TOKEN.strip()
+    global SUBSCRIPTION_TOKEN
+    new_token = config.SUBSCRIPTION_TOKEN.strip()
     if len(new_token) < 16:
-        raise HTTPException(status_code=400, detail="Token 至少需要 16 个字符")
+        raise HTTPException(status_code=400, detail="订阅密钥至少需要 16 个字符")
     if new_token in INSECURE_DEFAULT_TOKENS:
         raise HTTPException(status_code=400, detail="不能使用公开的默认 Token")
 
-    save_runtime_config(new_token)
-    SECRET_TOKEN = new_token
-    os.environ["SECRET_TOKEN"] = SECRET_TOKEN
+    try:
+        RUNTIME_STORE.update_subscription_token(new_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    SUBSCRIPTION_TOKEN = new_token
 
+    return {"status": "ok"}
+
+
+class AdminTokenModel(BaseModel):
+    ADMIN_TOKEN: str
+
+
+@app.post("/api/admin-token", dependencies=[Depends(verify_api_token)])
+def update_admin_token(
+    request: Request,
+    response: Response,
+    config: AdminTokenModel,
+):
+    new_token = config.ADMIN_TOKEN.strip()
+    if len(new_token) < ADMIN_TOKEN_MIN_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"管理密钥至少需要 {ADMIN_TOKEN_MIN_LENGTH} 个字符",
+        )
+    if new_token in INSECURE_DEFAULT_TOKENS:
+        raise HTTPException(status_code=400, detail="不能使用公开的默认管理密钥")
+
+    try:
+        RUNTIME_STORE.update_admin_token(new_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    set_management_session(response, request)
     return {"status": "ok"}
 
 @app.get("/api/airports", dependencies=[Depends(verify_api_token)])
@@ -1396,6 +1466,18 @@ class AirportsModel(BaseModel):
 
 @app.post("/api/airports", dependencies=[Depends(verify_api_token)])
 def update_airports(data: AirportsModel):
+    for index, item in enumerate(data.urls, 1):
+        url = item.get("url", "") if isinstance(item, dict) else item
+        if not isinstance(url, str) or not url.strip():
+            raise HTTPException(status_code=400, detail=f"机场 [{index}] 缺少订阅地址")
+        try:
+            validate_outbound_url(url)
+        except UnsafeOutboundUrl as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"机场 [{index}] 订阅地址不安全: {exc}",
+            ) from exc
+
     old_airports = load_airports()
     new_provider_keys = {
         get_airport_name(item, index).lower() for index, item in enumerate(data.urls)
