@@ -4,8 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ProxyForge - 专属订阅中心</title>
-    <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@twemoji/api@14.1.0/dist/twemoji.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"
+            integrity="sha384-+pxiN6T7yvpryuJmE1gM9PX7yQit15auDb+ZwwvJOd/4be2Cie5/IuVXgQb/S9du"
+            crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@twemoji/api@14.1.0/dist/twemoji.min.js"
+            integrity="sha384-A0m5nIzznesp6GyoeuDVkJ6nUu+of5PywoXYoq3x+KVE2jxUSoHvftqkR5bA9W7Y"
+            crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -18,7 +22,7 @@
                 ProxyForge
             </h2>
             <p style="color: var(--text-secondary); margin-bottom: 20px; font-size: 0.9rem;">安全访问拦截系统</p>
-            <input type="password" id="token-input" placeholder="请输入 SECRET_TOKEN">
+            <input type="password" id="token-input" placeholder="请输入管理密钥" autocomplete="current-password">
             <button class="btn btn-primary" id="login-btn">验证身份</button>
             <p id="login-error" style="color: var(--danger); font-size: 0.85rem; margin-top: 15px; display: none;">密码错误，请重试</p>
         </div>
@@ -85,14 +89,23 @@
                     </div>
 
                     <div class="card">
-                        <div class="card-title">🔐 安全验证 (.env)</div>
+                        <div class="card-title">🔐 访问凭据</div>
                         <div class="form-grid">
                             <div class="form-group full-width">
-                                <label>Web 控制台 & 订阅拉取密钥 (SECRET_TOKEN)</label>
+                                <label>客户端订阅密钥</label>
                                 <div style="display: flex; gap: 10px;">
                                     <input type="text" id="secret-token" minlength="16" autocomplete="new-password" style="flex: 1;">
-                                    <button id="save-config-btn" class="btn btn-primary">保存密钥</button>
+                                    <button id="save-config-btn" class="btn btn-primary">保存订阅密钥</button>
                                 </div>
+                                <span class="hint">只用于 /sub 和 /provider，不再授予后台管理权限。</span>
+                            </div>
+                            <div class="form-group full-width">
+                                <label>更换 Web 控制台管理密钥</label>
+                                <div style="display: flex; gap: 10px;">
+                                    <input type="password" id="new-admin-token" minlength="16" autocomplete="new-password" placeholder="输入新的管理密钥" style="flex: 1;">
+                                    <button id="save-admin-token-btn" class="btn btn-primary">更换管理密钥</button>
+                                </div>
+                                <span class="hint">管理密钥不会进入订阅链接；更换后其他后台会话会立即失效。</span>
                             </div>
                         </div>
                     </div>
@@ -254,6 +267,7 @@
         </div>
     </div>
 
+    <script src="/static/html-utils.js"></script>
     <script src="/static/rule-utils.js"></script>
     <script src="/static/app.js"></script>
 </body>

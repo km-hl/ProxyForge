@@ -52,11 +52,12 @@ jobs:
 
       - name: Check frontend JavaScript syntax
         run: |
+          node --check static/html-utils.js
           node --check static/rule-utils.js
           node --check static/app.js
 
       - name: Run frontend behavior tests
-        run: node --test tests/rule_order.test.js
+        run: node --test tests/rule_order.test.js tests/html_security.test.js
 
       - name: Check pull request whitespace errors
         if: github.event_name == 'pull_request'
