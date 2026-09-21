@@ -20,6 +20,8 @@ def load_config_functions():
         "add_flag_to_proxy_name",
         "ConfigValidationError",
         "_is_valid_port",
+        "_has_text",
+        "_is_non_negative_integer",
         "validate_proxy_nodes",
         "validate_mihomo_config",
         "assert_valid_mihomo_config",
@@ -140,6 +142,116 @@ class ConfigValidationTest(unittest.TestCase):
 
         self.assertTrue(any("port/ports" in error for error in errors))
         self.assertTrue(any("password" in error for error in errors))
+
+    def test_valid_tuic_and_anytls_nodes_pass_protocol_validation(self):
+        errors = validate_proxy_nodes([
+            {
+                "name": "TUIC v5",
+                "type": "tuic",
+                "server": "tuic.example.com",
+                "port": 443,
+                "uuid": "11111111-1111-4111-8111-111111111111",
+                "password": "secret",
+                "congestion-controller": "bbr",
+                "udp-relay-mode": "native",
+            },
+            {
+                "name": "AnyTLS",
+                "type": "anytls",
+                "server": "anytls.example.com",
+                "port": 443,
+                "password": "secret",
+            },
+        ])
+
+        self.assertEqual(errors, [])
+
+    def test_tuic_and_anytls_survive_final_subscription_generation(self):
+        template = {
+            "proxy-groups": [{
+                "name": "Proxy",
+                "type": "select",
+                "use": ["_custom_nodes_"],
+            }],
+            "rules": ["MATCH,Proxy"],
+        }
+        custom_nodes = [
+            {
+                "name": "TUIC Node",
+                "type": "tuic",
+                "server": "tuic.example.com",
+                "port": 443,
+                "uuid": "11111111-1111-4111-8111-111111111111",
+                "password": "tuic-secret",
+                "congestion-controller": "bbr",
+                "udp-relay-mode": "native",
+            },
+            {
+                "name": "AnyTLS Node",
+                "type": "anytls",
+                "server": "anytls.example.com",
+                "port": 443,
+                "password": "anytls-secret",
+                "sni": "cdn.example.com",
+            },
+        ]
+
+        output = build_subscription_config(
+            template,
+            custom_nodes,
+            [],
+            "https://proxyforge.example",
+            "test-token",
+        )
+
+        nodes_by_type = {node["type"]: node for node in output["proxies"]}
+        self.assertEqual(nodes_by_type["tuic"]["congestion-controller"], "bbr")
+        self.assertEqual(nodes_by_type["tuic"]["udp-relay-mode"], "native")
+        self.assertEqual(nodes_by_type["anytls"]["sni"], "cdn.example.com")
+        self.assertEqual(validate_mihomo_config(output), [])
+
+    def test_invalid_tuic_auth_and_transport_values_are_rejected(self):
+        errors = validate_proxy_nodes([{
+            "name": "Broken TUIC",
+            "type": "tuic",
+            "server": "tuic.example.com",
+            "port": 443,
+            "uuid": "not-a-uuid",
+            "password": "secret",
+            "congestion-controller": "invalid",
+            "udp-relay-mode": "invalid",
+            "bbr-profile": "invalid",
+            "request-timeout": "eight-seconds",
+            "reduce-rtt": "true",
+            "fast-open": 1,
+        }])
+
+        self.assertTrue(any("uuid" in error for error in errors))
+        self.assertTrue(any("congestion-controller" in error for error in errors))
+        self.assertTrue(any("udp-relay-mode" in error for error in errors))
+        self.assertTrue(any("bbr-profile" in error for error in errors))
+        self.assertTrue(any("request-timeout" in error for error in errors))
+        self.assertTrue(any("reduce-rtt" in error for error in errors))
+        self.assertTrue(any("fast-open" in error for error in errors))
+
+    def test_anytls_requires_password_and_rejects_reality(self):
+        errors = validate_proxy_nodes([{
+            "name": "Broken AnyTLS",
+            "type": "anytls",
+            "server": "anytls.example.com",
+            "port": 443,
+            "password": None,
+            "security": "reality",
+            "idle-session-timeout": "sixty",
+            "udp": "true",
+            "skip-cert-verify": 1,
+        }])
+
+        self.assertTrue(any("password" in error for error in errors))
+        self.assertTrue(any("不支持 Reality" in error for error in errors))
+        self.assertTrue(any("idle-session-timeout" in error for error in errors))
+        self.assertTrue(any("udp" in error for error in errors))
+        self.assertTrue(any("skip-cert-verify" in error for error in errors))
 
     def test_airports_are_emitted_as_secure_proxy_providers_and_group_use(self):
         config = {

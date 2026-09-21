@@ -186,6 +186,92 @@ class ShareLinkParserTest(unittest.TestCase):
         self.assertNotIn("obfs", node)
         self.assertNotIn("obfs-password", node)
 
+    def test_tuic_v5_maps_mihomo_fields_and_preserves_special_password(self):
+        node = parse_share_link(
+            "tuic://11111111-1111-4111-8111-111111111111:p%40ss%3Aword"
+            "@[2001:db8::1]:10443"
+            "?sni=tuic.example.com"
+            "&alpn=h3"
+            "&congestion_control=bbr"
+            "&udp_relay_mode=native"
+            "&allow_insecure=1"
+            "&reduce_rtt=true"
+            "&heartbeat_interval=10000"
+            "&request_timeout=8000"
+            "#TUIC%20V5"
+        )
+
+        self.assertEqual(node["name"], "TUIC V5")
+        self.assertEqual(node["type"], "tuic")
+        self.assertEqual(node["server"], "2001:db8::1")
+        self.assertEqual(node["port"], 10443)
+        self.assertEqual(node["uuid"], "11111111-1111-4111-8111-111111111111")
+        self.assertEqual(node["password"], "p@ss:word")
+        self.assertEqual(node["sni"], "tuic.example.com")
+        self.assertEqual(node["alpn"], ["h3"])
+        self.assertEqual(node["congestion-controller"], "bbr")
+        self.assertEqual(node["udp-relay-mode"], "native")
+        self.assertTrue(node["skip-cert-verify"])
+        self.assertTrue(node["reduce-rtt"])
+        self.assertEqual(node["heartbeat-interval"], 10000)
+        self.assertEqual(node["request-timeout"], 8000)
+
+    def test_tuic_v4_uses_token_without_v5_credentials(self):
+        node = parse_share_link(
+            "tuic://legacy%3Atoken@tuic.example.com:443"
+            "?udp-relay-mode=quic#TUICv4"
+        )
+
+        self.assertEqual(node["token"], "legacy:token")
+        self.assertNotIn("uuid", node)
+        self.assertNotIn("password", node)
+        self.assertEqual(node["udp-relay-mode"], "quic")
+
+    def test_anytls_defaults_to_443_and_maps_supported_tls_fields(self):
+        node = parse_share_link(
+            "anytls://p%40ss%3Aword@anytls.example.com"
+            "?sni=cdn.example.com"
+            "&alpn=h2%2Chttp%2F1.1"
+            "&allow_insecure=1"
+            "&fp=chrome"
+            "&udp=0"
+            "&idle_session_check_interval=45"
+            "&idle_session_timeout=60"
+            "&min_idle_session=2"
+            "#AnyTLS"
+        )
+
+        self.assertEqual(node["type"], "anytls")
+        self.assertEqual(node["server"], "anytls.example.com")
+        self.assertEqual(node["port"], 443)
+        self.assertEqual(node["password"], "p@ss:word")
+        self.assertEqual(node["sni"], "cdn.example.com")
+        self.assertEqual(node["alpn"], ["h2", "http/1.1"])
+        self.assertEqual(node["client-fingerprint"], "chrome")
+        self.assertTrue(node["skip-cert-verify"])
+        self.assertFalse(node["udp"])
+        self.assertEqual(node["idle-session-check-interval"], 45)
+        self.assertEqual(node["idle-session-timeout"], 60)
+        self.assertEqual(node["min-idle-session"], 2)
+
+    def test_anytls_reality_is_rejected_instead_of_silently_downgraded(self):
+        node = parse_share_link(
+            "anytls://secret@anytls.example.com:443?security=reality#Unsupported"
+        )
+
+        self.assertIsNone(node)
+
+    def test_invalid_tls_boolean_is_rejected_instead_of_becoming_false(self):
+        for link in (
+            (
+                "tuic://11111111-1111-4111-8111-111111111111:secret"
+                "@tuic.example.com:443?allow_insecure=invalid#TUIC"
+            ),
+            "anytls://secret@anytls.example.com:443?insecure=invalid#AnyTLS",
+        ):
+            with self.subTest(link=link):
+                self.assertIsNone(parse_share_link(link))
+
     def test_internal_source_marker_is_removed_before_saving_or_output(self):
         node = {
             "name": "Lightlayer - HK",

@@ -29,6 +29,15 @@ test('management credentials are not persisted in browser storage', () => {
     assert.doesNotMatch(appSource, /localStorage|sessionStorage/);
 });
 
+test('node import recognizes TUIC and AnyTLS share links', () => {
+    const appSource = fs.readFileSync(
+        path.join(__dirname, '..', 'static', 'app.js'),
+        'utf8'
+    );
+
+    assert.match(appSource, /SHARE_LINK_PATTERN[^\n]+tuic\|anytls/);
+});
+
 test('third-party scripts are pinned with subresource integrity', () => {
     const indexSource = fs.readFileSync(
         path.join(__dirname, '..', 'static', 'index.html'),

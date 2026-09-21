@@ -185,6 +185,25 @@ class ApiIntegrationTest(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("不安全", response.json()["detail"])
 
+    def test_parse_links_accepts_tuic_and_anytls(self):
+        response = self.client.post(
+            "/api/parse-links",
+            headers={"Authorization": f"Bearer {TEST_ADMIN_TOKEN}"},
+            json={"links": [
+                (
+                    "tuic://11111111-1111-4111-8111-111111111111:secret"
+                    "@tuic.example.com:443?congestion_control=bbr#TUIC"
+                ),
+                "anytls://secret@anytls.example.com:443?sni=cdn.example.com#AnyTLS",
+            ]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        nodes = response.json()["nodes"]
+        self.assertEqual([node["type"] for node in nodes], ["tuic", "anytls"])
+        self.assertEqual(nodes[0]["congestion-controller"], "bbr")
+        self.assertEqual(nodes[1]["sni"], "cdn.example.com")
+
     def test_provider_returns_mihomo_http_provider_document(self):
         airport = {"name": "Example Airport", "url": "https://airport.invalid/sub"}
         proxies = [{
