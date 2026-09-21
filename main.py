@@ -458,11 +458,25 @@ def parse_share_link(link: str) -> dict:
                 return qs[key][0]
         return default
 
-    def as_bool(value: str) -> bool:
-        return str(value).lower() in {"1", "true", "yes"}
-
     def split_list(value: str) -> list:
         return [item for item in value.replace(",", "\n").splitlines() if item]
+
+    def add_integer_field(node: dict, qs: dict, field: str, *keys: str):
+        value = first(qs, *keys)
+        if not value:
+            return
+        if not re.fullmatch(r"\d+", value):
+            raise ValueError(f"{field} must be a non-negative integer")
+        node[field] = int(value)
+
+    def add_boolean_field(node: dict, qs: dict, field: str, *keys: str):
+        value = first(qs, *keys)
+        if not value:
+            return
+        normalized = value.lower()
+        if normalized not in {"1", "true", "yes", "0", "false", "no"}:
+            raise ValueError(f"{field} must be boolean")
+        node[field] = normalized in {"1", "true", "yes"}
 
     def add_common_tls_fields(node: dict, qs: dict, sni_field: str):
         sni = first(qs, "sni", "peer")
@@ -477,9 +491,18 @@ def parse_share_link(link: str) -> dict:
         client_fingerprint = first(qs, "fp", "client-fingerprint")
         if client_fingerprint:
             node["client-fingerprint"] = client_fingerprint
-        skip_cert_verify = first(qs, "skip-cert-verify", "allowInsecure", "insecure")
-        if skip_cert_verify:
-            node["skip-cert-verify"] = as_bool(skip_cert_verify)
+        add_boolean_field(
+            node,
+            qs,
+            "skip-cert-verify",
+            "skip-cert-verify",
+            "allowInsecure",
+            "allow_insecure",
+            "insecure",
+        )
+        name_cert_verify = first(qs, "name-cert-verify", "name_cert_verify")
+        if name_cert_verify:
+            node["name-cert-verify"] = name_cert_verify
 
     def add_transport_opts(node: dict, qs: dict):
         network = node.get("network")
@@ -563,7 +586,14 @@ def parse_share_link(link: str) -> dict:
                 "udp": True
             }
         except: return None
-    elif any(link.lower().startswith(prefix) for prefix in ["vless://", "trojan://", "hysteria2://", "hy2://"]):
+    elif any(link.lower().startswith(prefix) for prefix in [
+        "vless://",
+        "trojan://",
+        "hysteria2://",
+        "hy2://",
+        "tuic://",
+        "anytls://",
+    ]):
         try:
             parsed = urllib.parse.urlparse(link)
             scheme = "hysteria2" if parsed.scheme == "hy2" else parsed.scheme
@@ -596,6 +626,8 @@ def parse_share_link(link: str) -> dict:
                 else:
                     # The Hysteria URI specification defines 443 as the default.
                     port_value = 443
+            elif scheme == "anytls":
+                port_value = parsed.port or 443
             else:
                 port_value = parsed.port
 
@@ -612,6 +644,16 @@ def parse_share_link(link: str) -> dict:
                 node["password"] = raw_auth
                 if ports_value:
                     node["ports"] = ports_value
+            elif scheme == "tuic":
+                raw_tuic_auth = raw_authority[0] if len(raw_authority) == 2 else ""
+                if ":" in raw_tuic_auth:
+                    raw_uuid, raw_password = raw_tuic_auth.split(":", 1)
+                    node["uuid"] = urllib.parse.unquote(raw_uuid)
+                    node["password"] = urllib.parse.unquote(raw_password)
+                else:
+                    node["token"] = urllib.parse.unquote(raw_tuic_auth)
+            elif scheme == "anytls":
+                node["password"] = raw_auth
                 
             qs = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
             if "type" in qs: node["network"] = qs["type"][0]
@@ -664,6 +706,87 @@ def parse_share_link(link: str) -> dict:
                     value = first(qs, *aliases)
                     if value:
                         node[field] = value
+            elif scheme == "tuic":
+                add_common_tls_fields(node, qs, "sni")
+                congestion_controller = first(
+                    qs,
+                    "congestion-controller",
+                    "congestion-control",
+                    "congestion_control",
+                )
+                if congestion_controller:
+                    node["congestion-controller"] = congestion_controller
+                udp_relay_mode = first(qs, "udp-relay-mode", "udp_relay_mode")
+                if udp_relay_mode:
+                    node["udp-relay-mode"] = udp_relay_mode
+                bbr_profile = first(qs, "bbr-profile", "bbr_profile")
+                if bbr_profile:
+                    node["bbr-profile"] = bbr_profile
+                add_boolean_field(
+                    node,
+                    qs,
+                    "reduce-rtt",
+                    "reduce-rtt",
+                    "reduce_rtt",
+                    "zero-rtt-handshake",
+                    "zero_rtt_handshake",
+                )
+                add_boolean_field(node, qs, "disable-sni", "disable-sni", "disable_sni")
+                add_boolean_field(node, qs, "fast-open", "fast-open", "fast_open")
+                add_integer_field(
+                    node,
+                    qs,
+                    "heartbeat-interval",
+                    "heartbeat-interval",
+                    "heartbeat_interval",
+                )
+                add_integer_field(
+                    node,
+                    qs,
+                    "request-timeout",
+                    "request-timeout",
+                    "request_timeout",
+                )
+                add_integer_field(
+                    node,
+                    qs,
+                    "max-udp-relay-packet-size",
+                    "max-udp-relay-packet-size",
+                    "max_udp_relay_packet_size",
+                )
+                add_integer_field(
+                    node,
+                    qs,
+                    "max-open-streams",
+                    "max-open-streams",
+                    "max_open_streams",
+                )
+            elif scheme == "anytls":
+                if first(qs, "security").lower() == "reality":
+                    return None
+                add_common_tls_fields(node, qs, "sni")
+                add_boolean_field(node, qs, "udp", "udp")
+                add_integer_field(
+                    node,
+                    qs,
+                    "idle-session-check-interval",
+                    "idle-session-check-interval",
+                    "idle_session_check_interval",
+                )
+                add_integer_field(
+                    node,
+                    qs,
+                    "idle-session-timeout",
+                    "idle-session-timeout",
+                    "idle_session_timeout",
+                )
+                add_integer_field(
+                    node,
+                    qs,
+                    "min-idle-session",
+                    "min-idle-session",
+                    "min_idle_session",
+                )
             return node
         except: return None
     return None
@@ -676,6 +799,19 @@ class ConfigValidationError(ValueError):
 def _is_valid_port(value: Any) -> bool:
     try:
         return 1 <= int(value) <= 65535
+    except (TypeError, ValueError):
+        return False
+
+
+def _has_text(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _is_non_negative_integer(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    try:
+        return int(value) >= 0 and str(value).strip().isdigit()
     except (TypeError, ValueError):
         return False
 
@@ -710,12 +846,74 @@ def validate_proxy_nodes(proxies: Any, location: str = "proxies") -> List[str]:
                     errors.append(f"{prefix} ({name or '未命名'}) 的 ports 格式无效: {ports}")
                 if not ports and not _is_valid_port(proxy.get("port")):
                     errors.append(f"{prefix} ({name or '未命名'}) 缺少有效的 port/ports")
-                if not str(proxy.get("password", "")):
+                if not _has_text(proxy.get("password")):
                     errors.append(f"{prefix} ({name or '未命名'}) 缺少 Hysteria2 password")
                 if proxy.get("obfs") not in {None, "", "salamander"}:
                     errors.append(f"{prefix} ({name or '未命名'}) 的 Mihomo Hysteria2 obfs 不受支持: {proxy.get('obfs')}")
                 if proxy.get("obfs") and not proxy.get("obfs-password"):
                     errors.append(f"{prefix} ({name or '未命名'}) 启用了 obfs 但缺少 obfs-password")
+            elif proxy_type == "tuic":
+                if not _is_valid_port(proxy.get("port")):
+                    errors.append(f"{prefix} ({name or '未命名'}) 缺少有效的 port: {proxy.get('port')}")
+                token = proxy.get("token")
+                uuid_value = proxy.get("uuid")
+                password = proxy.get("password")
+                has_token = _has_text(token)
+                has_uuid = _has_text(uuid_value)
+                has_password = _has_text(password)
+                if has_token and (has_uuid or has_password):
+                    errors.append(f"{prefix} ({name or '未命名'}) 的 TUIC v4 token 不能与 v5 uuid/password 混用")
+                elif not has_token:
+                    if not has_uuid or not has_password:
+                        errors.append(f"{prefix} ({name or '未命名'}) 缺少 TUIC v4 token 或 v5 uuid/password")
+                    elif not re.fullmatch(
+                        r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+                        uuid_value.strip(),
+                    ):
+                        errors.append(f"{prefix} ({name or '未命名'}) 的 TUIC uuid 格式无效")
+                udp_relay_mode = proxy.get("udp-relay-mode")
+                if udp_relay_mode not in {None, "", "native", "quic"}:
+                    errors.append(f"{prefix} ({name or '未命名'}) 的 TUIC udp-relay-mode 无效: {udp_relay_mode}")
+                congestion_controller = proxy.get("congestion-controller")
+                if congestion_controller not in {None, "", "cubic", "new_reno", "bbr"}:
+                    errors.append(f"{prefix} ({name or '未命名'}) 的 TUIC congestion-controller 无效: {congestion_controller}")
+                bbr_profile = proxy.get("bbr-profile")
+                if bbr_profile not in {None, "", "standard", "conservative", "aggressive"}:
+                    errors.append(f"{prefix} ({name or '未命名'}) 的 TUIC bbr-profile 无效: {bbr_profile}")
+                for field in (
+                    "heartbeat-interval",
+                    "request-timeout",
+                    "max-udp-relay-packet-size",
+                    "max-open-streams",
+                ):
+                    if field in proxy and not _is_non_negative_integer(proxy[field]):
+                        errors.append(f"{prefix} ({name or '未命名'}) 的 TUIC {field} 必须是非负整数")
+                for field in (
+                    "udp",
+                    "skip-cert-verify",
+                    "reduce-rtt",
+                    "disable-sni",
+                    "fast-open",
+                ):
+                    if field in proxy and not isinstance(proxy[field], bool):
+                        errors.append(f"{prefix} ({name or '未命名'}) 的 TUIC {field} 必须是布尔值")
+            elif proxy_type == "anytls":
+                if not _is_valid_port(proxy.get("port")):
+                    errors.append(f"{prefix} ({name or '未命名'}) 缺少有效的 port: {proxy.get('port')}")
+                if not _has_text(proxy.get("password")):
+                    errors.append(f"{prefix} ({name or '未命名'}) 缺少 AnyTLS password")
+                if proxy.get("reality-opts") or str(proxy.get("security", "")).lower() == "reality":
+                    errors.append(f"{prefix} ({name or '未命名'}) 的 Mihomo AnyTLS 不支持 Reality")
+                for field in (
+                    "idle-session-check-interval",
+                    "idle-session-timeout",
+                    "min-idle-session",
+                ):
+                    if field in proxy and not _is_non_negative_integer(proxy[field]):
+                        errors.append(f"{prefix} ({name or '未命名'}) 的 AnyTLS {field} 必须是非负整数")
+                for field in ("udp", "skip-cert-verify"):
+                    if field in proxy and not isinstance(proxy[field], bool):
+                        errors.append(f"{prefix} ({name or '未命名'}) 的 AnyTLS {field} 必须是布尔值")
             elif not _is_valid_port(proxy.get("port")):
                 errors.append(f"{prefix} ({name or '未命名'}) 缺少有效的 port: {proxy.get('port')}")
     return errors

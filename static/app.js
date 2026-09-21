@@ -1,5 +1,6 @@
 const API_BASE = '/api';
 const { escapeHtml } = ProxyForgeHtmlUtils;
+const SHARE_LINK_PATTERN = /^(vmess|vless|trojan|hysteria2|hy2|ss|tuic|anytls):\/\//i;
 
 // Data State
 let state = {
@@ -1201,7 +1202,7 @@ window.editNode = function(index) {
     let yamlStr = isNew ? "name: New Node\ntype: vmess\nserver: 1.1.1.1\nport: 443" : jsyaml.dump(state.nodes[index]);
     const html = `
         <div class="form-group full-width">
-            <label>节点配置 (YAML格式) - 或者直接粘贴 vless:// 等分享链接</label>
+            <label>节点配置 (YAML格式) - 或者直接粘贴 vless://、tuic://、anytls:// 等分享链接</label>
             <textarea id="m-node-raw" style="min-height:250px; font-family:monospace;">${escapeHtml(yamlStr)}</textarea>
         </div>
     `;
@@ -1209,7 +1210,7 @@ window.editNode = function(index) {
         try {
             let val = document.getElementById('m-node-raw').value.trim();
             let parsed;
-            if (val.match(/^(vmess|vless|trojan|hysteria2|hy2|ss):\/\//i)) {
+            if (SHARE_LINK_PATTERN.test(val)) {
                 const res = await fetchAuth('/parse-links', {
                     method: 'POST',
                     body: JSON.stringify({ links: [val] })
@@ -1237,15 +1238,15 @@ document.getElementById('btn-import-nodes').addEventListener('click', () => {
         <div class="form-group full-width">
             <label>选择 YAML 文件上传，或在下方直接粘贴 (支持 YAML / JSON / 分享链接 vless:// 等)</label>
             <input type="file" id="m-nodes-file" accept=".yaml,.yml,.txt,.json" style="margin-bottom: 10px; cursor: pointer;">
-            <textarea id="m-nodes-import" style="min-height:250px;" placeholder="支持粘贴标准 YAML 节点列表，或者直接粘贴 vless:// vmess:// hysteria2:// 链接 (每行一个)"></textarea>
+            <textarea id="m-nodes-import" style="min-height:250px;" placeholder="支持粘贴标准 YAML 节点列表，或者直接粘贴 vless:// vmess:// hysteria2:// tuic:// anytls:// 链接 (每行一个)"></textarea>
         </div>
     `;
     openModal('批量导入自建节点', html, async () => {
         try {
             let text = document.getElementById('m-nodes-import').value;
             let lines = text.split('\n').map(s=>s.trim()).filter(s=>s);
-            let links = lines.filter(s => s.match(/^(vmess|vless|trojan|hysteria2|hy2|ss):\/\//i));
-            let nonLinksText = lines.filter(s => !s.match(/^(vmess|vless|trojan|hysteria2|hy2|ss):\/\//i)).join('\n');
+            let links = lines.filter(s => SHARE_LINK_PATTERN.test(s));
+            let nonLinksText = lines.filter(s => !SHARE_LINK_PATTERN.test(s)).join('\n');
             
             let toAdd = [];
             if(nonLinksText) {

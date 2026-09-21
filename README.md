@@ -11,7 +11,8 @@ ProxyForge 是一个**全可视化**的专属节点订阅聚合与配置下发�
 2. **✈️ 多机场聚合与自建节点融合**
    - 支持添加任意数量的机场订阅。
    - 每个机场会作为独立的 Mihomo `proxy-provider` 下发，代理组通过 `use` 引用；原始机场订阅地址由 ProxyForge 代理，不会暴露在最终配置里。
-   - 可视化添加并管理您的自建节点，支持直接粘贴 `vmess://`、`vless://`、`trojan://`、`hysteria2://`、`hy2://`、`ss://` 分享链接自动转换为 Mihomo YAML 节点。
+   - 可视化添加并管理您的自建节点，支持直接粘贴 `vmess://`、`vless://`、`trojan://`、`hysteria2://`、`hy2://`、`ss://`、`tuic://`、`anytls://` 分享链接自动转换为 Mihomo YAML 节点。
+   - TUIC 支持 v4 `token` 与 v5 `uuid + password`；AnyTLS 按 Mihomo 原生字段输出，不会把不受支持的 AnyTLS+Reality 静默降级。AnyTLS 节点需要客户端使用支持该协议的较新 Mihomo 内核。
    - 节点名称会根据地区关键词自动显示国旗，并在下发 YAML 时同步加到节点名与代理组引用中；已有国旗的节点不会重复添加。
 
 3. **📁 智能代理组 (Proxy Groups) 引擎**
