@@ -1,5 +1,6 @@
 import ast
 import base64
+import ipaddress
 import json
 import re
 import unittest
@@ -16,7 +17,15 @@ def load_functions(*names):
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name in names
     ]
-    namespace = {"Any": Any, "Dict": Dict, "base64": base64, "json": json, "re": re, "urllib": urllib}
+    namespace = {
+        "Any": Any,
+        "Dict": Dict,
+        "base64": base64,
+        "ipaddress": ipaddress,
+        "json": json,
+        "re": re,
+        "urllib": urllib,
+    }
     exec(compile(ast.Module(body=functions, type_ignores=[]), str(source), "exec"), namespace)
     return [namespace[name] for name in names]
 
@@ -31,6 +40,10 @@ _, _, parse_share_link, strip_internal_proxy_fields, add_flag_to_proxy_name = lo
 
 
 class ShareLinkParserTest(unittest.TestCase):
+    @staticmethod
+    def wireguard_key(seed):
+        return base64.b64encode(bytes((seed + offset) % 256 for offset in range(32))).decode()
+
     def test_vless_reality_keeps_xtls_vision_fields(self):
         uuid = "bb8a0000-0000-4000-8000-000000000001"
         link = (
@@ -260,6 +273,76 @@ class ShareLinkParserTest(unittest.TestCase):
         )
 
         self.assertIsNone(node)
+
+    def test_wireguard_maps_mihomo_fields_and_normalizes_dual_stack_addresses(self):
+        private_key = self.wireguard_key(1)
+        public_key = self.wireguard_key(33)
+        pre_shared_key = self.wireguard_key(65)
+        query = urllib.parse.urlencode({
+            "publickey": public_key,
+            "address": "10.0.0.2/32,fd00::2/128",
+            "allowedips": "0.0.0.0/0,::/0",
+            "reserved": "1,2,3",
+            "mtu": "1280",
+            "dns": "1.1.1.1,2606:4700:4700::1111",
+            "keepalive": "25",
+            "presharedkey": pre_shared_key,
+            "remote_dns_resolve": "false",
+            "udp": "true",
+            "dp": "Landing",
+        })
+        link = (
+            f"wireguard://{urllib.parse.quote(private_key, safe='')}"
+            f"@[2001:db8::1]:51820?{query}#WireGuard%20Dual%20Stack"
+        )
+
+        node = parse_share_link(link)
+
+        self.assertEqual(node["name"], "WireGuard Dual Stack")
+        self.assertEqual(node["type"], "wireguard")
+        self.assertEqual(node["server"], "2001:db8::1")
+        self.assertEqual(node["port"], 51820)
+        self.assertEqual(node["private-key"], private_key)
+        self.assertEqual(node["public-key"], public_key)
+        self.assertEqual(node["pre-shared-key"], pre_shared_key)
+        self.assertEqual(node["ip"], "10.0.0.2")
+        self.assertEqual(node["ipv6"], "fd00::2")
+        self.assertEqual(node["allowed-ips"], ["0.0.0.0/0", "::/0"])
+        self.assertEqual(node["reserved"], [1, 2, 3])
+        self.assertEqual(node["mtu"], 1280)
+        self.assertEqual(node["dns"], ["1.1.1.1", "2606:4700:4700::1111"])
+        self.assertEqual(node["persistent-keepalive"], 25)
+        self.assertFalse(node["remote-dns-resolve"])
+        self.assertTrue(node["udp"])
+        self.assertEqual(node["dialer-proxy"], "Landing")
+
+    def test_wireguard_defaults_to_port_443_and_recovers_unescaped_key_plus(self):
+        private_key = base64.b64encode(bytes([251]) * 32).decode()
+        public_key = base64.b64encode(bytes([250]) * 32).decode()
+        raw_public_key = urllib.parse.quote(public_key, safe="").replace("%2B", "+")
+        link = (
+            f"wireguard://{urllib.parse.quote(private_key, safe='')}@wg.example.com"
+            f"?publickey={raw_public_key}&address=10.0.0.2%2F32#WG"
+        )
+
+        node = parse_share_link(link)
+
+        self.assertEqual(node["port"], 443)
+        self.assertEqual(node["public-key"], public_key)
+        self.assertEqual(node["ip"], "10.0.0.2")
+        self.assertTrue(node["remote-dns-resolve"])
+
+    def test_wireguard_rejects_invalid_address_reserved_and_boolean_parameters(self):
+        private_key = self.wireguard_key(1)
+        base = f"wireguard://{urllib.parse.quote(private_key, safe='')}@wg.example.com:51820"
+        for query in (
+            "address=not-an-ip",
+            "address=10.0.0.2,10.0.0.3",
+            "address=10.0.0.2&reserved=1,2,999",
+            "address=10.0.0.2&remote_dns_resolve=invalid",
+        ):
+            with self.subTest(query=query):
+                self.assertIsNone(parse_share_link(f"{base}?{query}#WG"))
 
     def test_invalid_tls_boolean_is_rejected_instead_of_becoming_false(self):
         for link in (
