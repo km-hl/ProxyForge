@@ -7,6 +7,7 @@ import base64
 import json
 import urllib.parse
 import re
+import ipaddress
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, HTTPException, Query, Header, Depends, Body, Request
 from fastapi.responses import PlainTextResponse, FileResponse, Response
@@ -593,6 +594,7 @@ def parse_share_link(link: str) -> dict:
         "hy2://",
         "tuic://",
         "anytls://",
+        "wireguard://",
     ]):
         try:
             parsed = urllib.parse.urlparse(link)
@@ -626,7 +628,7 @@ def parse_share_link(link: str) -> dict:
                 else:
                     # The Hysteria URI specification defines 443 as the default.
                     port_value = 443
-            elif scheme == "anytls":
+            elif scheme in {"anytls", "wireguard"}:
                 port_value = parsed.port or 443
             else:
                 port_value = parsed.port
@@ -654,6 +656,8 @@ def parse_share_link(link: str) -> dict:
                     node["token"] = urllib.parse.unquote(raw_tuic_auth)
             elif scheme == "anytls":
                 node["password"] = raw_auth
+            elif scheme == "wireguard":
+                node["private-key"] = raw_auth
                 
             qs = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
             if "type" in qs: node["network"] = qs["type"][0]
@@ -787,6 +791,88 @@ def parse_share_link(link: str) -> dict:
                     "min-idle-session",
                     "min_idle_session",
                 )
+            elif scheme == "wireguard":
+                def wireguard_key(*keys: str) -> str:
+                    # Query-string decoders translate an unescaped '+' to a
+                    # space, but '+' is valid in standard WireGuard Base64 keys.
+                    return first(qs, *keys).replace(" ", "+")
+
+                public_key = wireguard_key("publickey", "public-key", "public_key")
+                if public_key:
+                    node["public-key"] = public_key
+
+                address_values = []
+                address = first(qs, "address", "addresses")
+                if address:
+                    address_values.extend(split_list(address))
+                explicit_ip = first(qs, "ip")
+                if explicit_ip:
+                    address_values.append(explicit_ip)
+                explicit_ipv6 = first(qs, "ipv6")
+                if explicit_ipv6:
+                    address_values.append(explicit_ipv6)
+                for address_value in address_values:
+                    interface = ipaddress.ip_interface(address_value.strip())
+                    field = "ip" if interface.version == 4 else "ipv6"
+                    if field in node:
+                        raise ValueError(f"only one WireGuard {field} address is supported")
+                    node[field] = str(interface.ip)
+
+                allowed_ips = first(qs, "allowedips", "allowed-ips", "allowed_ips")
+                if allowed_ips:
+                    node["allowed-ips"] = [
+                        value.strip()
+                        for value in split_list(allowed_ips)
+                        if value.strip()
+                    ]
+
+                reserved = first(qs, "reserved")
+                if reserved:
+                    if "," in reserved:
+                        reserved_bytes = [int(value.strip()) for value in reserved.split(",")]
+                        if len(reserved_bytes) != 3 or any(value < 0 or value > 255 for value in reserved_bytes):
+                            raise ValueError("reserved must contain exactly three bytes")
+                        node["reserved"] = reserved_bytes
+                    else:
+                        node["reserved"] = reserved
+
+                pre_shared_key = wireguard_key(
+                    "presharedkey",
+                    "preshared-key",
+                    "pre-shared-key",
+                    "pre_shared_key",
+                )
+                if pre_shared_key:
+                    node["pre-shared-key"] = pre_shared_key
+
+                dns = first(qs, "dns")
+                if dns:
+                    node["dns"] = [
+                        value.strip()
+                        for value in split_list(dns)
+                        if value.strip()
+                    ]
+                node["remote-dns-resolve"] = True
+                add_boolean_field(
+                    node,
+                    qs,
+                    "remote-dns-resolve",
+                    "remote-dns-resolve",
+                    "remote_dns_resolve",
+                )
+                add_boolean_field(node, qs, "udp", "udp")
+                add_integer_field(node, qs, "mtu", "mtu")
+                add_integer_field(
+                    node,
+                    qs,
+                    "persistent-keepalive",
+                    "persistent-keepalive",
+                    "persistent_keepalive",
+                    "keepalive",
+                )
+                dialer_proxy = first(qs, "dialer-proxy", "dialer_proxy", "dp")
+                if dialer_proxy:
+                    node["dialer-proxy"] = dialer_proxy
             return node
         except: return None
     return None
@@ -815,6 +901,67 @@ def _is_non_negative_integer(value: Any) -> bool:
     except (TypeError, ValueError):
         return False
 
+
+def _is_positive_integer(value: Any) -> bool:
+    return _is_non_negative_integer(value) and int(value) > 0
+
+
+def _is_valid_ip_address(value: Any, version: int) -> bool:
+    if not _has_text(value):
+        return False
+    try:
+        return ipaddress.ip_address(value.strip()).version == version
+    except ValueError:
+        return False
+
+
+def _is_valid_wireguard_key(value: Any) -> bool:
+    if not _has_text(value):
+        return False
+    normalized = value.strip()
+    if len(normalized) != 44:
+        return False
+    try:
+        decoded = base64.b64decode(normalized, validate=True)
+    except (TypeError, ValueError):
+        return False
+    return len(decoded) == 32
+
+
+def _is_valid_wireguard_reserved(value: Any) -> bool:
+    if isinstance(value, list):
+        return (
+            len(value) == 3
+            and all(
+                isinstance(item, int)
+                and not isinstance(item, bool)
+                and 0 <= item <= 255
+                for item in value
+            )
+        )
+    if not _has_text(value):
+        return False
+    try:
+        return len(base64.b64decode(value.strip(), validate=True)) == 3
+    except (TypeError, ValueError):
+        return False
+
+
+def _is_valid_ip_network_list(value: Any) -> bool:
+    if not isinstance(value, list) or not value:
+        return False
+    try:
+        return all(
+            _has_text(item) and bool(ipaddress.ip_network(item.strip(), strict=False))
+            for item in value
+        )
+    except ValueError:
+        return False
+
+
+def _is_non_empty_string_list(value: Any) -> bool:
+    return isinstance(value, list) and bool(value) and all(_has_text(item) for item in value)
+
 def validate_proxy_nodes(proxies: Any, location: str = "proxies") -> List[str]:
     errors = []
     if not isinstance(proxies, list):
@@ -838,7 +985,7 @@ def validate_proxy_nodes(proxies: Any, location: str = "proxies") -> List[str]:
             errors.append(f"{prefix} 缺少 type")
 
         if proxy_type not in {"direct", "reject", "reject-drop", "pass", "dns"}:
-            if not proxy.get("server"):
+            if proxy_type != "wireguard" and not proxy.get("server"):
                 errors.append(f"{prefix} ({name or '未命名'}) 缺少 server")
             if proxy_type == "hysteria2":
                 ports = proxy.get("ports")
@@ -914,6 +1061,74 @@ def validate_proxy_nodes(proxies: Any, location: str = "proxies") -> List[str]:
                 for field in ("udp", "skip-cert-verify"):
                     if field in proxy and not isinstance(proxy[field], bool):
                         errors.append(f"{prefix} ({name or '未命名'}) 的 AnyTLS {field} 必须是布尔值")
+            elif proxy_type == "wireguard":
+                if not _is_valid_ip_address(proxy.get("ip"), 4):
+                    errors.append(f"{prefix} ({name or '未命名'}) 缺少有效的 WireGuard IPv4 地址 ip")
+                if "ipv6" in proxy and not _is_valid_ip_address(proxy.get("ipv6"), 6):
+                    errors.append(f"{prefix} ({name or '未命名'}) 的 WireGuard ipv6 地址无效")
+                if not _is_valid_wireguard_key(proxy.get("private-key")):
+                    errors.append(f"{prefix} ({name or '未命名'}) 缺少有效的 WireGuard private-key")
+
+                peers = proxy.get("peers")
+                if peers is None:
+                    peer_entries = [(proxy, prefix)]
+                elif not isinstance(peers, list) or not peers:
+                    errors.append(f"{prefix} ({name or '未命名'}) 的 WireGuard peers 必须是非空列表")
+                    peer_entries = []
+                else:
+                    peer_entries = [
+                        (peer, f"{prefix}.peers[{peer_index}]")
+                        for peer_index, peer in enumerate(peers, 1)
+                    ]
+
+                for peer, peer_prefix in peer_entries:
+                    if not isinstance(peer, dict):
+                        errors.append(f"{peer_prefix} 必须是对象")
+                        continue
+                    if not _has_text(peer.get("server")):
+                        errors.append(f"{peer_prefix} 缺少 WireGuard server")
+                    if not _is_valid_port(peer.get("port")):
+                        errors.append(f"{peer_prefix} 缺少有效的 WireGuard port")
+                    if not _is_valid_wireguard_key(peer.get("public-key")):
+                        errors.append(f"{peer_prefix} 缺少有效的 WireGuard public-key")
+                    if "pre-shared-key" in peer and not _is_valid_wireguard_key(peer.get("pre-shared-key")):
+                        errors.append(f"{peer_prefix} 的 WireGuard pre-shared-key 无效")
+                    if "allowed-ips" in peer and not _is_valid_ip_network_list(peer.get("allowed-ips")):
+                        errors.append(f"{peer_prefix} 的 WireGuard allowed-ips 必须是有效的网段列表")
+                    if "reserved" in peer and not _is_valid_wireguard_reserved(peer.get("reserved")):
+                        errors.append(f"{peer_prefix} 的 WireGuard reserved 必须是三个字节")
+
+                if "mtu" in proxy and not _is_positive_integer(proxy["mtu"]):
+                    errors.append(f"{prefix} ({name or '未命名'}) 的 WireGuard mtu 必须是正整数")
+                if "persistent-keepalive" in proxy and (
+                    not _is_non_negative_integer(proxy["persistent-keepalive"])
+                    or int(proxy["persistent-keepalive"]) > 65535
+                ):
+                    errors.append(
+                        f"{prefix} ({name or '未命名'}) 的 WireGuard persistent-keepalive 必须是 0-65535 的整数"
+                    )
+                for field in ("udp", "remote-dns-resolve"):
+                    if field in proxy and not isinstance(proxy[field], bool):
+                        errors.append(f"{prefix} ({name or '未命名'}) 的 WireGuard {field} 必须是布尔值")
+                if "dns" in proxy and not _is_non_empty_string_list(proxy["dns"]):
+                    errors.append(f"{prefix} ({name or '未命名'}) 的 WireGuard dns 必须是非空字符串列表")
+                ip_stack = proxy.get("ip-stack")
+                if ip_stack is not None:
+                    if not isinstance(ip_stack, dict):
+                        errors.append(f"{prefix} ({name or '未命名'}) 的 WireGuard ip-stack 必须是对象")
+                    else:
+                        if ip_stack.get("mode") not in {None, "auto", "gvisor", "mips"}:
+                            errors.append(f"{prefix} ({name or '未命名'}) 的 WireGuard ip-stack.mode 无效")
+                        if ip_stack.get("congestion-controller") not in {
+                            None,
+                            "cubic",
+                            "reno",
+                            "bbr",
+                            "bbr3",
+                        }:
+                            errors.append(
+                                f"{prefix} ({name or '未命名'}) 的 WireGuard ip-stack.congestion-controller 无效"
+                            )
             elif not _is_valid_port(proxy.get("port")):
                 errors.append(f"{prefix} ({name or '未命名'}) 缺少有效的 port: {proxy.get('port')}")
     return errors

@@ -1,5 +1,7 @@
 import ast
+import base64
 import copy
+import ipaddress
 import re
 import unittest
 import urllib.parse
@@ -22,6 +24,12 @@ def load_config_functions():
         "_is_valid_port",
         "_has_text",
         "_is_non_negative_integer",
+        "_is_positive_integer",
+        "_is_valid_ip_address",
+        "_is_valid_wireguard_key",
+        "_is_valid_wireguard_reserved",
+        "_is_valid_ip_network_list",
+        "_is_non_empty_string_list",
         "validate_proxy_nodes",
         "validate_mihomo_config",
         "assert_valid_mihomo_config",
@@ -39,7 +47,9 @@ def load_config_functions():
         "Any": Any,
         "Dict": Dict,
         "List": List,
+        "base64": base64,
         "copy": copy,
+        "ipaddress": ipaddress,
         "re": re,
         "urllib": urllib,
         "yaml": yaml,
@@ -58,6 +68,10 @@ cleanup_proxy_group_references = FUNCTIONS["cleanup_proxy_group_references"]
 
 
 class ConfigValidationTest(unittest.TestCase):
+    @staticmethod
+    def wireguard_key(seed):
+        return base64.b64encode(bytes((seed + offset) % 256 for offset in range(32))).decode()
+
     def test_custom_nodes_source_is_allowed_only_for_stored_templates(self):
         config = {
             "proxy-groups": [{
@@ -165,6 +179,138 @@ class ConfigValidationTest(unittest.TestCase):
         ])
 
         self.assertEqual(errors, [])
+
+    def test_valid_wireguard_simplified_and_multi_peer_nodes_pass_validation(self):
+        private_key = self.wireguard_key(1)
+        public_key = self.wireguard_key(33)
+        second_public_key = self.wireguard_key(65)
+        nodes = [
+            {
+                "name": "WireGuard Simple",
+                "type": "wireguard",
+                "server": "wg.example.com",
+                "port": 51820,
+                "ip": "10.0.0.2",
+                "ipv6": "fd00::2",
+                "private-key": private_key,
+                "public-key": public_key,
+                "allowed-ips": ["0.0.0.0/0", "::/0"],
+                "reserved": [1, 2, 3],
+                "udp": True,
+                "remote-dns-resolve": True,
+                "dns": ["1.1.1.1"],
+                "mtu": 1280,
+                "persistent-keepalive": 25,
+            },
+            {
+                "name": "WireGuard Peers",
+                "type": "wireguard",
+                "ip": "10.0.1.2",
+                "private-key": private_key,
+                "peers": [
+                    {
+                        "server": "wg-one.example.com",
+                        "port": 51820,
+                        "public-key": public_key,
+                        "allowed-ips": ["10.0.0.0/8"],
+                    },
+                    {
+                        "server": "2001:db8::1",
+                        "port": 51821,
+                        "public-key": second_public_key,
+                        "allowed-ips": ["::/0"],
+                        "reserved": "AQID",
+                    },
+                ],
+                "ip-stack": {
+                    "mode": "auto",
+                    "congestion-controller": "bbr",
+                },
+                "udp": True,
+            },
+        ]
+
+        self.assertEqual(validate_proxy_nodes(nodes), [])
+
+    def test_wireguard_survives_final_subscription_generation(self):
+        private_key = self.wireguard_key(1)
+        public_key = self.wireguard_key(33)
+        template = {
+            "proxy-groups": [{
+                "name": "Proxy",
+                "type": "select",
+                "use": ["_custom_nodes_"],
+            }],
+            "rules": ["MATCH,Proxy"],
+        }
+        custom_nodes = [{
+            "name": "WireGuard Node",
+            "type": "wireguard",
+            "server": "wg.example.com",
+            "port": 51820,
+            "ip": "10.0.0.2",
+            "private-key": private_key,
+            "public-key": public_key,
+            "allowed-ips": ["0.0.0.0/0"],
+            "udp": True,
+        }]
+
+        output = build_subscription_config(
+            template,
+            custom_nodes,
+            [],
+            "https://proxyforge.example",
+            "test-token",
+        )
+
+        wireguard = next(node for node in output["proxies"] if node["type"] == "wireguard")
+        self.assertEqual(wireguard["ip"], "10.0.0.2")
+        self.assertEqual(wireguard["public-key"], public_key)
+        self.assertEqual(validate_mihomo_config(output), [])
+
+    def test_invalid_wireguard_fields_are_rejected(self):
+        errors = validate_proxy_nodes([{
+            "name": "Broken WireGuard",
+            "type": "wireguard",
+            "server": "wg.example.com",
+            "port": 70000,
+            "ip": "10.0.0.2/32",
+            "ipv6": "not-an-ip",
+            "private-key": "not-a-key",
+            "public-key": "not-a-key",
+            "pre-shared-key": "not-a-key",
+            "allowed-ips": ["not-a-network"],
+            "reserved": [1, 2, 999],
+            "udp": "true",
+            "remote-dns-resolve": 1,
+            "dns": "1.1.1.1",
+            "mtu": 0,
+            "persistent-keepalive": 70000,
+            "ip-stack": {
+                "mode": "invalid",
+                "congestion-controller": "invalid",
+            },
+        }])
+
+        for field in (
+            "port",
+            "IPv4",
+            "ipv6",
+            "private-key",
+            "public-key",
+            "pre-shared-key",
+            "allowed-ips",
+            "reserved",
+            "udp",
+            "remote-dns-resolve",
+            "dns",
+            "mtu",
+            "persistent-keepalive",
+            "ip-stack.mode",
+            "ip-stack.congestion-controller",
+        ):
+            with self.subTest(field=field):
+                self.assertTrue(any(field in error for error in errors), errors)
 
     def test_tuic_and_anytls_survive_final_subscription_generation(self):
         template = {

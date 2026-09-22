@@ -1,9 +1,11 @@
 import importlib.util
+import base64
 import json
 import os
 import sys
 import tempfile
 import unittest
+import urllib.parse
 from pathlib import Path
 from unittest.mock import patch
 
@@ -185,7 +187,13 @@ class ApiIntegrationTest(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("不安全", response.json()["detail"])
 
-    def test_parse_links_accepts_tuic_and_anytls(self):
+    def test_parse_links_accepts_tuic_anytls_and_wireguard(self):
+        private_key = base64.b64encode(bytes(range(32))).decode()
+        public_key = base64.b64encode(bytes(range(32, 64))).decode()
+        wireguard_query = urllib.parse.urlencode({
+            "publickey": public_key,
+            "address": "10.0.0.2/32",
+        })
         response = self.client.post(
             "/api/parse-links",
             headers={"Authorization": f"Bearer {TEST_ADMIN_TOKEN}"},
@@ -195,14 +203,23 @@ class ApiIntegrationTest(unittest.TestCase):
                     "@tuic.example.com:443?congestion_control=bbr#TUIC"
                 ),
                 "anytls://secret@anytls.example.com:443?sni=cdn.example.com#AnyTLS",
+                (
+                    f"wireguard://{urllib.parse.quote(private_key, safe='')}"
+                    f"@wg.example.com:51820?{wireguard_query}#WireGuard"
+                ),
             ]},
         )
 
         self.assertEqual(response.status_code, 200)
         nodes = response.json()["nodes"]
-        self.assertEqual([node["type"] for node in nodes], ["tuic", "anytls"])
+        self.assertEqual(
+            [node["type"] for node in nodes],
+            ["tuic", "anytls", "wireguard"],
+        )
         self.assertEqual(nodes[0]["congestion-controller"], "bbr")
         self.assertEqual(nodes[1]["sni"], "cdn.example.com")
+        self.assertEqual(nodes[2]["ip"], "10.0.0.2")
+        self.assertEqual(nodes[2]["public-key"], public_key)
 
     def test_provider_returns_mihomo_http_provider_document(self):
         airport = {"name": "Example Airport", "url": "https://airport.invalid/sub"}
