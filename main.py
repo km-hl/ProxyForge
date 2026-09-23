@@ -25,6 +25,7 @@ from runtime_security import (
 )
 from network_security import UnsafeOutboundUrl, safe_get, validate_outbound_url
 from auth_rate_limit import LoginRateLimiter
+from network_config import validate_network_config, network_error_messages
 
 # ================= 加载环境变量 =================
 load_dotenv()
@@ -1143,7 +1144,7 @@ def validate_mihomo_config(
     if not isinstance(config, dict):
         return ["配置根节点必须是 YAML 对象"]
 
-    errors = []
+    errors = network_error_messages(validate_network_config(config))
     proxies = config.get("proxies", [])
     errors.extend(validate_proxy_nodes(proxies))
     proxy_names = {
@@ -2011,6 +2012,27 @@ def get_template():
 
 class TemplateModel(BaseModel):
     content: str
+
+@app.post("/api/template/validate", dependencies=[Depends(verify_api_token)])
+def validate_template(data: TemplateModel):
+    try:
+        config = yaml.safe_load(data.content)
+    except yaml.YAMLError:
+        return {"errors": [{"code": "yaml_syntax", "path": "", "message": "YAML 语法错误，请检查缩进和字段"}],
+                "warnings": [], "info": [], "status": "error"}
+    result = validate_network_config(config)
+    errors = validate_mihomo_config(
+        config,
+        external_proxy_names=[node.get("name") for node in load_custom_nodes() if isinstance(node, dict)],
+        external_provider_names=[get_airport_name(item, index) for index, item in enumerate(load_airports())],
+        allow_internal_sources=True,
+    )
+    network_errors = set(network_error_messages(result))
+    result["errors"].extend({"code": "template_invalid", "path": "", "message": message}
+                            for message in errors if message not in network_errors)
+    if result["errors"]:
+        result["status"] = "error"
+    return result
 
 @app.post("/api/template", dependencies=[Depends(verify_api_token)])
 def update_template(data: TemplateModel):

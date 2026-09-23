@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import yaml
+from network_config import validate_network_config, network_error_messages
 
 
 def load_config_functions():
@@ -44,6 +45,8 @@ def load_config_functions():
         if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in wanted
     ]
     namespace = {
+        "validate_network_config": validate_network_config,
+        "network_error_messages": network_error_messages,
         "Any": Any,
         "Dict": Dict,
         "List": List,

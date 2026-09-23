@@ -61,6 +61,9 @@
                 <div class="sidebar-item" data-panel="panel-rules">
                     📏 <span>路由规则</span>
                 </div>
+                <div class="sidebar-item" data-panel="panel-network">
+                    🛡️ <span>DNS 与网络</span>
+                </div>
                 <div class="sidebar-item" data-panel="panel-raw">
                     🛠️ <span>底层配置兜底</span>
                 </div>
@@ -74,6 +77,10 @@
                 
                 <!-- 概览设置 -->
                 <div class="section-panel active" id="panel-overview">
+                    <div class="card">
+                        <div class="card-title">🛡️ 网络配置状态</div>
+                        <div id="network-overview" aria-live="polite">正在读取已保存模板…</div>
+                    </div>
                     <div class="card">
                         <div class="card-title">🔗 最终订阅配置</div>
                         <div class="form-grid">
@@ -110,6 +117,9 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- DNS/TUN configuration is rendered by network-settings.js. -->
+                <div class="section-panel" id="panel-network"></div>
 
                 <!-- 机场订阅 -->
                 <div class="section-panel" id="panel-airports">
@@ -223,6 +233,7 @@
                             <label>包含不被可视化界面直接支持的高级/冷门字段。修改这里会直接影响整个系统的运作，保存时会自动格式化可视化面板中已有的配置。</label>
                             <textarea id="rules-editor" spellcheck="false" style="min-height: 600px; font-family: monospace;"></textarea>
                             <div style="margin-top: 10px; text-align: right;">
+                                <button id="discard-raw-btn" class="btn">放弃修改</button>
                                 <button id="save-rules-btn" class="btn btn-primary">覆盖保存</button>
                             </div>
                         </div>
@@ -269,6 +280,8 @@
 
     <script src="/static/html-utils.js"></script>
     <script src="/static/rule-utils.js"></script>
+    <script src="/static/template-session.js"></script>
+    <script src="/static/network-settings.js"></script>
     <script src="/static/app.js"></script>
 </body>
 </html>

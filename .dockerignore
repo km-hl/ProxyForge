@@ -13,3 +13,14 @@ template.yaml
 HANDOFF.md
 AGENTS.md
 CLAUDE.md
+
+# Local development artifacts
+docs/NETWORK_SETTINGS_PLAN.md
+docs/NETWORK_SETTINGS_REPORT.md
+.local
+.ruff_cache
+.pytest_cache
+test-results
+playwright-report
+.coverage
+htmlcov
