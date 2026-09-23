@@ -1,0 +1,5 @@
+ipv6: false
+dns:
+  enhanced-mode: fake-ip
+  fake-ip-range: ''
+  fake-ip-range6: fdfe:dcba:9876::/64

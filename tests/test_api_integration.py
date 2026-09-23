@@ -356,7 +356,12 @@ class ApiIntegrationTest(unittest.TestCase):
 
     def test_network_warnings_save_roundtrip_and_subscription_preserves_unknowns(self):
         config = {"dns": {"enable": True, "nameserver": ["https://1.1.1.1/dns-query"],
-                          "cache-algorithm": "arc", "prefer-h3": True},
+                          "cache-algorithm": "arc", "cache-max-size": 4096, "prefer-h3": True,
+                          "ipv6-timeout": 150, "fake-ip-ttl": 0,
+                          "fake-ip-range6": "fdfe:dcba:9876::/64", "fallback-lazy-query": True,
+                          "proxy-server-nameserver": ["192.0.2.53"],
+                          "proxy-server-nameserver-policy": {"+.proxy.test": "192.0.2.54"},
+                          "future-option": {"enabled": True}},
                   "tun": {"enable": True, "dns-hijack": [], "route-exclude-address": ["192.168.0.0/16"]},
                   "hosts": {"local.test": "127.0.0.1"}, "profile": {"store-selected": True},
                   "proxy-groups": [], "rules": []}
@@ -366,6 +371,7 @@ class ApiIntegrationTest(unittest.TestCase):
              patch.object(self.app_module, "load_custom_nodes", return_value=[]), \
              patch.object(self.app_module, "get_airport_proxies_cached", return_value=[]):
             report = self.client.post("/api/template/validate", headers=headers, json={"content": content}).json()
+            self.assertEqual(report["baseline"], "Mihomo v1.19.31")
             self.assertFalse(report["errors"])
             self.assertTrue(report["warnings"])
             response = self.client.post("/api/template", headers=headers, json={"content": content})

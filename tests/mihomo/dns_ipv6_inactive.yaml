@@ -1,0 +1,4 @@
+ipv6: false
+dns:
+  enhanced-mode: fake-ip
+  fake-ip-range6: preserved-but-inactive

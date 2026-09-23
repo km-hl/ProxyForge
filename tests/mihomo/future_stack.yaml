@@ -1,0 +1,4 @@
+# The fixed parser rejects this; the static validator intentionally warns
+# rather than blocking configuration for a future client.
+tun:
+  stack: future-stack

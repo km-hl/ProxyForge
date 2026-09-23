@@ -1,0 +1,9 @@
+dns:
+  enhanced-mode: fake-ip
+  fake-ip-ttl: -1
+  cache-max-size: -1
+  cache-algorithm: future-cache
+  ipv6-timeout: 12.5
+  nameserver-policy:
+    '+.empty.test': []
+    '+.empty-string.test': ''

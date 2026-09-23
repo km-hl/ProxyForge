@@ -95,11 +95,13 @@ docker compose exec proxyforge python -c "import json; print(json.load(open('/ap
 - 未知 Mihomo 字段按值保留，包括 `dns` / `tun` 内高级字段。可视化保存会重新序列化 YAML，不保证保留注释、引号、锚点写法或排版。高级 YAML 预览只读，完整编辑仍在“底层配置兜底”。
 - 配置检查区分 **错误**、**建议**和**未验证**：错误阻止保存和最终订阅生成；建议允许保存。新增 `/api/template/validate` 只校验、不写文件、不访问 DNS 服务；使用既有管理鉴权。原有模板 API 请求及成功响应保持不变。
 
-静态默认值与必填条件以 [Mihomo v1.19.12 配置源码](https://github.com/MetaCubeX/mihomo/blob/v1.19.12/config/config.go) 为基线。字段缺失与显式空列表不同，例如缺少 `nameserver` 时内核可采用默认值，但启用 DNS 后显式 `nameserver: []` 会被拒绝；`respect-rules: true` 必须同时配置 `proxy-server-nameserver`。这些以前可能通过 ProxyForge 保存、但内核无法使用的配置，现在会明确报错。
+静态默认值与必填条件以 [Mihomo v1.19.31 配置源码](https://github.com/MetaCubeX/mihomo/blob/v1.19.31/config/config.go) 为基线，版本、默认值及字段定义集中在 `mihomo_compat.py`。字段缺失与显式空列表不同，例如缺少 `nameserver` 时内核可采用默认值，但启用 DNS 后显式 `nameserver: []` 会被拒绝；`respect-rules: true` 或非空 `proxy-server-nameserver-policy` 都要求非空的 `proxy-server-nameserver`。
+
+高级 DNS 字段（IPv6 Fake-IP 地址池、TTL、IPv6 超时、缓存与策略 DNS）和 TUN 路由、接口、UID 等字段支持 Raw YAML 保留及基础校验，不要求通过普通 UI 编辑。原有默认值未改写进模板；`fake-ip-ttl` 默认 1、`ipv6-timeout` 默认 100，缓存原始零值与运行时 LRU/4096 回退分开处理。Fake-IP 允许在客户端 IPv6 条件满足时仅使用 IPv6 地址池，两个池不能同时禁用。平台行为、复杂 matcher 和 geodata 仍有未验证范围。
 
 更新版本的协议栈或高级 Filter 模式会保留并标注兼容性范围；本服务无法获知每个客户端的内核版本，也不替代 Mihomo 完整配置解析。默认/空值语义参照固定版本源码与 YAML 解码规则，尚不等价于逐版本二进制验收。
 
-开发 CI 另设 Mihomo 兼容性任务：下载固定的官方 **v1.19.31 Linux amd64** 二进制并校验 SHA256，在隔离外网的环境中对配置正反例执行真实 `-t` 解析测试。当前第一阶段仅覆盖人工 fixtures；运行时静态基线仍为 **v1.19.12**，尚未将实际订阅生成结果接入该测试。运行方式与覆盖边界见 [Mihomo 测试说明](tests/mihomo/README.md)。解析通过不代表所有用户配置、客户端平台或实际网络行为均已验证。
+开发 CI 另设 Mihomo 兼容性任务：下载固定的官方 **v1.19.31 Linux amd64** 二进制并校验 SHA256，在隔离外网的环境中对配置正反例执行真实 `-t` 解析测试。Python 测试使用同一组 fixtures 验证静态结论，并记录为了保留未来字段而允许的差异。目前尚未将实际订阅生成结果接入真实内核测试。运行方式与覆盖边界见 [Mihomo 测试说明](tests/mihomo/README.md)。解析通过不代表所有用户配置、客户端平台或实际网络行为均已验证。
 
 这些配置用于降低 DNS 泄露风险，实际结果仍受操作系统、浏览器、客户端覆盖配置及网络环境影响。预设 Bootstrap 包含明文 DNS；配置 DoH 不等于所有查询均加密或经代理。关闭 IPv6 DNS 不等于关闭系统 IPv6。Strict Route 依赖 auto-route，可能影响部分应用；服务器不会修改客户端的路由、防火墙或 TUN 权限。
 

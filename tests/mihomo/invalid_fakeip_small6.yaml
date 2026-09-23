@@ -1,0 +1,4 @@
+ipv6: true
+dns:
+  enhanced-mode: fake-ip
+  fake-ip-range6: 'fdfe:dcba::/126'

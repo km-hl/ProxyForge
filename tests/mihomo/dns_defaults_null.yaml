@@ -1,0 +1,19 @@
+dns:
+  enable: true
+  use-hosts: null
+  use-system-hosts: null
+  ipv6-timeout: null
+  fake-ip-range6: null
+  fake-ip-ttl: null
+  cache-max-size: null
+  cache-algorithm: null
+  fallback-lazy-query: null
+  proxy-server-nameserver-policy: null
+  fallback-filter:
+    geoip: null
+    geoip-code: null
+    ipcidr: null
+tun:
+  stack: null
+  mtu: null
+  include-uid: null

@@ -65,6 +65,7 @@ class MihomoToolsTest(unittest.TestCase):
                 env = run.call_args.kwargs["env"]
                 self.assertNotIn("CLASH_CONFIG_STRING", env)
                 self.assertNotIn("CLASH_OVERRIDE_SECRET", env)
+                self.assertEqual(env["SKIP_SYSTEM_IPV6_CHECK"], "true")
 
     def test_checksum_mismatch_rejected_before_extraction(self):
         with tempfile.TemporaryDirectory() as directory:
