@@ -1,9 +1,11 @@
 # Mihomo parser compatibility tests
 
-This is the first compatibility phase: real parser fixtures and CI infrastructure.
-The runtime static validator remains on **v1.19.12**. These fixtures target
-**v1.19.31**; they do not yet compare static-validator diagnostics or call
-`build_subscription_config()`. Those integrations belong to subsequent phases.
+Both the runtime static validator and these real parser fixtures target
+**v1.19.31**. Python tests load the same manifest to check static acceptance and
+non-mutation. An intentional difference must specify `static_valid` and a
+`static_difference` explanation (e.g. preserving a future TUN stack with a warning).
+Calling `build_subscription_config()` and passing its output to the binary remains
+the next phase; these are still manually authored parser fixtures.
 
 ## Pinned release
 
@@ -43,7 +45,11 @@ The runner invokes `mihomo -t -d <empty temporary home> -f <absolute fixture>`.
 The CLI and test-mode behavior are defined by the pinned
 [main.go](https://github.com/MetaCubeX/mihomo/blob/v1.19.31/main.go).
 Every case has its own home and process. Environment configuration overrides are
-removed. The default timeout is 30 seconds per invocation; any timeout is a failure.
+removed. The runner sets `SKIP_SYSTEM_IPV6_CHECK=true`, an upstream
+[config/utils.go](https://github.com/MetaCubeX/mihomo/blob/v1.19.31/config/utils.go)
+switch, so IPv6 pool parsing is exercised without requiring a global IPv6 address
+on the CI host. A fixture's explicit top-level `ipv6: false` still disables that pool.
+The default timeout is 30 seconds per invocation; any timeout is a failure.
 Logs and `results.json` are written to `test-results/mihomo/` (git-ignored), and CI
 uploads them even if a parser expectation fails.
 
@@ -59,11 +65,35 @@ and a specific diagnostic; a crash or unrelated error does not satisfy a case.
 - Negative: empty/null nameservers with DNS enabled, wrong DNS field type,
   missing proxy DNS policy dependency, wrong IPv4 pool family, both pools empty,
   and a missing rule-provider reference.
+- Extended baseline cases: IPv6-only pools, invalid IPv6 family/prefix, insufficient
+  IPv4/IPv6 pool capacity, top-level IPv6 disablement, numeric/null edge cases,
+  normal DNS mode, Mips stack, TUN field types and proxy policy provider behavior.
 
 Parsing success does not prove network connectivity, route installation, DNS
 leak protection, cache behavior, or compatibility with other platforms/versions.
-In particular the core may discard IPv6 settings based on environment support;
-accepting the advanced fixture alone does not prove its IPv6 pool was exercised.
+CI deliberately bypasses host IPv6 availability detection to test parsing. It
+does not bypass the configuration's top-level IPv6 switch or establish actual
+IPv6 connectivity. Platform-dependent TUN behavior is not executed by `-t`.
+
+## Static validation boundaries
+
+`mihomo_compat.py` records the selected raw defaults and field types with pinned
+source references. Existing displayed defaults are unchanged; new projections
+include use-hosts/use-system-hosts=true, IPv6 timeout=100, fake-IP TTL=1 and the
+TUN IPv6 address. Cache raw defaults remain an empty algorithm string and size 0;
+the runtime resolver falls back to LRU and 4096 without rewriting YAML.
+
+Only integer representation bounds are hard limits for TTL/cache fields; the
+baseline accepts zero and signed negative values. Negative values and float-to-int
+coercion produce warnings. Unknown cache strings warn about LRU fallback. Empty
+policy lists/strings warn, whereas null policy values are rejected because the
+baseline's ToStringSlice panics on null. Normal DNS mode and Mips/case-insensitive
+stack names are accepted. These are source/parser-backed fixes to old assumptions.
+
+Future fields are retained as info. Future stack/filter modes and complex matcher
+semantics remain partial checks, so a static pass is not a blanket promise that
+the pinned binary accepts every user configuration. TUN checks cover types,
+numeric widths and address syntax without enforcing server-platform restrictions.
 
 When upgrading, review the pinned source and release digest, update expectations
 with evidence, and run both positive and negative cases. Do not convert parser

@@ -14,5 +14,22 @@
   {"file": "invalid_proxy_policy.yaml", "exit_code": 1, "error_contains": "disallow empty `proxy-server-nameserver`"},
   {"file": "invalid_fakeip_range.yaml", "exit_code": 1, "error_contains": "dns.fake-ip-range must be a IPv4 prefix"},
   {"file": "invalid_fakeip_empty.yaml", "exit_code": 1, "error_contains": "both empty with fake-ip mode"},
-  {"file": "invalid_policy_reference.yaml", "exit_code": 1, "error_contains": "not found rule-set: missing-local-domains"}
+  {"file": "invalid_policy_reference.yaml", "exit_code": 1, "error_contains": "not found rule-set: missing-local-domains"},
+  {"file": "dns_ipv6_only.yaml", "exit_code": 0},
+  {"file": "dns_ipv6_inactive.yaml", "exit_code": 0},
+  {"file": "dns_numeric_edges.yaml", "exit_code": 0},
+  {"file": "dns_defaults_null.yaml", "exit_code": 0},
+  {"file": "dns_normal_mips.yaml", "exit_code": 0},
+  {"file": "invalid_fakeip_range6.yaml", "exit_code": 1, "error_contains": "dns.fake-ip-range6 must be a IPv6 prefix"},
+  {"file": "invalid_fakeip_prefix6.yaml", "exit_code": 1, "error_contains": "prefix length out of range"},
+  {"file": "invalid_fakeip_small.yaml", "exit_code": 1, "error_contains": "ipnet don't have valid ip"},
+  {"file": "invalid_fakeip_small6.yaml", "exit_code": 1, "error_contains": "ipnet don't have valid ip"},
+  {"file": "invalid_ipv6_disabled_pool.yaml", "exit_code": 1, "error_contains": "both empty with fake-ip mode"},
+  {"file": "invalid_ttl_type.yaml", "exit_code": 1, "error_contains": "cannot unmarshal"},
+  {"file": "invalid_cache_type.yaml", "exit_code": 1, "error_contains": "cannot unmarshal"},
+  {"file": "invalid_tun_mtu.yaml", "exit_code": 1, "error_contains": "cannot unmarshal"},
+  {"file": "invalid_tun_route.yaml", "exit_code": 1, "error_contains": "prefix length out of range"},
+  {"file": "invalid_proxy_policy_behavior.yaml", "exit_code": 1, "error_contains": "rule provider type error"},
+  {"file": "future_stack.yaml", "exit_code": 1, "error_contains": "invalid tun stack", "static_valid": true,
+   "static_difference": "Unknown future stacks are preserved with a compatibility warning, even though the fixed baseline rejects them."}
 ]

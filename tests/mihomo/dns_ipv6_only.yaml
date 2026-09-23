@@ -1,0 +1,8 @@
+ipv6: true
+dns:
+  enable: true
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: ''
+  fake-ip-range6: fdfe:dcba:9876::/64
+  nameserver: [192.0.2.53]

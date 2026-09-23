@@ -37,6 +37,9 @@ def invoke(command, cwd, timeout):
     # A developer's CLASH_CONFIG_STRING or overrides must not replace a fixture.
     env = {key: value for key, value in os.environ.items()
            if not key.startswith(("CLASH_", "MIHOMO_"))}
+    # config/utils.go otherwise drops IPv6 pools without a global-unicast
+    # interface. Exercise their parser even in CI's loopback-only namespace.
+    env["SKIP_SYSTEM_IPV6_CHECK"] = "true"
     try:
         result = subprocess.run(command, cwd=cwd, env=env, timeout=timeout,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

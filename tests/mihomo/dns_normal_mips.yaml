@@ -1,0 +1,4 @@
+dns:
+  enhanced-mode: NORMAL
+tun:
+  stack: MiPs

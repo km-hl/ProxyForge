@@ -40,6 +40,20 @@ test('editing IPv6 preserves advanced DNS and all unrelated fields', () => {
     assert.deepEqual(next.tun, original.tun);
     assert.equal(original.dns.ipv6, undefined);
 });
+
+test('editing and presets preserve baseline DNS additions and future fields', () => {
+    const additions = { 'fake-ip-ttl': 0, 'fake-ip-range6': 'fdfe:dcba:9876::/64',
+        'ipv6-timeout': 150, 'cache-algorithm': 'arc', 'cache-max-size': 4096,
+        'fallback-lazy-query': true, 'proxy-server-nameserver-policy': { '+.proxy.test': '192.0.2.53' },
+        'future-option': { custom: true } };
+    const original = { dns: structuredClone(additions), tun: { 'include-uid': [1000], 'future-tun': true } };
+    for (const next of [network.setField(original, 'dns', 'ipv6', true), network.applyPreset(original, 'strict')]) {
+        for (const [key, value] of Object.entries(additions)) assert.deepEqual(next.dns[key], value);
+        assert.deepEqual(next.tun['include-uid'], [1000]);
+        assert.equal(next.tun['future-tun'], true);
+    }
+    assert.deepEqual(original.dns, additions);
+});
 test('DNS CRUD preserves raw addresses, ordering and other lists', () => {
     const original = { dns: { nameserver: ['https://dns.test/dns-query#RULES', '192.168.1.1'], fallback: ['system'] } };
     let next = network.editList(original, 'dns', 'nameserver', -1, 'quic://[::1]:853');

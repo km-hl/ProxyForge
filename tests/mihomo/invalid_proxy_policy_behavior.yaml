@@ -1,0 +1,9 @@
+dns:
+  proxy-server-nameserver: [192.0.2.53]
+  proxy-server-nameserver-policy:
+    'RULE-SET:local-ips': 192.0.2.54
+rule-providers:
+  local-ips:
+    type: inline
+    behavior: ipcidr
+    payload: ['192.0.2.0/24']

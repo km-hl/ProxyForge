@@ -1,0 +1,3 @@
+ipv6: true
+dns:
+  fake-ip-range6: 198.18.0.1/16

@@ -1,0 +1,2 @@
+tun:
+  route-exclude-address: ['192.0.2.0/99']
