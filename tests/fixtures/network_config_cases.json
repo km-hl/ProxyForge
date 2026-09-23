@@ -1,0 +1,10 @@
+[
+  {"name":"legacy", "config":{"hosts":{"local.test":"127.0.0.1"}}, "errors":[], "warnings":[]},
+  {"name":"explicit_empty", "config":{"dns":{"enable":true,"nameserver":[]}}, "errors":["nameserver_required"], "warnings":[]},
+  {"name":"missing_uses_defaults", "config":{"dns":{"enable":true}}, "errors":[], "warnings":[]},
+  {"name":"respect_requires_bootstrap_for_proxy", "config":{"dns":{"respect-rules":true}}, "errors":["proxy_dns_required"], "warnings":[]},
+  {"name":"strict_without_route", "config":{"tun":{"strict-route":true,"auto-route":false}}, "errors":[], "warnings":["strict_route_inactive"]},
+  {"name":"preserve_unknown", "config":{"dns":{"enable":true,"cache-algorithm":"arc","prefer-h3":true},"tun":{"route-exclude-address":["192.168.0.0/16"]},"sniffer":{"enable":true},"profile":{"store-selected":true}}, "errors":[], "warnings":[]},
+  {"name":"null_scalar_defaults", "config":{"dns":{"enable":null,"nameserver":null}}, "errors":[], "warnings":[]},
+  {"name":"null_list_is_empty", "config":{"dns":{"enable":true,"nameserver":null}}, "errors":["nameserver_required"], "warnings":[]}
+]

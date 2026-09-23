@@ -85,6 +85,24 @@ docker compose exec proxyforge python -c "import json; print(json.load(open('/ap
 
 将生成的订阅链接添加到 Mihomo / Clash.Meta 兼容客户端（例如 Clash Verge Rev）即可使用。当前 `/sub` 输出为 Mihomo YAML，不是原生 Sing-box JSON。
 
+## 🛡️ DNS 与网络
+
+在侧边栏的 **DNS 与网络** 页面可配置 Mihomo DNS、Fake-IP / Redir-Host、IPv6 DNS、DoH / DoT / UDP / TCP 地址、Bootstrap 和代理节点域名 DNS、Direct Nameserver、DNS 分流策略、Fake-IP Filter，以及 TUN、DNS Hijack 和 Strict Route。
+
+- **兼容模式**仅关闭订阅内 TUN，保留原有 DNS；**防 DNS 泄露**提供 DNS/TUN 起始配置；**严格防泄露**额外启用 Strict Route。预设先展示实际字段变更，确认后写入草稿，点击“保存网络设置”才持久化。原有自定义字段保留，普通预设不会关闭已有 Strict Route。
+- DNS 服务商快捷选择提供常用地址，用户可以继续修改；国内/国外推荐策略只新增缺失项，不覆盖同名策略。原有 `nameserver-policy` 字符串值和列表值均可读取。
+- 网络页面、底层 YAML 和最终订阅共用 `data/template.yaml`，没有独立 DNS 配置文件。页面切换不会写入默认值。保存成功后刷新相关界面；失败保留草稿，存在另一页未保存草稿时会阻止覆盖。
+- 未知 Mihomo 字段按值保留，包括 `dns` / `tun` 内高级字段。可视化保存会重新序列化 YAML，不保证保留注释、引号、锚点写法或排版。高级 YAML 预览只读，完整编辑仍在“底层配置兜底”。
+- 配置检查区分 **错误**、**建议**和**未验证**：错误阻止保存和最终订阅生成；建议允许保存。新增 `/api/template/validate` 只校验、不写文件、不访问 DNS 服务；使用既有管理鉴权。原有模板 API 请求及成功响应保持不变。
+
+静态默认值与必填条件以 [Mihomo v1.19.12 配置源码](https://github.com/MetaCubeX/mihomo/blob/v1.19.12/config/config.go) 为基线。字段缺失与显式空列表不同，例如缺少 `nameserver` 时内核可采用默认值，但启用 DNS 后显式 `nameserver: []` 会被拒绝；`respect-rules: true` 必须同时配置 `proxy-server-nameserver`。这些以前可能通过 ProxyForge 保存、但内核无法使用的配置，现在会明确报错。
+
+更新版本的协议栈或高级 Filter 模式会保留并标注兼容性范围；本服务无法获知每个客户端的内核版本，也不替代 Mihomo 完整配置解析。默认/空值语义参照固定版本源码与 YAML 解码规则，尚不等价于逐版本二进制验收。
+
+这些配置用于降低 DNS 泄露风险，实际结果仍受操作系统、浏览器、客户端覆盖配置及网络环境影响。预设 Bootstrap 包含明文 DNS；配置 DoH 不等于所有查询均加密或经代理。关闭 IPv6 DNS 不等于关闭系统 IPv6。Strict Route 依赖 auto-route，可能影响部分应用；服务器不会修改客户端的路由、防火墙或 TUN 权限。
+
+概览显示的是已保存模板的静态配置状态，最终订阅预览仍来自真实 `/sub` 输出。此功能不进行真实 DNS 泄露检测。多浏览器同时修改模板尚无版本冲突保护，全局导入仍可能部分成功。
+
 ## 🔄 日常更新代码指南
 
 当有新功能推送到 GitHub 后，在 VPS 上更新代码非常简单，且**绝对不会**覆盖或影响您的私有配置：

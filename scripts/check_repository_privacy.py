@@ -16,8 +16,10 @@ FORBIDDEN_TRACKED_FILES = {
     "CLAUDE.md",
     "custom_nodes.yaml",
     "template.yaml",
+    "docs/NETWORK_SETTINGS_PLAN.md",
+    "docs/NETWORK_SETTINGS_REPORT.md",
 }
-FORBIDDEN_TRACKED_PREFIXES = ("data/",)
+FORBIDDEN_TRACKED_PREFIXES = ("data/", ".local/", "test-results/", "playwright-report/")
 TEXT_SUFFIXES = {
     "",
     ".css",

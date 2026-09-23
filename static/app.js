@@ -45,6 +45,83 @@ const saveRulesBtn = document.getElementById('save-rules-btn');
 const ruleSearchInput = document.getElementById('rule-search-input');
 const ruleSearchCount = document.getElementById('rule-search-count');
 const clearRuleSearchBtn = document.getElementById('btn-clear-rule-search');
+let savedTemplateObj = null;
+let templateParseError = '';
+let externalTemplateBusy = false;
+let modalReturnFocus = null;
+function parseTemplate(content) {
+    const parsed = jsyaml.load(content);
+    if (!ProxyForgeNetwork.mapping(parsed)) throw new Error('模板根节点必须是 YAML 对象');
+    return parsed;
+}
+function rawIsDirty() { return rulesEditor.value !== state.templateRaw; }
+function templateGuard(source = 'other') {
+    if (templateSession.isBusy() || externalTemplateBusy) throw new Error('正在保存，请稍候');
+    if (source !== 'raw' && templateParseError) throw new Error('请先在底层配置中修复 YAML');
+    if (source !== 'raw' && rawIsDirty()) throw new Error('底层配置有未保存文本，请先保存或放弃修改');
+    if (source !== 'network' && ProxyForgeNetwork.isDirty()) throw new Error('网络设置有未保存草稿，请先保存或放弃修改');
+}
+function renderTemplateViews() {
+    if (!state.templateObj) return;
+    // Malformed legacy sections should not prevent access to the Raw editor.
+    for (const render of [renderGroups, renderRules, renderRuleProviders]) {
+        try { render(); } catch (_) { /* Raw YAML remains available for repair. */ }
+    }
+}
+function installTemplate(content) {
+    state.templateRaw = content;
+    rulesEditor.value = content;
+    try {
+        const parsed = parseTemplate(content);
+        state.templateObj = parsed;
+        savedTemplateObj = ProxyForgeNetwork.clone(parsed);
+        templateParseError = '';
+    } catch (error) {
+        state.templateObj = null;
+        savedTemplateObj = null;
+        templateParseError = error.message;
+        showToast(`模板读取失败：${error.message}，请修复底层配置`, 'error');
+    }
+    renderTemplateViews();
+    ProxyForgeNetwork.render(state.templateObj, true);
+}
+async function readTemplate() {
+    return (await (await fetchAuth('/template')).json()).content;
+}
+async function validateTemplateText(content) {
+    return (await fetchAuth('/template/validate', {
+        method: 'POST', body: JSON.stringify({ content })
+    })).json();
+}
+const templateSession = ProxyForgeTemplateSession.create({
+    parse: parseTemplate, read: readTemplate, validate: validateTemplateText,
+    write: content => fetchAuth('/template', { method: 'POST', body: JSON.stringify({ content }) }),
+    install: installTemplate,
+});
+ProxyForgeNetwork.init({
+    escape: escapeHtml, dump: value => jsyaml.dump(value), validate: validateTemplateText,
+    save: candidate => saveTemplateObj(candidate, 'network'),
+    isBusy: () => templateSession.isBusy() || externalTemplateBusy,
+    openModal, closeModal, toast: showToast,
+    openRaw: () => document.querySelector('[data-panel="panel-raw"]').click(),
+});
+// Block conflicting interactions before legacy handlers mutate shared state.
+document.addEventListener('click', event => {
+    const target = event.target.closest('button, [onclick]');
+    if (!target || target.id === 'logout-btn' || target.closest('#login-overlay')) return;
+    if (target.id === 'modal-cancel' || target.id === 'modal-close') return;
+    let message = '';
+    if (templateSession.isBusy() || externalTemplateBusy) message = '正在保存，请稍候';
+    else if (templateParseError && target.closest('#panel-groups, #panel-rules')) message = '请先修复底层 YAML';
+    else if (target.closest('#panel-groups, #panel-rules, #panel-nodes, #panel-airports') || target.id === 'global-import-btn') {
+        if (rawIsDirty() || ProxyForgeNetwork.isDirty()) message = '请先保存或放弃底层配置/网络草稿';
+    }
+    if (message) { event.preventDefault(); event.stopImmediatePropagation(); showToast(message, 'warning'); }
+}, true);
+document.addEventListener('dragstart', event => {
+    if (templateSession.isBusy() || externalTemplateBusy || templateParseError || rawIsDirty() || ProxyForgeNetwork.isDirty()) event.preventDefault();
+}, true);
+document.getElementById('discard-raw-btn').addEventListener('click', () => { rulesEditor.value = state.templateRaw; });
 
 function showToast(msg, type = 'success') {
     toast.textContent = msg;
@@ -54,15 +131,28 @@ function showToast(msg, type = 'success') {
 
 // === Modal Logic ===
 function openModal(title, htmlContent, onConfirm) {
+    modalReturnFocus = document.activeElement;
     modalTitle.textContent = title;
     modalBody.innerHTML = htmlContent;
     modalConfirmAction = onConfirm;
     modalOverlay.classList.add('active');
+    setTimeout(() => (modalBody.querySelector('input, select, textarea, button') || modalConfirm).focus(), 0);
 }
 function closeModal() {
     modalOverlay.classList.remove('active');
     modalConfirmAction = null;
+    if (modalReturnFocus?.isConnected) modalReturnFocus.focus();
+    else document.querySelector('.section-panel.active button:not(:disabled)')?.focus();
 }
+modalOverlay.addEventListener('keydown', event => {
+    if (event.key === 'Escape') closeModal();
+    if (event.key === 'Tab') {
+        const items = [...modalOverlay.querySelectorAll('button, input, select, textarea, [tabindex="0"]')].filter(el => !el.disabled);
+        const first = items[0], last = items[items.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }
+});
 modalClose.addEventListener('click', closeModal);
 modalCancel.addEventListener('click', closeModal);
 modalConfirm.addEventListener('click', () => {
@@ -77,7 +167,7 @@ async function fetchAuth(url, options = {}) {
     const res = await fetch(`${API_BASE}${url}`, options);
     if (res.status === 401) {
         showLogin();
-        throw new Error('Unauthorized');
+        throw Object.assign(new Error('登录已过期，请重新登录'), { status: 401 });
     }
     if (!res.ok) {
         let message = `HTTP ${res.status}`;
@@ -93,19 +183,14 @@ async function fetchAuth(url, options = {}) {
             const text = await res.text();
             if (text) message = text;
         }
-        throw new Error(message);
+        throw Object.assign(new Error(message), { status: res.status });
     }
     return res;
 }
 
 async function reloadTemplateState() {
-    const templateRes = await fetchAuth('/template');
-    state.templateRaw = (await templateRes.json()).content || '';
-    state.templateObj = jsyaml.load(state.templateRaw) || {};
-    rulesEditor.value = state.templateRaw;
-    renderGroups();
-    renderRules();
-    renderRuleProviders();
+    if (rawIsDirty() || ProxyForgeNetwork.isDirty()) throw new Error('草稿尚未保存，未覆盖本地编辑');
+    installTemplate(await readTemplate());
 }
 
 async function login() {
@@ -198,20 +283,10 @@ async function loadData() {
         const allProxiesRes = await fetchAuth('/proxies');
         state.allProxies = (await allProxiesRes.json()).proxies || [];
         
-        const rulesRes = await fetchAuth('/template');
-        state.templateRaw = (await rulesRes.json()).content || '';
-        try {
-            state.templateObj = jsyaml.load(state.templateRaw) || {};
-        } catch(e) {
-            state.templateObj = {};
-        }
-
         renderAirports();
         renderNodes();
-        renderGroups();
-        renderRules();
-renderRuleProviders();
-        rulesEditor.value = state.templateRaw;
+        // Reauthentication must not erase an unsaved draft.
+        if (!rawIsDirty() && !ProxyForgeNetwork.isDirty()) installTemplate(await readTemplate());
 
         // Async fetch airport info
         fetchAuth('/airports/info').then(res => res.json()).then(data => {
@@ -649,7 +724,10 @@ document.getElementById('btn-refresh-airports').addEventListener('click', () => 
 
 async function saveAirportsObj() {
     renderAirports();
+    let locked = false;
     try {
+        templateGuard();
+        externalTemplateBusy = true; locked = true; rulesEditor.readOnly = true;
         const response = await fetchAuth('/airports', {
             method: 'POST',
             body: JSON.stringify({ urls: state.airports })
@@ -667,6 +745,7 @@ async function saveAirportsObj() {
             renderAirports();
         });
     } catch(e) { showToast(`保存失败：${e.message}`, 'error'); }
+    finally { if (locked) { externalTemplateBusy = false; rulesEditor.readOnly = false; } }
 }
 
 // === Actions: Proxy Groups ===
@@ -1363,7 +1442,10 @@ document.getElementById('btn-bulk-delete-nodes').addEventListener('click', () =>
 
 async function saveNodesObj() {
     renderNodes();
+    let locked = false;
     try {
+        templateGuard();
+        externalTemplateBusy = true; locked = true; rulesEditor.readOnly = true;
         const response = await fetchAuth('/nodes', {
             method: 'POST',
             body: JSON.stringify({ nodes: state.nodes })
@@ -1378,6 +1460,7 @@ async function saveNodesObj() {
         const allProxiesRes = await fetchAuth('/proxies');
         state.allProxies = (await allProxiesRes.json()).proxies || [];
     } catch(e) { showToast(`保存失败：${e.message}`, 'error'); }
+    finally { if (locked) { externalTemplateBusy = false; rulesEditor.readOnly = false; } }
 }
 
 // === Actions: Rules ===
@@ -1432,19 +1515,25 @@ document.getElementById('btn-bulk-delete-rules').addEventListener('click', () =>
     }
 });
 
-async function saveTemplateObj() {
-    state.templateRaw = jsyaml.dump(state.templateObj);
-    rulesEditor.value = state.templateRaw;
-    renderGroups();
-    renderRules();
-renderRuleProviders();
+async function saveTemplateObj(candidate = state.templateObj, source = 'other', raw = null) {
     try {
-        await fetchAuth('/template', {
-            method: 'POST',
-            body: JSON.stringify({ content: state.templateRaw })
-        });
-        showToast('已保存底层模板');
-    } catch(e) { showToast(`保存失败：${e.message}`, 'error'); }
+        templateGuard(source);
+        const content = raw === null ? jsyaml.dump(candidate) : raw;
+        // Legacy actions mutate state before calling this function. Keep the
+        // authoritative state at the last confirmed snapshot until commit.
+        state.templateObj = ProxyForgeNetwork.clone(savedTemplateObj);
+        renderTemplateViews();
+        rulesEditor.readOnly = true;
+        const result = await templateSession.save(content);
+        if (!result.ok && source === 'other') rulesEditor.value = content;
+        showToast(result.message || (result.report?.warnings.length ? '已保存，存在配置建议，请查看 DNS 与网络' : '已保存底层模板'), result.ok ? result.report?.warnings.length ? 'warning' : 'success' : 'error');
+        return result.ok;
+    } catch (error) {
+        state.templateObj = ProxyForgeNetwork.clone(savedTemplateObj);
+        renderTemplateViews();
+        showToast(`保存失败：${error.message}`, 'error');
+        return false;
+    } finally { rulesEditor.readOnly = false; }
 }
 
 // === Action: Global Import ===
@@ -1460,10 +1549,12 @@ if (globalImportBtn) {
             </div>
         `;
         openModal('📥 全局 YAML 智能导入', html, async () => {
+            let locked = false;
             try {
+                templateGuard();
                 let raw = document.getElementById('m-global-yaml').value;
-                let parsed = jsyaml.load(raw);
-                if (!parsed || typeof parsed !== 'object') throw new Error("无效的 YAML 结构");
+                let parsed = parseTemplate(raw);
+                externalTemplateBusy = true; locked = true; rulesEditor.readOnly = true;
 
                 let nodeCount = 0;
                 if (parsed.proxies && Array.isArray(parsed.proxies)) {
@@ -1488,21 +1579,7 @@ if (globalImportBtn) {
                     }
                     delete parsed['proxy-providers'];
                 }
-                if (Object.keys(parsed).length > 0) {
-                    state.templateObj = parsed; // Overwrite
-                    state.templateRaw = jsyaml.dump(state.templateObj);
-                    rulesEditor.value = state.templateRaw;
-                    renderGroups();
-                    renderRules();
-renderRuleProviders();
-                } else {
-                    state.templateObj = {};
-                    state.templateRaw = '';
-                    rulesEditor.value = '';
-                    renderGroups();
-                    renderRules();
-renderRuleProviders();
-                }
+                const importedTemplateRaw = jsyaml.dump(parsed);
 
                 // Save everything
                 await fetchAuth('/nodes', {
@@ -1521,14 +1598,19 @@ renderRuleProviders();
                     renderAirports();
                 });
                 
-                await fetchAuth('/template', {
-                    method: 'POST',
-                    body: JSON.stringify({ content: state.templateRaw })
-                });
+                const result = await templateSession.save(importedTemplateRaw);
+                if (!result.ok) throw new Error(result.message);
 
                 closeModal();
                 showToast(`全局导入覆盖成功！提取 ${nodeCount} 个节点，${airportCount} 个机场，并更新底层配置。`);
-            } catch (e) { alert('解析或保存失败: ' + e.message); }
+            } catch (e) {
+                // Import is intentionally not a transaction across three files.
+                // Re-read the actual template if preceding writes cleaned references.
+                if (locked) {
+                    try { installTemplate(await readTemplate()); } catch (_) { /* retain the known snapshot */ }
+                }
+                alert('导入未完成（部分节点/机场可能已保存）: ' + e.message);
+            } finally { if (locked) { externalTemplateBusy = false; rulesEditor.readOnly = false; } }
         });
 
         document.getElementById('m-global-file').addEventListener('change', (e) => {
@@ -1586,19 +1668,7 @@ saveAdminTokenBtn.addEventListener('click', async () => {
 });
 
 saveRulesBtn.addEventListener('click', async () => {
-    try {
-        let newYaml = rulesEditor.value;
-        state.templateObj = jsyaml.load(newYaml) || {};
-        state.templateRaw = newYaml;
-        renderGroups();
-        renderRules();
-renderRuleProviders();
-        await fetchAuth('/template', {
-            method: 'POST',
-            body: JSON.stringify({ content: newYaml })
-        });
-        showToast('底层配置已覆盖保存');
-    } catch (e) { showToast(`YAML解析或保存失败：${e.message}`, 'error'); }
+    await saveTemplateObj(null, 'raw', rulesEditor.value);
 });
 
 // === Actions: Rules & Rule Providers ===

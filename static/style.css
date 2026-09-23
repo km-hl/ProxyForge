@@ -18,6 +18,38 @@
     --sidebar-width: 220px;
 }
 
+/* DNS/TUN: reuse the existing visual language and keep long addresses readable. */
+.network-fields { border: 0; min-width: 0; display: grid; gap: 20px; }
+.network-heading h2 { font-size: 1.25rem; margin-bottom: 8px; }
+.network-toolbar, .network-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.network-toolbar { position: sticky; top: 0; z-index: 5; background: var(--card-bg); padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); }
+.network-toolbar strong { margin-right: auto; }
+.network-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.network-address { flex: 1; min-width: 180px; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: .85rem; }
+.network-list { margin: 14px 0 20px; }
+.network-list h3 { font-size: .95rem; margin-bottom: 6px; }
+.network-list > .btn { margin: 10px 6px 0 0; }
+.network-status { padding: 10px 14px; border-radius: var(--radius-sm); margin: 8px 0; overflow-wrap: anywhere; }
+.network-status.success { color: #176c3b; background: #eaf7ee; }
+.network-status.warning { color: #805500; background: #fff5da; }
+.network-status.error { color: #a12323; background: #ffeded; }
+.network-status.neutral { color: var(--text-secondary); background: #f0f3f7; }
+.network-diagnostics { padding-left: 24px; overflow-wrap: anywhere; margin: 8px 0; }
+.network-diagnostics.errors { color: #a12323; }
+.network-diagnostics.warnings { color: #805500; }
+.network-diagnostics.info, .hint { color: var(--text-secondary); font-size: .85rem; }
+.network-yaml { white-space: pre-wrap; overflow-wrap: anywhere; background: #f5f7fa; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px; font-size: .8rem; }
+#panel-network details, #network-overview details { margin-top: 14px; }
+#panel-network summary, #network-overview summary { cursor: pointer; padding: 8px 0; }
+#panel-network input[type="checkbox"] { accent-color: var(--primary); }
+.btn:disabled { opacity: .55; cursor: not-allowed; }
+.toast-warning { background: #936300; }
+@media (max-width: 640px) {
+    .network-toolbar { position: static; }
+    .network-address { flex-basis: 100%; }
+    .network-fields .card { padding: 14px; }
+}
+
 * {
     margin: 0;
     padding: 0;

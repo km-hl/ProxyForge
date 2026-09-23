@@ -334,6 +334,79 @@ class ApiIntegrationTest(unittest.TestCase):
         self.assertEqual(response.json(), {"status": "ok"})
         save_template.assert_called_once_with(template)
 
+    def test_network_validation_is_authenticated_and_never_writes(self):
+        payload = {"content": "dns:\n  enable: true\n  nameserver: []\n"}
+        self.assertEqual(self.client.post("/api/template/validate", json=payload).status_code, 401)
+        with patch.object(self.app_module, "save_template_content") as save:
+            response = self.client.post("/api/template/validate", json=payload,
+                                        headers={"Authorization": f"Bearer {TEST_ADMIN_TOKEN}"})
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("nameserver_required", [item["code"] for item in response.json()["errors"]])
+            save.assert_not_called()
+
+    def test_network_errors_reject_save_without_changing_file(self):
+        path = Path(self.app_module.TEMPLATE_PATH)
+        original = path.read_text(encoding="utf-8")
+        response = self.client.post("/api/template",
+            headers={"Authorization": f"Bearer {TEST_ADMIN_TOKEN}"},
+            json={"content": "dns:\n  respect-rules: true\n"})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("errors", response.json()["detail"])
+        self.assertEqual(path.read_text(encoding="utf-8"), original)
+
+    def test_network_warnings_save_roundtrip_and_subscription_preserves_unknowns(self):
+        config = {"dns": {"enable": True, "nameserver": ["https://1.1.1.1/dns-query"],
+                          "cache-algorithm": "arc", "prefer-h3": True},
+                  "tun": {"enable": True, "dns-hijack": [], "route-exclude-address": ["192.168.0.0/16"]},
+                  "hosts": {"local.test": "127.0.0.1"}, "profile": {"store-selected": True},
+                  "proxy-groups": [], "rules": []}
+        content = yaml.safe_dump(config)
+        headers = {"Authorization": f"Bearer {TEST_ADMIN_TOKEN}"}
+        with patch.object(self.app_module, "load_airports", return_value=[]), \
+             patch.object(self.app_module, "load_custom_nodes", return_value=[]), \
+             patch.object(self.app_module, "get_airport_proxies_cached", return_value=[]):
+            report = self.client.post("/api/template/validate", headers=headers, json={"content": content}).json()
+            self.assertFalse(report["errors"])
+            self.assertTrue(report["warnings"])
+            response = self.client.post("/api/template", headers=headers, json={"content": content})
+            self.assertEqual(response.json(), {"status": "ok"})
+            actual = yaml.safe_load(self.client.get("/api/template", headers=headers).json()["content"])
+            self.assertEqual(actual, config)
+            subscription = self.client.get(f"/sub?token={TEST_SUBSCRIPTION_TOKEN}")
+            self.assertEqual(subscription.status_code, 200)
+            generated = yaml.safe_load(subscription.text)
+            for key in ("dns", "tun", "hosts", "profile"):
+                self.assertEqual(generated[key], config[key])
+
+    def test_network_invalid_persisted_config_blocks_subscription(self):
+        with patch.object(self.app_module, "load_template_content", return_value="dns: []\n"), \
+             patch.object(self.app_module, "load_airports", return_value=[]), \
+             patch.object(self.app_module, "load_custom_nodes", return_value=[]), \
+             patch.object(self.app_module, "get_airport_proxies_cached", return_value=[]):
+            response = self.client.get(f"/sub?token={TEST_SUBSCRIPTION_TOKEN}")
+            self.assertEqual(response.status_code, 422)
+            self.assertIn("dns", response.text)
+
+    def test_network_yaml_syntax_diagnostic_does_not_echo_contents(self):
+        response = self.client.post("/api/template/validate",
+            headers={"Authorization": f"Bearer {TEST_ADMIN_TOKEN}"},
+            json={"content": "dns: [secret-example"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["errors"][0]["code"], "yaml_syntax")
+        self.assertNotIn("secret-example", response.text)
+
+    def test_network_report_handles_non_json_yaml_values(self):
+        for content, invalid in (("dns: {enable: .nan}", True),
+                                 ("dns: {nameserver: &recursive [*recursive]}", True),
+                                 ("dns: {advanced: &recursive [*recursive]}", False)):
+            with self.subTest(content=content):
+                response = self.client.post("/api/template/validate",
+                    headers={"Authorization": f"Bearer {TEST_ADMIN_TOKEN}"},
+                    json={"content": content})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(bool(response.json()["errors"]), invalid)
+                self.assertNotIn("advanced", response.json().get("effective", {}).get("dns", {}))
+
     def test_config_update_rejects_short_token(self):
         response = self.client.post(
             "/api/config",
