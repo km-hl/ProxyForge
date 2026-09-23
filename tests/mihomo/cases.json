@@ -1,0 +1,18 @@
+[
+  {"file": "minimal.yaml", "exit_code": 0},
+  {"file": "dns_fakeip.yaml", "exit_code": 0},
+  {"file": "dns_policy.yaml", "exit_code": 0},
+  {"file": "dns_proxy_policy.yaml", "exit_code": 0},
+  {"file": "tun_basic.yaml", "exit_code": 0},
+  {"file": "tun_strict.yaml", "exit_code": 0},
+  {"file": "advanced_dns.yaml", "exit_code": 0},
+  {"file": "null_blocks.yaml", "exit_code": 0},
+  {"file": "null_scalar.yaml", "exit_code": 0},
+  {"file": "invalid_nameserver_empty.yaml", "exit_code": 1, "error_contains": "NameServer cannot be empty"},
+  {"file": "invalid_nameserver_null.yaml", "exit_code": 1, "error_contains": "NameServer cannot be empty"},
+  {"file": "invalid_dns_type.yaml", "exit_code": 1, "error_contains": "cannot unmarshal"},
+  {"file": "invalid_proxy_policy.yaml", "exit_code": 1, "error_contains": "disallow empty `proxy-server-nameserver`"},
+  {"file": "invalid_fakeip_range.yaml", "exit_code": 1, "error_contains": "dns.fake-ip-range must be a IPv4 prefix"},
+  {"file": "invalid_fakeip_empty.yaml", "exit_code": 1, "error_contains": "both empty with fake-ip mode"},
+  {"file": "invalid_policy_reference.yaml", "exit_code": 1, "error_contains": "not found rule-set: missing-local-domains"}
+]

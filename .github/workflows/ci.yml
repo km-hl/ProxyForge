@@ -68,3 +68,41 @@ jobs:
       - name: Check pushed commit whitespace errors
         if: github.event_name == 'push'
         run: git show --check --oneline --no-renames HEAD
+
+  mihomo-compatibility:
+    name: Mihomo parser compatibility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download and verify pinned official Linux amd64 binary
+        run: python scripts/download_mihomo.py --output "$RUNNER_TEMP/mihomo"
+
+      - name: Confirm binary version and CLI
+        run: |
+          "$RUNNER_TEMP/mihomo" -v
+          "$RUNNER_TEMP/mihomo" -h
+
+      - name: Check fixtures without external network access
+        # Keep loopback (including IPv6) available, but no external interface.
+        # Any unexpected geodata/provider download fails instead of using the network.
+        run: |
+          sudo unshare --net -- bash -euc 'ip link set lo up; exec "$@"' _ \
+            "$(command -v python)" scripts/check_mihomo.py \
+            --binary "$RUNNER_TEMP/mihomo" --log-dir test-results/mihomo
+
+      - name: Upload parser logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mihomo-parser-logs
+          path: test-results/mihomo/
+          if-no-files-found: warn
+          retention-days: 7

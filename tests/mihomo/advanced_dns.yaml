@@ -1,0 +1,23 @@
+ipv6: true
+dns:
+  enable: true
+  ipv6: true
+  ipv6-timeout: 100
+  use-hosts: true
+  use-system-hosts: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-range6: fdfe:dcba:9876::1/64
+  fake-ip-ttl: 1
+  cache-algorithm: arc
+  cache-max-size: 4096
+  fallback-lazy-query: true
+  nameserver: [192.0.2.53]
+  fallback: [192.0.2.54]
+  # The core defaults geoip to true. Disable it explicitly for offline fixtures.
+  fallback-filter:
+    geoip: false
+    ipcidr: [240.0.0.0/4]
+    domain: ['+.example.test']
+rules:
+  - MATCH,DIRECT

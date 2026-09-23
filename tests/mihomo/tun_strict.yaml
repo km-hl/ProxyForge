@@ -1,0 +1,24 @@
+dns:
+  enable: true
+  nameserver: [192.0.2.53]
+tun:
+  enable: true
+  stack: system
+  mtu: 1500
+  auto-route: true
+  auto-detect-interface: true
+  strict-route: true
+  auto-redirect: true
+  iproute2-table-index: 2022
+  iproute2-rule-index: 9000
+  auto-redirect-input-mark: 2023
+  auto-redirect-output-mark: 2024
+  auto-redirect-iproute2-fallback-rule-index: 32767
+  loopback-address: [10.7.0.1]
+  route-address: [0.0.0.0/0]
+  route-exclude-address: [192.0.2.0/24]
+  include-uid: [1000]
+  exclude-uid-range: ['2000:2001']
+  dns-hijack: ['any:53', 'tcp://any:53']
+rules:
+  - MATCH,DIRECT

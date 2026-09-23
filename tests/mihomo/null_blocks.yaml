@@ -1,0 +1,4 @@
+dns: null
+tun: null
+rules:
+  - MATCH,DIRECT

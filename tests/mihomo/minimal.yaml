@@ -1,0 +1,3 @@
+# Defaults only: no remote providers or geodata rules.
+rules:
+  - MATCH,DIRECT

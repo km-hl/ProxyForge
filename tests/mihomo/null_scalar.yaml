@@ -1,0 +1,7 @@
+dns:
+  enable: null
+  nameserver: null
+tun:
+  enable: null
+rules:
+  - MATCH,DIRECT
