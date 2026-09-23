@@ -1,0 +1,3 @@
+dns:
+  nameserver-policy:
+    'rule-set:missing-local-domains': 192.0.2.53

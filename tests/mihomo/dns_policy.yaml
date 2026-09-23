@@ -1,0 +1,13 @@
+dns:
+  enable: true
+  nameserver: [192.0.2.53]
+  nameserver-policy:
+    '+.example.test': 192.0.2.53
+    'rule-set:local-domains': [192.0.2.54]
+rule-providers:
+  local-domains:
+    type: inline
+    behavior: domain
+    payload: ['+.internal.test']
+rules:
+  - MATCH,DIRECT

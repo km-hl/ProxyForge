@@ -1,0 +1,4 @@
+dns:
+  respect-rules: false
+  proxy-server-nameserver-policy:
+    '+.node.test': 192.0.2.53

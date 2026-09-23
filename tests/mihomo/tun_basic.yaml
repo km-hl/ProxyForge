@@ -1,0 +1,11 @@
+dns:
+  enable: true
+  nameserver: [192.0.2.53]
+tun:
+  enable: true
+  stack: mixed
+  auto-route: true
+  auto-detect-interface: true
+  dns-hijack: ['any:53', 'tcp://any:53']
+rules:
+  - MATCH,DIRECT

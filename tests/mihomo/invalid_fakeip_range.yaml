@@ -1,0 +1,2 @@
+dns:
+  fake-ip-range: fdfe:dcba:9876::1/64

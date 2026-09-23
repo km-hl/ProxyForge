@@ -1,0 +1,15 @@
+dns:
+  enable: true
+  respect-rules: true
+  nameserver: [192.0.2.53]
+  proxy-server-nameserver: [192.0.2.54]
+  proxy-server-nameserver-policy:
+    '+.node.test': 192.0.2.54
+    'rule-set:node-domains': [192.0.2.55]
+rule-providers:
+  node-domains:
+    type: inline
+    behavior: domain
+    payload: ['+.proxy.test']
+rules:
+  - MATCH,DIRECT

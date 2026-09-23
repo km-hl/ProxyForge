@@ -1,0 +1,11 @@
+dns:
+  enable: true
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-ttl: 0
+  fake-ip-filter:
+    - '*.test'
+  nameserver:
+    - 192.0.2.53
+rules:
+  - MATCH,DIRECT
