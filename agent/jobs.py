@@ -44,6 +44,39 @@ def validate_job(job):
         raise AgentConnectionError('Unsupported job schema')
 
 
+def validate_journal(journal, binding):
+    """Reject malformed replay records before claiming any work."""
+    if (set(journal) != {'binding', 'entries'} or journal['binding'] != binding or
+            not isinstance(journal['entries'], list) or len(journal['entries']) > 128):
+        raise ValueError('Job journal identity or schema mismatch')
+    seen = set()
+    for entry in journal['entries']:
+        if not isinstance(entry, dict) or set(entry) != {'identity', 'result'}:
+            raise ValueError('Invalid job journal entry')
+        identity, result = entry['identity'], entry['result']
+        if (not isinstance(identity, dict) or set(identity) != {'id', 'type', 'deployment_revision'} or
+                not isinstance(identity['id'], str) or not re.fullmatch(r'[a-f0-9]{32}', identity['id']) or
+                identity['type'] != 'singbox.status' or identity['deployment_revision'] is not None or
+                identity['id'] in seen):
+            raise ValueError('Invalid job journal identity')
+        seen.add(identity['id'])
+        if not isinstance(result, dict) or set(result) != {'status', 'output', 'error'}:
+            raise ValueError('Invalid job journal result')
+        if result['status'] == 'failed':
+            if result['output'] is not None or result['error'] != 'probe_failed':
+                raise ValueError('Invalid job journal failure')
+        elif result['status'] == 'success':
+            output = result['output']
+            if (result['error'] is not None or not isinstance(output, dict) or
+                    set(output) != {'installed', 'running', 'version', 'status'} or
+                    type(output['installed']) is not bool or type(output['running']) is not bool or
+                    not isinstance(output['version'], str) or len(output['version']) > 128 or
+                    output['status'] not in ('not_installed', 'running', 'stopped', 'unknown')):
+                raise ValueError('Invalid job journal output')
+        else:
+            raise ValueError('Invalid job journal status')
+
+
 def process_job(client, config, config_path):
     from .main import load_config, save_config
     journal_path = Path(config_path).with_name('job-results.json')
@@ -53,9 +86,7 @@ def process_job(client, config, config_path):
         if journal_path.stat().st_size > 262144:
             raise ValueError('Job journal exceeds limit')
         journal = load_config(journal_path)
-        if (journal.get('binding') != binding or not isinstance(journal.get('entries'), list) or
-                len(journal['entries']) > 128 or not all(isinstance(e, dict) for e in journal['entries'])):
-            raise ValueError('Job journal identity or schema mismatch')
+        validate_journal(journal, binding)
     try:
         job = client.post('/api/agent/jobs/claim', {'instance_id': config['instance_id']}, config['token']).get('job')
         if job is None:

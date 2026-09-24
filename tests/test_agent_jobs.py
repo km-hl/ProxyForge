@@ -314,3 +314,27 @@ class RunnerTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 process_job(client, config, path)
             client.post.assert_not_called()
+
+    def test_malformed_replay_entries_stop_before_claim_or_probe(self):
+        from copy import deepcopy
+        from unittest.mock import Mock
+        config = {'controller': 'https://controller.example', 'agent_id': 'a' * 32,
+                  'instance_id': 'b' * 32, 'token': 'local-test-token'}
+        binding = {key: config[key] for key in ('controller', 'agent_id', 'instance_id')}
+        valid = {'identity': {'id': 'c' * 32, 'type': 'singbox.status', 'deployment_revision': None},
+                 'result': RESULT}
+        malformed = [{}, {'identity': valid['identity']}, {**valid, 'result': None},
+                     {**valid, 'identity': {**valid['identity'], 'type': 'shell'}},
+                     {**valid, 'result': {**RESULT, 'output': {**OUTPUT, 'installed': 'false'}}},
+                     {**valid, 'result': {'status': 'failed', 'error': 'probe_failed', 'output': OUTPUT}}]
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'config.json'
+            for entries in [[entry] for entry in malformed] + [[valid, deepcopy(valid)]]:
+                with self.subTest(entries=entries):
+                    save_config(path.with_name('job-results.json'), {'binding': binding, 'entries': entries})
+                    client = Mock()
+                    with patch('agent.jobs.singbox_status') as probe:
+                        with self.assertRaises(ValueError):
+                            process_job(client, config, path)
+                    client.post.assert_not_called()
+                    probe.assert_not_called()
