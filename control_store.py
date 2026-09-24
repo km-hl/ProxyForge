@@ -1,4 +1,4 @@
-"""SQLite persistence for the B1 inventory protocol; no remote execution."""
+"""SQLite persistence for Agent inventory and the allowlisted job queue."""
 import contextlib
 import hashlib
 import hmac
@@ -9,6 +9,8 @@ import secrets
 import sqlite3
 import time
 import uuid
+
+from job_store import JobStoreMixin, migrate_jobs
 
 PROTOCOL_VERSION = 1
 ONLINE_SECONDS = 90
@@ -40,7 +42,7 @@ def online_status(last_seen, now):
     return "online" if age < ONLINE_SECONDS else "degraded" if age < OFFLINE_SECONDS else "offline"
 
 
-class ControlStore:
+class ControlStore(JobStoreMixin):
     def __init__(self, path, clock=time.time):
         self.path = Path(path).resolve()
         self.clock = clock
@@ -52,7 +54,7 @@ class ControlStore:
             db.execute("BEGIN IMMEDIATE")
             db.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)")
             version = db.execute("SELECT COALESCE(MAX(version),0) FROM schema_migrations").fetchone()[0]
-            if version > 1:
+            if version > 2:
                 raise RuntimeError("Control database is newer than this application")
             if version == 0:
                 # Individual statements stay within the migration transaction.
@@ -75,6 +77,8 @@ class ControlStore:
                     "INSERT INTO schema_migrations(version) VALUES(1)",
                 ]:
                     db.execute(statement)
+            if version < 2:
+                migrate_jobs(db)
             db.commit()
 
     @contextlib.contextmanager
@@ -156,6 +160,7 @@ class ControlStore:
             db.execute("UPDATE agents SET metadata=?,observed_ip=?,last_seen=? WHERE id=?",
                        (json.dumps(metadata), observed_ip, self.clock(), agent_id))
         return {"status": "ok", "protocol_version": PROTOCOL_VERSION,
+                "job_protocol_version": 1,
                 "compatible": metadata["protocol_version"] == PROTOCOL_VERSION, "heartbeat_interval": 30}
 
     def _view(self, row):
@@ -185,6 +190,8 @@ class ControlStore:
             now = self.clock()
             db.execute("UPDATE agents SET revoked_at=COALESCE(revoked_at,?) WHERE id=?", (now, agent_id))
             db.execute("UPDATE agent_credentials SET revoked_at=COALESCE(revoked_at,?) WHERE agent_id=?", (now, agent_id))
+            db.execute("UPDATE jobs SET status='cancelled',finished_at=?,lease_hash=NULL,lease_until=NULL "
+                       "WHERE agent_id=? AND status IN ('pending','assigned','running')", (now, agent_id))
             if remove:
                 db.execute("DELETE FROM agents WHERE id=?", (agent_id,))
             self._audit(db, "agent_removed" if remove else "agent_revoked", agent_id)

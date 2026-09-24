@@ -65,6 +65,7 @@ class AgentMetadata(Payload):
     arch: ShortText
     agent_version: ShortText
     protocol_version: StrictInt = Field(ge=1, le=1000)
+    job_protocol_version: StrictInt = Field(default=0, ge=0, le=1000)
     uptime: StrictInt = Field(default=0, ge=0)
     addresses: list[ShortText] = Field(default_factory=list, max_length=16)
     supported: StrictBool = False
@@ -173,6 +174,8 @@ def attach_agent_routes(app, management_auth, store_provider):
             raise UnauthorizedAgent()
         return store_provider().heartbeat(authorization[7:], json.loads(data.model_dump_json()), observed_ip(request))
 
+    from job_api import attach_job_routes
+    attach_job_routes(app, admin, agent, store_provider)
     app.add_middleware(AgentBodyLimit)
     app.include_router(admin)
     app.include_router(agent)

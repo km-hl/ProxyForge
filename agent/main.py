@@ -12,6 +12,7 @@ import uuid
 
 from .client import Client, AgentConnectionError, CredentialRejected
 from .system_info import collect
+from .jobs import process_job, runner_lock
 
 
 def save_config(path, config):
@@ -67,6 +68,11 @@ def register(path, server, registration_token, allow_insecure=False, ca_file=Non
 
 
 def run(path, once=False):
+    with runner_lock(path):
+        return run_loop(path, once)
+
+
+def run_loop(path, once=False):
     config = load_config(path)
     if not config.get("token"):
         raise ValueError("Registration incomplete; remove any orphan Agent and issue a new registration token")
@@ -75,9 +81,11 @@ def run(path, once=False):
     while True:
         try:
             result = client.post("/api/agent/heartbeat", collect(config["instance_id"]), config["token"])
-            failures = 0
             if not result.get("compatible", False):
                 print("Agent protocol incompatible; inventory only, update required", file=sys.stderr)
+            elif result.get("job_protocol_version") == 1:
+                process_job(client, config, path)
+            failures = 0
             if once:
                 return 0
             time.sleep(30 + random.uniform(0, 3))
@@ -88,7 +96,7 @@ def run(path, once=False):
             if once:
                 return 1
             failures = min(failures + 1, 6)
-            print("Heartbeat unavailable; retrying with backoff", file=sys.stderr)
+            print("Agent synchronization unavailable; retrying with backoff", file=sys.stderr)
             time.sleep(min(300, 5 * 2 ** failures) + random.uniform(0, 3))
 
 

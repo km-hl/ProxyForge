@@ -89,7 +89,7 @@ class ControlStoreTest(unittest.TestCase):
         with self.assertRaises(UnauthorizedAgent):
             self.store.heartbeat(enrolled["agent_token"], metadata(), "")
         with self.store.connection() as db:
-            db.execute("INSERT INTO schema_migrations VALUES(2)")
+            db.execute("INSERT INTO schema_migrations VALUES(3)")
         with self.assertRaisesRegex(RuntimeError, "newer"):
             ControlStore(self.path)
 
@@ -181,7 +181,7 @@ class AgentApiTest(unittest.TestCase):
                 time.sleep(0.02)
             self.assertTrue(server.started)
             config = Path(self.temp.name) / "agent/config.json"
-            with patch("agent.main.collect", side_effect=lambda instance: metadata(instance)):
+            with patch("agent.main.collect", side_effect=lambda instance: {**metadata(instance), 'job_protocol_version': 1}):
                 register(config, "http://127.0.0.1:" + str(port), token, allow_insecure=True)
                 stored = load_config(config)
                 self.assertNotIn(token, config.read_text())
@@ -190,6 +190,15 @@ class AgentApiTest(unittest.TestCase):
                 self.assertEqual(run(config, once=True), 0)
                 view = self.client.get("/api/agents/" + stored["agent_id"], headers=self.admin).json()
                 self.assertEqual(view["status"], "online")
+                job_url = "/api/agents/" + stored["agent_id"] + "/jobs"
+                created = self.client.post(job_url, headers=self.admin, json={
+                    "request_id": "c" * 32, "type": "singbox.status", "payload": {}})
+                self.assertEqual(created.status_code, 200, created.text)
+                with patch("agent.jobs.singbox_status", return_value=metadata()["singbox"]):
+                    self.assertEqual(run(config, once=True), 0)
+                jobs = self.client.get(job_url, headers=self.admin).json()["jobs"]
+                self.assertEqual(jobs[0]["status"], "success")
+                self.assertEqual(jobs[0]["attempts"], 1)
                 self.client.post("/api/agents/" + stored["agent_id"] + "/revoke", headers=self.admin)
                 self.assertEqual(run(config, once=True), 4)
         finally:

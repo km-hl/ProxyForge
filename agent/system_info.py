@@ -55,7 +55,7 @@ def collect(instance_id):
         uptime = 0
     return {"instance_id": instance_id, "hostname": socket.gethostname()[:128],
             "machine_id": machine_id, "os": system, "os_version": version, "arch": arch,
-            "agent_version": VERSION, "protocol_version": PROTOCOL_VERSION,
+            "agent_version": VERSION, "protocol_version": PROTOCOL_VERSION, "job_protocol_version": 1,
             "uptime": uptime, "addresses": [],
             "supported": (system, version) in SUPPORTED and arch in {"amd64", "arm64"},
             "singbox": singbox_status()}

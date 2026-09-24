@@ -1,5 +1,6 @@
 """Bounded HTTPS transport. Never include response bodies/URLs in errors."""
 import json
+import re
 import ssl
 import urllib.error
 import urllib.parse
@@ -11,6 +12,10 @@ class AgentConnectionError(Exception):
 
 
 class CredentialRejected(AgentConnectionError):
+    pass
+
+
+class JobRejected(AgentConnectionError):
     pass
 
 
@@ -41,7 +46,8 @@ class Client:
             urllib.request.HTTPSHandler(context=context))
 
     def post(self, path, payload, token=None):
-        if path not in ("/api/agent/register", "/api/agent/heartbeat"):
+        if path not in ("/api/agent/register", "/api/agent/heartbeat", "/api/agent/jobs/claim") and not re.fullmatch(
+                r'/api/agent/jobs/[a-f0-9]{32}/(start|result)', path):
             raise ValueError("Unsupported Agent endpoint")
         content = json.dumps(payload).encode("utf-8")
         if len(content) > 16384:
@@ -62,6 +68,8 @@ class Client:
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):
                 raise CredentialRejected("Credential rejected; register again with a new token") from None
+            if exc.code in (404, 409):
+                raise JobRejected("Job no longer available") from None
             raise AgentConnectionError("Controller request failed (HTTP %d)" % exc.code) from None
         except (OSError, ValueError, urllib.error.URLError):
             raise AgentConnectionError("Unable to contact Controller or invalid response") from None

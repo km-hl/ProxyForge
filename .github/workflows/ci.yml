@@ -48,7 +48,7 @@ jobs:
         run: python -m unittest discover -s tests -v
 
       - name: Compile application
-        run: python -m py_compile main.py network_config.py mihomo_compat.py template_store.py control_store.py agent_api.py agent/main.py agent/client.py agent/system_info.py scripts/check_mihomo.py scripts/download_mihomo.py scripts/generate_ci_config.py
+        run: python -m compileall -q main.py network_config.py mihomo_compat.py template_store.py control_store.py agent_api.py job_store.py job_api.py agent scripts
 
       - name: Check Agent installer syntax
         run: bash -n agent/install.sh

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { agentStatusLabel } = require('../static/agents.js');
+const { agentStatusLabel, agentCanRunJobs } = require('../static/agents.js');
 
 test('inventory separates online state, compatibility and supported platform', () => {
     const agent = { status: 'online', compatible: true, metadata: { supported: true } };
@@ -11,4 +11,18 @@ test('inventory separates online state, compatibility and supported platform', (
     assert.match(agentStatusLabel(agent), /未支持/);
     agent.status = 'revoked';
     assert.match(agentStatusLabel(agent), /已撤销/);
+});
+
+test('jobs require explicit capability and a non-revoked compatible Agent', () => {
+    const agent = { status: 'online', compatible: true, metadata: {} };
+    assert.equal(agentCanRunJobs(agent), false);
+    agent.metadata.job_protocol_version = 1;
+    assert.equal(agentCanRunJobs(agent), true);
+    agent.metadata.job_protocol_version = 2;
+    assert.equal(agentCanRunJobs(agent), false);
+    agent.metadata.job_protocol_version = 1;
+    agent.status = 'revoked';
+    assert.equal(agentCanRunJobs(agent), false);
+    agent.status = 'online'; agent.compatible = false;
+    assert.equal(agentCanRunJobs(agent), false);
 });
