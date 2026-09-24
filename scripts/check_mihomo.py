@@ -64,9 +64,18 @@ def matches(case, code, output):
     return "test failed" in output and case["error_contains"] in output
 
 
-def check(binary, fixtures, log_dir, timeout):
+def check(binary, fixtures, log_dir, timeout, generated_configs=()):
     release = json.loads((FIXTURES / "release.json").read_text(encoding="utf-8"))
     cases = load_cases(fixtures)
+    inputs = [(case, (fixtures / case["file"]).resolve(), Path(case["file"]).stem) for case in cases]
+    for index, generated in enumerate(generated_configs):
+        generated = generated.resolve()
+        # Mihomo creates a default config for a missing -f path. Never let a
+        # failed generation step turn into a false-positive parser result.
+        if not generated.is_file() or not generated.stat().st_size:
+            raise ValueError(f"Generated configuration missing or empty: {generated}")
+        case = {"file": "generated/" + generated.name, "exit_code": 0}
+        inputs.append((case, generated, f"generated-{index}-{generated.stem}"))
     binary, log_dir = binary.resolve(), log_dir.resolve()
     log_dir.mkdir(parents=True, exist_ok=True)
     results = []
@@ -79,16 +88,15 @@ def check(binary, fixtures, log_dir, timeout):
             print(f"FAIL: expected Mihomo {release['version']}\n{version}")
             return 1
         print(version.strip())
-        for case in cases:
-            fixture = (fixtures / case["file"]).resolve()
+        for case, fixture, log_name in inputs:
             # Each process gets an empty home; no downloaded geodata/provider
             # cache from a previous case can hide an accidental dependency.
-            home = root / fixture.stem
+            home = root / log_name
             home.mkdir()
             command = [str(binary), "-t", "-d", str(home), "-f", str(fixture)]
             code, output = invoke(command, home, timeout)
             passed = matches(case, code, output)
-            (log_dir / (fixture.stem + ".log")).write_text(
+            (log_dir / (log_name + ".log")).write_text(
                 f"command: {json.dumps(command)}\nexit_code: {code}\n{output}", encoding="utf-8")
             results.append({"file": case["file"], "expected_exit_code": case["exit_code"],
                             "actual_exit_code": code, "passed": passed})
@@ -105,13 +113,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", required=True, type=Path)
     parser.add_argument("--fixtures", type=Path, default=FIXTURES)
+    parser.add_argument("--generated-config", type=Path, action="append", default=[],
+                        help="Also test this actual generator output; may be repeated")
     parser.add_argument("--log-dir", type=Path, default=Path("test-results/mihomo"))
     parser.add_argument("--timeout", type=float, default=30)
     args = parser.parse_args()
     if not 0 < args.timeout <= 300:
         parser.error("--timeout must be between 0 (exclusive) and 300 seconds")
     try:
-        return check(args.binary, args.fixtures, args.log_dir, args.timeout)
+        return check(args.binary, args.fixtures, args.log_dir, args.timeout, args.generated_config)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         print(f"Mihomo test setup failed: {exc}")
         return 1

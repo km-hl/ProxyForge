@@ -101,7 +101,7 @@ docker compose exec proxyforge python -c "import json; print(json.load(open('/ap
 
 更新版本的协议栈或高级 Filter 模式会保留并标注兼容性范围；本服务无法获知每个客户端的内核版本，也不替代 Mihomo 完整配置解析。默认/空值语义参照固定版本源码与 YAML 解码规则，尚不等价于逐版本二进制验收。
 
-开发 CI 另设 Mihomo 兼容性任务：下载固定的官方 **v1.19.31 Linux amd64** 二进制并校验 SHA256，在隔离外网的环境中对配置正反例执行真实 `-t` 解析测试。Python 测试使用同一组 fixtures 验证静态结论，并记录为了保留未来字段而允许的差异。目前尚未将实际订阅生成结果接入真实内核测试。运行方式与覆盖边界见 [Mihomo 测试说明](tests/mihomo/README.md)。解析通过不代表所有用户配置、客户端平台或实际网络行为均已验证。
+开发 CI 另设 Mihomo 兼容性任务：下载固定的官方 **v1.19.31 Linux amd64** 二进制并校验 SHA256，在隔离外网的环境中对配置正反例执行真实 `-t` 解析测试。Python 测试使用同一组 fixtures 验证静态结论，并记录为了保留未来字段而允许的差异。CI 还会在临时应用目录中真实调用 `build_subscription_config()`，将测试模板、自建节点、代理组、DNS 与 TUN 生成的 YAML 交给同一内核解析；不会读取开发者的 `.env` 或运行数据。运行方式与覆盖边界见 [Mihomo 测试说明](tests/mihomo/README.md)。解析通过不代表所有用户配置、客户端平台或实际网络行为均已验证。
 
 这些配置用于降低 DNS 泄露风险，实际结果仍受操作系统、浏览器、客户端覆盖配置及网络环境影响。预设 Bootstrap 包含明文 DNS；配置 DoH 不等于所有查询均加密或经代理。关闭 IPv6 DNS 不等于关闭系统 IPv6。Strict Route 依赖 auto-route，可能影响部分应用；服务器不会修改客户端的路由、防火墙或 TUN 权限。
 
