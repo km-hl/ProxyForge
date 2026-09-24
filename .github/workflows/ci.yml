@@ -57,6 +57,7 @@ jobs:
           node --check static/app.js
           node --check static/network-settings.js
           node --check static/template-session.js
+          node --check static/template-history.js
 
       - name: Run frontend behavior tests
         run: node --test tests/rule_order.test.js tests/html_security.test.js tests/network_settings.test.js tests/template_session.test.js

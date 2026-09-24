@@ -8,9 +8,12 @@ import json
 import urllib.parse
 import re
 import ipaddress
+from functools import wraps
+from template_store import TemplateStore, TemplateConflict, ConfigurationTooLarge, MAX_TEMPLATE_BYTES
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, HTTPException, Query, Header, Depends, Body, Request
 from fastapi.responses import PlainTextResponse, FileResponse, Response
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from cachetools import cached, TTLCache
 from typing import List, Dict, Any
@@ -139,6 +142,44 @@ subscription_cache = TTLCache(maxsize=1, ttl=12 * 60 * 60)
 
 # ================= 核心读写逻辑 =================
 
+def template_store():
+    return TemplateStore(TEMPLATE_PATH, os.environ.get("TEMPLATE_HISTORY_LIMIT", "30"))
+
+
+def configuration_locked(function):
+    @wraps(function)
+    def wrapper(*args, **kwargs):
+        try:
+            with template_store().locked():
+                return function(*args, **kwargs)
+        except OSError:
+            raise HTTPException(status_code=503, detail={"code": "storage_unavailable",
+                "message": "存储暂不可用，提交状态待核对；请恢复存储后重新读取，勿直接重试覆盖"})
+    return wrapper
+
+
+@app.exception_handler(TemplateConflict)
+async def template_conflict_handler(request, exc):
+    return JSONResponse(status_code=409, content={"detail": {
+        "code": "template_conflict", "message": "模板已被其他会话修改",
+        "current_revision": exc.current["revision"], "current_content": exc.current["content"]}})
+
+
+@app.exception_handler(ConfigurationTooLarge)
+async def configuration_size_handler(request, exc):
+    return JSONResponse(status_code=413, content={"detail": "Configuration exceeds 1 MiB"})
+
+
+def require_revision(value):
+    if value is None:
+        raise HTTPException(status_code=428, detail={"code": "revision_required",
+                            "message": "请刷新页面读取模板版本后重试"})
+    if not re.fullmatch(r"[a-f0-9]{64}", value):
+        raise HTTPException(status_code=422, detail="Invalid expected_revision")
+    template_store().expect(value)
+
+
+@configuration_locked
 def load_airports() -> List[str]:
     # 兼容性迁移逻辑：如果还没创建 airports.yaml，但 .env 里有旧的 AIRPORT_SUB_URL
     if not os.path.exists(AIRPORTS_PATH):
@@ -160,6 +201,7 @@ def save_airports(urls: List[str]):
     with open(AIRPORTS_PATH, "w", encoding="utf-8") as f:
         yaml.dump(urls, f, allow_unicode=True, sort_keys=False)
 
+@configuration_locked
 def load_custom_nodes() -> List[Dict[str, Any]]:
     initialize_custom_nodes_storage()
     if not os.path.exists(CUSTOM_NODES_PATH):
@@ -233,6 +275,7 @@ def save_custom_nodes(nodes: List[Dict[str, Any]]):
     with open(CUSTOM_NODES_PATH, "w", encoding="utf-8") as f:
         yaml.dump(cleaned_nodes, f, allow_unicode=True, sort_keys=False)
 
+@configuration_locked
 def load_template_content() -> str:
     if not initialize_template_storage():
         return ""
@@ -240,9 +283,7 @@ def load_template_content() -> str:
         return f.read()
 
 def save_template_content(content: str):
-    os.makedirs(os.path.dirname(TEMPLATE_PATH), exist_ok=True)
-    with open(TEMPLATE_PATH, "w", encoding="utf-8") as f:
-        f.write(content)
+    return template_store().commit({"template.yaml": content})
 
 def save_cache_to_file(proxies: List[Dict[str, Any]]):
     try:
@@ -1436,6 +1477,7 @@ def cleanup_proxy_group_references(
     result["total"] = len(result["proxyReferences"]) + len(result["providerReferences"])
     return result
 
+@configuration_locked
 def cleanup_runtime_template_references() -> Dict[str, Any]:
     content = load_template_content()
     if not content:
@@ -1878,9 +1920,8 @@ def get_airports():
 class AirportsModel(BaseModel):
     urls: List[Any]
 
-@app.post("/api/airports", dependencies=[Depends(verify_api_token)])
-def update_airports(data: AirportsModel):
-    for index, item in enumerate(data.urls, 1):
+def check_airport_urls(urls):
+    for index, item in enumerate(urls, 1):
         url = item.get("url", "") if isinstance(item, dict) else item
         if not isinstance(url, str) or not url.strip():
             raise HTTPException(status_code=400, detail=f"机场 [{index}] 缺少订阅地址")
@@ -1892,6 +1933,12 @@ def update_airports(data: AirportsModel):
                 detail=f"机场 [{index}] 订阅地址不安全: {exc}",
             ) from exc
 
+
+@app.post("/api/airports", dependencies=[Depends(verify_api_token)])
+@configuration_locked
+def update_airports(data: AirportsModel):
+    check_airport_urls(data.urls)
+
     old_airports = load_airports()
     new_provider_keys = {
         get_airport_name(item, index).lower() for index, item in enumerate(data.urls)
@@ -1900,6 +1947,7 @@ def update_airports(data: AirportsModel):
         get_airport_name(item, index) for index, item in enumerate(old_airports)
         if get_airport_name(item, index).lower() not in new_provider_keys
     ]
+    updates = {}
     cleanup_result = {"proxyReferences": [], "providerReferences": [], "total": 0}
     if removed_provider_names:
         try:
@@ -1911,12 +1959,11 @@ def update_airports(data: AirportsModel):
             removed_provider_names=removed_provider_names,
         )
         if cleanup_result["total"]:
-            save_template_content(
-                yaml.safe_dump(template_config, allow_unicode=True, sort_keys=False)
-            )
-    save_airports(data.urls)
+            updates["template.yaml"] = yaml.safe_dump(template_config, allow_unicode=True, sort_keys=False)
+    updates["airports.yaml"] = yaml.safe_dump(data.urls, allow_unicode=True, sort_keys=False)
+    snapshot = template_store().commit(updates, source="update_airports")
     subscription_cache.clear()
-    return {"status": "ok", "cleanedReferences": cleanup_result["total"]}
+    return {"status": "ok", "cleanedReferences": cleanup_result["total"], "template_revision": snapshot["revision"]}
 
 @app.get("/api/airports/info", dependencies=[Depends(verify_api_token)])
 def get_airports_info(force_indices: str = ""):
@@ -1976,6 +2023,7 @@ class NodesModel(BaseModel):
     nodes: List[Dict[str, Any]]
 
 @app.post("/api/nodes", dependencies=[Depends(verify_api_token)])
+@configuration_locked
 def update_nodes(data: NodesModel):
     errors = validate_proxy_nodes(data.nodes, location="nodes")
     if errors:
@@ -1989,6 +2037,7 @@ def update_nodes(data: NodesModel):
         if isinstance(proxy, dict) and proxy.get("name")
     }
     removed_names = old_names - new_names
+    updates = {}
     cleanup_result = {"proxyReferences": [], "providerReferences": [], "total": 0}
     if removed_names:
         try:
@@ -2000,18 +2049,32 @@ def update_nodes(data: NodesModel):
             removed_proxy_names=removed_names,
         )
         if cleanup_result["total"]:
-            save_template_content(
-                yaml.safe_dump(template_config, allow_unicode=True, sort_keys=False)
-            )
-    save_custom_nodes(data.nodes)
-    return {"status": "ok", "cleanedReferences": cleanup_result["total"]}
+            updates["template.yaml"] = yaml.safe_dump(template_config, allow_unicode=True, sort_keys=False)
+    updates["custom_nodes.yaml"] = yaml.safe_dump([strip_internal_proxy_fields(n) for n in data.nodes], allow_unicode=True, sort_keys=False)
+    snapshot = template_store().commit(updates, source="update_nodes")
+    return {"status": "ok", "cleanedReferences": cleanup_result["total"], "template_revision": snapshot["revision"]}
 
 @app.get("/api/template", dependencies=[Depends(verify_api_token)])
+@configuration_locked
 def get_template():
-    return {"content": load_template_content()}
+    return template_store().snapshot()
 
 class TemplateModel(BaseModel):
     content: str
+
+
+class TemplateSaveModel(TemplateModel):
+    expected_revision: str = None
+
+
+class TemplateRestoreModel(BaseModel):
+    expected_revision: str = None
+
+
+class ImportModel(TemplateSaveModel):
+    nodes: List[Dict[str, Any]]
+    urls: List[Any]
+
 
 @app.post("/api/template/validate", dependencies=[Depends(verify_api_token)])
 def validate_template(data: TemplateModel):
@@ -2035,14 +2098,23 @@ def validate_template(data: TemplateModel):
     return result
 
 @app.post("/api/template", dependencies=[Depends(verify_api_token)])
-def update_template(data: TemplateModel):
+@configuration_locked
+def update_template(data: TemplateSaveModel):
+    require_revision(data.expected_revision)
+    validate_saved_template(data.content, load_custom_nodes(), load_airports())
+    return {"status": "ok", **save_template_content(data.content)}
+
+
+def validate_saved_template(content, nodes, airports):
+    if len(content.encode("utf-8")) > MAX_TEMPLATE_BYTES:
+        raise HTTPException(status_code=413, detail="Template exceeds 1 MiB")
     try:
-        config = yaml.safe_load(data.content)
+        config = yaml.safe_load(content)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"YAML 格式错误: {e}")
-    provider_names = [get_airport_name(item, index) for index, item in enumerate(load_airports())]
+    provider_names = [get_airport_name(item, index) for index, item in enumerate(airports)]
     custom_names = [
-        proxy.get("name") for proxy in load_custom_nodes()
+        proxy.get("name") for proxy in nodes
         if isinstance(proxy, dict) and proxy.get("name")
     ]
     errors = validate_mihomo_config(
@@ -2053,8 +2125,49 @@ def update_template(data: TemplateModel):
     )
     if errors:
         raise HTTPException(status_code=400, detail={"message": "Mihomo 配置校验失败", "errors": errors})
-    save_template_content(data.content)
-    return {"status": "ok"}
+
+
+@app.get("/api/template/history", dependencies=[Depends(verify_api_token)])
+def template_history():
+    return {"entries": template_store().list_history()}
+
+
+@app.get("/api/template/history/{entry_id}", dependencies=[Depends(verify_api_token)])
+def template_history_entry(entry_id: str):
+    try:
+        return template_store().history_entry(entry_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="History entry not found")
+
+
+@app.post("/api/template/history/{entry_id}/restore", dependencies=[Depends(verify_api_token)])
+@configuration_locked
+def restore_template(entry_id: str, data: TemplateRestoreModel):
+    require_revision(data.expected_revision)
+    entry = template_history_entry(entry_id)
+    validate_saved_template(entry["content"], load_custom_nodes(), load_airports())
+    return {"status": "ok", **template_store().commit(
+        {"template.yaml": entry["content"]}, source="restore")}
+
+
+@app.post("/api/template/import", dependencies=[Depends(verify_api_token)])
+@configuration_locked
+def import_template(data: ImportModel):
+    require_revision(data.expected_revision)
+    errors = validate_proxy_nodes(data.nodes, location="nodes")
+    if errors:
+        raise HTTPException(status_code=400, detail={"message": "节点配置校验失败", "errors": errors})
+    check_airport_urls(data.urls)
+    validate_saved_template(data.content, data.nodes, data.urls)
+    snapshot = template_store().commit({
+        "template.yaml": data.content,
+        "custom_nodes.yaml": yaml.safe_dump([strip_internal_proxy_fields(n) for n in data.nodes],
+                                            allow_unicode=True, sort_keys=False),
+        "airports.yaml": yaml.safe_dump(data.urls, allow_unicode=True, sort_keys=False),
+    }, source="import")
+    subscription_cache.clear()
+    return {"status": "ok", **snapshot}
+
 
 import asyncio
 from cachetools.keys import hashkey

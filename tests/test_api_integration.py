@@ -322,16 +322,16 @@ class ApiIntegrationTest(unittest.TestCase):
         with (
             patch.object(self.app_module, "load_airports", return_value=[]),
             patch.object(self.app_module, "load_custom_nodes", return_value=[]),
-            patch.object(self.app_module, "save_template_content") as save_template,
+            patch.object(self.app_module, "save_template_content", wraps=self.app_module.save_template_content) as save_template,
         ):
             response = self.client.post(
                 "/api/template",
                 headers={"Authorization": f"Bearer {TEST_ADMIN_TOKEN}"},
-                json={"content": template},
+                json={"content": template, "expected_revision": self.app_module.template_store().snapshot()["revision"]},
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"status": "ok"})
+        self.assertEqual(response.json()["status"], "ok")
         save_template.assert_called_once_with(template)
 
     def test_network_validation_is_authenticated_and_never_writes(self):
@@ -349,7 +349,7 @@ class ApiIntegrationTest(unittest.TestCase):
         original = path.read_text(encoding="utf-8")
         response = self.client.post("/api/template",
             headers={"Authorization": f"Bearer {TEST_ADMIN_TOKEN}"},
-            json={"content": "dns:\n  respect-rules: true\n"})
+            json={"content": "dns:\n  respect-rules: true\n", "expected_revision": self.app_module.template_store().snapshot()["revision"]})
         self.assertEqual(response.status_code, 400)
         self.assertIn("errors", response.json()["detail"])
         self.assertEqual(path.read_text(encoding="utf-8"), original)
@@ -374,8 +374,8 @@ class ApiIntegrationTest(unittest.TestCase):
             self.assertEqual(report["baseline"], "Mihomo v1.19.31")
             self.assertFalse(report["errors"])
             self.assertTrue(report["warnings"])
-            response = self.client.post("/api/template", headers=headers, json={"content": content})
-            self.assertEqual(response.json(), {"status": "ok"})
+            response = self.client.post("/api/template", headers=headers, json={"content": content, "expected_revision": self.app_module.template_store().snapshot()["revision"]})
+            self.assertEqual(response.json()["status"], "ok")
             actual = yaml.safe_load(self.client.get("/api/template", headers=headers).json()["content"])
             self.assertEqual(actual, config)
             subscription = self.client.get(f"/sub?token={TEST_SUBSCRIPTION_TOKEN}")
@@ -447,7 +447,7 @@ class ApiIntegrationTest(unittest.TestCase):
             )
 
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.json(), {"status": "ok"})
+            self.assertEqual(response.json()["status"], "ok")
             config = json.loads(
                 Path(self.app_module.RUNTIME_CONFIG_PATH).read_text(encoding="utf-8")
             )
