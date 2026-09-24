@@ -68,7 +68,10 @@ function renderTemplateViews() {
         try { render(); } catch (_) { /* Raw YAML remains available for repair. */ }
     }
 }
-function installTemplate(content) {
+function installTemplate(snapshot) {
+    const { content, revision } = snapshot;
+    state.templateRevision = revision;
+    templateSession.setBaseline(snapshot);
     state.templateRaw = content;
     rulesEditor.value = content;
     try {
@@ -86,7 +89,7 @@ function installTemplate(content) {
     ProxyForgeNetwork.render(state.templateObj, true);
 }
 async function readTemplate() {
-    return (await (await fetchAuth('/template')).json()).content;
+    return (await fetchAuth('/template')).json();
 }
 async function validateTemplateText(content) {
     return (await fetchAuth('/template/validate', {
@@ -95,7 +98,7 @@ async function validateTemplateText(content) {
 }
 const templateSession = ProxyForgeTemplateSession.create({
     parse: parseTemplate, read: readTemplate, validate: validateTemplateText,
-    write: content => fetchAuth('/template', { method: 'POST', body: JSON.stringify({ content }) }),
+    write: async (content, expected_revision) => (await fetchAuth('/template', { method: 'POST', body: JSON.stringify({ content, expected_revision }) })).json(),
     install: installTemplate,
 });
 ProxyForgeNetwork.init({
@@ -131,6 +134,7 @@ function showToast(msg, type = 'success') {
 
 // === Modal Logic ===
 function openModal(title, htmlContent, onConfirm) {
+    modalConfirm.textContent = '确认';
     modalReturnFocus = document.activeElement;
     modalTitle.textContent = title;
     modalBody.innerHTML = htmlContent;
@@ -171,9 +175,10 @@ async function fetchAuth(url, options = {}) {
     }
     if (!res.ok) {
         let message = `HTTP ${res.status}`;
+        let detail;
         try {
             const payload = await res.clone().json();
-            const detail = payload.detail;
+            detail = payload.detail;
             if (typeof detail === 'string') {
                 message = detail;
             } else if (detail && Array.isArray(detail.errors)) {
@@ -183,7 +188,7 @@ async function fetchAuth(url, options = {}) {
             const text = await res.text();
             if (text) message = text;
         }
-        throw Object.assign(new Error(message), { status: res.status });
+        throw Object.assign(new Error(message), { status: res.status, detail });
     }
     return res;
 }
@@ -1526,6 +1531,7 @@ async function saveTemplateObj(candidate = state.templateObj, source = 'other', 
         rulesEditor.readOnly = true;
         const result = await templateSession.save(content);
         if (!result.ok && source === 'other') rulesEditor.value = content;
+        if (result.conflict) showTemplateConflict(result.conflict);
         showToast(result.message || (result.report?.warnings.length ? '已保存，存在配置建议，请查看 DNS 与网络' : '已保存底层模板'), result.ok ? result.report?.warnings.length ? 'warning' : 'success' : 'error');
         return result.ok;
     } catch (error) {
@@ -1556,23 +1562,25 @@ if (globalImportBtn) {
                 let parsed = parseTemplate(raw);
                 externalTemplateBusy = true; locked = true; rulesEditor.readOnly = true;
 
+                let importedNodes = [];
+                let importedAirports = [];
                 let nodeCount = 0;
                 if (parsed.proxies && Array.isArray(parsed.proxies)) {
-                    state.nodes = parsed.proxies; // Overwrite
+                    importedNodes = parsed.proxies;
                     nodeCount = parsed.proxies.length;
                     delete parsed.proxies;
                 } else {
-                    state.nodes = []; // If no proxies, clear existing
+                    importedNodes = [];
                 }
 
                 let airportCount = 0;
-                state.airports = []; // Overwrite airports
+                importedAirports = [];
                 if (parsed['proxy-providers'] && typeof parsed['proxy-providers'] === 'object') {
                     for (const key in parsed['proxy-providers']) {
                         const provider = parsed['proxy-providers'][key];
                         if (provider && provider.type === 'http' && provider.url) {
-                            if (!state.airports.find(a => a.url === provider.url)) {
-                                state.airports.push({ name: key, url: provider.url });
+                            if (!importedAirports.find(a => a.url === provider.url)) {
+                                importedAirports.push({ name: key, url: provider.url });
                                 airportCount++;
                             }
                         }
@@ -1581,35 +1589,19 @@ if (globalImportBtn) {
                 }
                 const importedTemplateRaw = jsyaml.dump(parsed);
 
-                // Save everything
-                await fetchAuth('/nodes', {
-                    method: 'POST',
-                    body: JSON.stringify({ nodes: state.nodes })
+                const response = await fetchAuth('/template/import', {
+                    method: 'POST', body: JSON.stringify({ content: importedTemplateRaw,
+                        expected_revision: state.templateRevision, nodes: importedNodes, urls: importedAirports })
                 });
-                renderNodes();
-
-                await fetchAuth('/airports', {
-                    method: 'POST',
-                    body: JSON.stringify({ urls: state.airports })
-                });
-                // Fetch info after overwrite
-                fetchAuth('/airports/info?force_indices=all').then(res => res.json()).then(data => {
-                    state.airportsInfo = data.info || [];
-                    renderAirports();
-                });
-                
-                const result = await templateSession.save(importedTemplateRaw);
-                if (!result.ok) throw new Error(result.message);
-
+                installTemplate(await response.json());
+                state.nodes = importedNodes;
+                state.airports = importedAirports;
+                renderNodes(); renderAirports();
                 closeModal();
                 showToast(`全局导入覆盖成功！提取 ${nodeCount} 个节点，${airportCount} 个机场，并更新底层配置。`);
             } catch (e) {
-                // Import is intentionally not a transaction across three files.
-                // Re-read the actual template if preceding writes cleaned references.
-                if (locked) {
-                    try { installTemplate(await readTemplate()); } catch (_) { /* retain the known snapshot */ }
-                }
-                alert('导入未完成（部分节点/机场可能已保存）: ' + e.message);
+                // Keep the import textarea and every existing draft on errors.
+                alert('导入未确认，已保留草稿。请重新读取服务器状态后核对：' + e.message);
             } finally { if (locked) { externalTemplateBusy = false; rulesEditor.readOnly = false; } }
         });
 

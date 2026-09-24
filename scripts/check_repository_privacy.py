@@ -14,6 +14,7 @@ FORBIDDEN_TRACKED_FILES = {
     "HANDOFF.md",
     "AGENTS.md",
     "CLAUDE.md",
+    "MEMORY.md",
     "custom_nodes.yaml",
     "template.yaml",
     "docs/NETWORK_SETTINGS_PLAN.md",

@@ -4,15 +4,16 @@ const { create } = require('../static/template-session.js');
 const valid = { errors: [], warnings: [], info: [] };
 function setup(overrides = {}) {
     let server = '{}'; const installed = []; const writes = [];
-    const session = create({ parse: JSON.parse, read: async () => server,
-        write: async text => { writes.push(text); server = text; },
-        validate: async () => valid, install: text => installed.push(text), ...overrides });
+    const session = create({ parse: JSON.parse, read: async () => ({ content: server, revision: 'r0' }),
+        write: async text => { writes.push(text); server = text; return { content: text, revision: 'r1' }; },
+        validate: async () => valid, install: snapshot => installed.push(snapshot.content), ...overrides });
+    session.setBaseline({ content: '{}', revision: 'r0' });
     return { session, installed, writes };
 }
-test('save installs only after the server confirms and rereads actual content', async () => {
+test('save installs the snapshot and revision returned by the server', async () => {
     const s = setup();
     assert.equal((await s.session.save('{"dns":{}}')).ok, true);
-    assert.deepEqual(s.installed, ['{"dns":{}}', '{"dns":{}}']);
+    assert.deepEqual(s.installed, ['{"dns":{}}']);
 });
 test('validation error preserves authoritative state and never writes', async () => {
     const s = setup({ validate: async () => ({ ...valid, errors: [{ path: 'dns', message: 'invalid' }] }) });
@@ -33,7 +34,7 @@ test('HTTP rejection including expired auth does not install', async () => {
 test('lost response reconciles successfully stored content', async () => {
     const s = setup({ write: async () => { throw new Error('connection lost'); } });
     assert.equal((await s.session.save('{}')).ok, true);
-    assert.deepEqual(s.installed, ['{}', '{}']);
+    assert.deepEqual(s.installed, ['{}']);
 });
 test('unconfirmed write does not overwrite saved snapshot', async () => {
     const s = setup({ write: async () => { throw new Error('connection lost'); } });
@@ -66,4 +67,33 @@ test('uncertain save must reconcile before retrying any POST', async () => {
     await s.session.save('{}');
     assert.equal((await s.session.save('{"dns":{}}')).uncertain, true);
     assert.equal(writes, 1);
+});
+
+test('409 preserves draft baseline across repeated saves', async () => {
+    const revisions = [];
+    const s = setup({ write: async (content, revision) => {
+        revisions.push(revision);
+        throw Object.assign(new Error('conflict'), { status: 409, detail: {
+            code: 'template_conflict', current_content: '{"other":1}', current_revision: 'r2'
+        }});
+    }});
+    assert.equal((await s.session.save('{"mine":1}')).conflict.revision, 'r2');
+    await s.session.save('{"mine":2}');
+    assert.deepEqual(revisions, ['r0', 'r0']);
+    assert.deepEqual(s.installed, []);
+});
+test('uncertain retry never rebases old draft onto a concurrent update', async () => {
+    let online = false, writes = 0;
+    const s = setup({ write: async () => { writes++; throw new Error('lost'); },
+        read: async () => { if (!online) throw new Error('offline');
+            return { content: '{"other":1}', revision: 'r2' }; } });
+    await s.session.save('{"mine":1}');
+    online = true;
+    assert.equal((await s.session.save('{"mine":1}')).conflict.revision, 'r2');
+    assert.equal(writes, 1);
+});
+test('history diff preserves text and reports unchanged content', () => {
+    const { templateDifference } = require('../static/template-history.js');
+    assert.equal(templateDifference('same', 'same'), '内容相同');
+    assert.ok(templateDifference('a', '<script>').includes('+ <script>'));
 });
