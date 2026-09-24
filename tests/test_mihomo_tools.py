@@ -16,6 +16,39 @@ from scripts import check_mihomo, download_mihomo
 
 
 class MihomoToolsTest(unittest.TestCase):
+    def test_missing_or_empty_generated_output_never_reaches_parser(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            empty = root / "empty.yaml"
+            empty.touch()
+            for path in (root / "missing.yaml", empty):
+                with patch.object(check_mihomo, "invoke") as invoke:
+                    with self.assertRaisesRegex(ValueError, "missing or empty"):
+                        check_mihomo.check(Path("mihomo"), check_mihomo.FIXTURES, root / "logs", 5, [path])
+                    invoke.assert_not_called()
+
+    def test_generated_output_is_checked_and_recorded_separately(self):
+        cases = check_mihomo.load_cases(check_mihomo.FIXTURES)
+        version = json.loads((check_mihomo.FIXTURES / "release.json").read_text())["version"]
+        replies = [(0, f"Mihomo Meta {version} linux amd64")]
+        replies += [(case["exit_code"], "test is successful" if case["exit_code"] == 0 else
+                     case["error_contains"] + "\ntest failed") for case in cases]
+        replies += [(1, "generated output invalid\ntest failed")]
+        with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
+            root = Path(directory)
+            generated = root / "minimal.yaml"  # Same basename as a fixture must not collide.
+            generated.write_text("{}", encoding="utf-8")
+            with patch.object(check_mihomo, "invoke", side_effect=replies) as invoke:
+                result = check_mihomo.check(Path("mihomo"), check_mihomo.FIXTURES, root / "logs", 5, [generated])
+                self.assertEqual(result, 1)
+                self.assertEqual(invoke.call_args.args[0][-1], str(generated.resolve()))
+            results = json.loads((root / "logs/results.json").read_text())
+            self.assertEqual(len(results), len(cases) + 1)
+            self.assertEqual(results[-1]["file"], "generated/minimal.yaml")
+            self.assertFalse(results[-1]["passed"])
+            self.assertTrue((root / "logs/minimal.log").exists())
+            self.assertTrue((root / "logs/generated-0-minimal.log").exists())
+
     def test_checked_in_manifest_covers_all_fixtures(self):
         cases = check_mihomo.load_cases(check_mihomo.FIXTURES)
         self.assertTrue(any(case["exit_code"] == 0 for case in cases))

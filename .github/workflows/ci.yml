@@ -48,7 +48,7 @@ jobs:
         run: python -m unittest discover -s tests -v
 
       - name: Compile application
-        run: python -m py_compile main.py network_config.py mihomo_compat.py scripts/check_mihomo.py scripts/download_mihomo.py
+        run: python -m py_compile main.py network_config.py mihomo_compat.py scripts/check_mihomo.py scripts/download_mihomo.py scripts/generate_ci_config.py
 
       - name: Check frontend JavaScript syntax
         run: |
@@ -85,18 +85,24 @@ jobs:
       - name: Download and verify pinned official Linux amd64 binary
         run: python scripts/download_mihomo.py --output "$RUNNER_TEMP/mihomo"
 
+      - name: Install application dependencies for the real generator
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
       - name: Confirm binary version and CLI
         run: |
           "$RUNNER_TEMP/mihomo" -v
           "$RUNNER_TEMP/mihomo" -h
 
-      - name: Check fixtures without external network access
+      - name: Generate subscription and check configurations without external network access
         # Keep loopback (including IPv6) available, but no external interface.
         # Any unexpected geodata/provider download fails instead of using the network.
         run: |
-          sudo unshare --net -- bash -euc 'ip link set lo up; exec "$@"' _ \
-            "$(command -v python)" scripts/check_mihomo.py \
-            --binary "$RUNNER_TEMP/mihomo" --log-dir test-results/mihomo
+          sudo unshare --net -- bash -euc '
+            ip link set lo up
+            "$1" scripts/generate_ci_config.py --output test-results/mihomo/generated-subscription.yaml
+            exec "$1" scripts/check_mihomo.py --binary "$2" --log-dir test-results/mihomo \
+              --generated-config test-results/mihomo/generated-subscription.yaml
+          ' _ "$(command -v python)" "$RUNNER_TEMP/mihomo"
 
       - name: Upload parser logs
         if: always()

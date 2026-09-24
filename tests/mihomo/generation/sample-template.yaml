@@ -1,0 +1,46 @@
+ipv6: true
+dns:
+  enable: true
+  enhanced-mode: fake-ip
+  ipv6: true
+  ipv6-timeout: 100
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-range6: fdfe:dcba:9876::/64
+  fake-ip-ttl: 1
+  cache-algorithm: arc
+  cache-max-size: 4096
+  respect-rules: true
+  default-nameserver: [192.0.2.53]
+  nameserver: [192.0.2.53]
+  proxy-server-nameserver: [192.0.2.54]
+  proxy-server-nameserver-policy:
+    '+.node.test': 192.0.2.54
+  nameserver-policy:
+    'rule-set:local-domains': [192.0.2.53]
+tun:
+  enable: true
+  stack: mixed
+  auto-route: true
+  auto-detect-interface: true
+  strict-route: true
+  dns-hijack: ['any:53', 'tcp://any:53']
+  route-exclude-address: [192.0.2.0/24]
+proxy-groups:
+  - name: CI Proxy
+    type: select
+    use: [_custom_nodes_]
+    proxies: [DIRECT]
+    default: HK CI SOCKS
+rule-providers:
+  local-domains:
+    type: inline
+    behavior: domain
+    payload: ['+.internal.test']
+rules:
+  - DOMAIN,proxy-check.test,HK CI SOCKS
+  - RULE-SET,local-domains,DIRECT
+  - MATCH,CI Proxy
+hosts:
+  local.test: 127.0.0.1
+profile:
+  store-selected: true
