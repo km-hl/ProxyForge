@@ -67,6 +67,9 @@
                 <div class="sidebar-item" data-panel="panel-raw">
                     🛠️ <span>底层配置兜底</span>
                 </div>
+                <div class="sidebar-item" data-panel="panel-agents">
+                    🖥️ <span>Agent 服务器</span>
+                </div>
                 <div class="sidebar-item" data-panel="panel-preview">
                     👁️ <span>最终订阅预览</span>
                 </div>
@@ -242,6 +245,17 @@
                 </div>
 
                 <!-- 最终订阅预览 (Preview) -->
+                <div class="section-panel" id="panel-agents">
+                    <div class="card">
+                        <div class="card-title">🖥️ Agent 服务器</div>
+                        <p>Agent 主动通过 HTTPS 上报状态，无需开放入站 API 端口。当前提供注册与状态管理；角色仅作标记。</p>
+                        <p>连接来源 IP 可能是 NAT 或代理地址，不代表节点连接地址。<a href="https://github.com/km-hl/ProxyForge/blob/master/agent/README.md" target="_blank" rel="noopener noreferrer">安装与恢复说明</a></p>
+                        <button class="btn btn-primary" id="agent-add-btn">添加服务器</button>
+                        <button class="btn" id="agent-refresh-btn">刷新状态</button>
+                        <div id="agent-list" style="overflow:auto" aria-live="polite"></div>
+                    </div>
+                </div>
+
                 <div class="section-panel" id="panel-preview">
                     <div class="card" style="flex: 1; display: flex; flex-direction: column;">
                         <div class="card-title">👁️ 最终订阅预览 (Final Preview)</div>
@@ -285,5 +299,6 @@
     <script src="/static/network-settings.js"></script>
     <script src="/static/app.js"></script>
     <script src="/static/template-history.js"></script>
+    <script src="/static/agents.js"></script>
 </body>
 </html>

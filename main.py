@@ -8,8 +8,11 @@ import json
 import urllib.parse
 import re
 import ipaddress
+from pathlib import Path
 from functools import wraps
 from template_store import TemplateStore, TemplateConflict, ConfigurationTooLarge, MAX_TEMPLATE_BYTES
+from control_store import ControlStore
+from agent_api import attach_agent_routes
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, HTTPException, Query, Header, Depends, Body, Request
 from fastapi.responses import PlainTextResponse, FileResponse, Response
@@ -2171,6 +2174,14 @@ def import_template(data: ImportModel):
 
 import asyncio
 from cachetools.keys import hashkey
+
+
+def control_store():
+    # No database initialization during import or subscription generation.
+    return ControlStore(Path(DATA_DIR) / "proxyforge.db")
+
+
+attach_agent_routes(app, verify_api_token, control_store)
 
 # ================= 后台定时刷新任务 =================
 

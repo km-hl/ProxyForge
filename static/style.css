@@ -444,6 +444,12 @@ body {
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
+.agent-table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 0.875rem; }
+.agent-table th, .agent-table td { padding: 12px 10px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+.agent-table th { white-space: nowrap; color: var(--text-secondary); }
+.agent-table td { min-width: 100px; max-width: 280px; overflow-wrap: anywhere; }
+.agent-table td:last-child { min-width: 150px; }
+.agent-table .btn { margin: 2px; padding: 6px 10px; }
 .badge-select { background: #eef1ff; color: var(--primary); }
 .badge-url-test { background: #f3e5f5; color: #7b1fa2; }
 .badge-fallback { background: #fff3e0; color: #e65100; }

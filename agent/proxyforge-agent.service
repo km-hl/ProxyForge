@@ -1,0 +1,25 @@
+[Unit]
+Description=ProxyForge inventory Agent
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=proxyforge-agent
+Group=proxyforge-agent
+WorkingDirectory=/opt/proxyforge-agent
+ExecStart=/usr/bin/python3 -m agent.main --config /etc/proxyforge-agent/config.json run
+Restart=on-failure
+RestartSec=10
+RestartPreventExitStatus=4
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/etc/proxyforge-agent
+
+[Install]
+WantedBy=multi-user.target
