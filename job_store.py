@@ -3,6 +3,7 @@ import hmac
 import json
 import secrets
 import uuid
+from agent.runtime_spec import RUNTIME_ACTIONS, revision, validate_action
 
 JOB_PROTOCOL_VERSION = 1
 LEASE_SECONDS = 60
@@ -61,16 +62,24 @@ class JobStoreMixin:
             raise JobConflict()
         return row
 
-    def create_job(self, agent_id, request_id):
+    def create_job(self, agent_id, request_id, action='singbox.status', payload=None):
         from control_store import CapacityExceeded
+        payload = {} if payload is None else payload
+        if action != 'singbox.status':
+            validate_action(action, payload)
+        elif payload:
+            raise ValueError('Status takes no arguments')
         now = self.clock()
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            self._job_agent(db, agent_id)
+            agent = self._job_agent(db, agent_id)
+            self._runtime_capability(agent, action)
             self._expire_jobs(db, agent_id)
             existing = db.execute("SELECT * FROM jobs WHERE agent_id=? AND request_id=?",
                                   (agent_id, request_id)).fetchone()
             if existing:
+                if existing['type'] != action or json.loads(existing['payload']) != payload:
+                    raise JobConflict()
                 return self._job_view(existing)
             # Retain idempotency keys/results for seven days, with a hard global cap.
             db.execute("DELETE FROM jobs WHERE status IN ('success','failed','cancelled') AND finished_at<?",
@@ -80,9 +89,10 @@ class JobStoreMixin:
                     (agent_id,)).fetchone()[0] >= 20:
                 raise CapacityExceeded()
             job_id = uuid.uuid4().hex
-            db.execute("""INSERT INTO jobs(id,agent_id,request_id,type,payload,status,created_at,deadline)
-                VALUES(?,?,?,'singbox.status','{}','pending',?,?)""",
-                       (job_id, agent_id, request_id, now, now + JOB_TTL))
+            deployment_revision = revision(job_id, action, payload) if action in RUNTIME_ACTIONS else None
+            db.execute("""INSERT INTO jobs(id,agent_id,request_id,type,payload,deployment_revision,status,created_at,deadline)
+                VALUES(?,?,?,?,?,?,'pending',?,?)""",
+                       (job_id, agent_id, request_id, action, json.dumps(payload), deployment_revision, now, now + JOB_TTL))
             self._audit(db, "job_created", agent_id)
             return self._job_view(db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
 
@@ -127,6 +137,7 @@ class JobStoreMixin:
                              (agent_id,)).fetchone()
             if not row:
                 return None
+            self._runtime_capability(agent, row['type'])
             lease = secrets.token_urlsafe(32)
             db.execute("""UPDATE jobs SET status='assigned',attempts=attempts+1,assigned_at=?,
                 lease_hash=?,lease_until=? WHERE id=?""",
@@ -136,15 +147,22 @@ class JobStoreMixin:
             result["job_protocol_version"] = JOB_PROTOCOL_VERSION
             return result
 
-    def report_job(self, token, job_id, lease, result=None):
+    def _runtime_capability(self, agent, action):
+        if action in RUNTIME_ACTIONS:
+            metadata = json.loads(agent['metadata'])
+            if metadata.get('runtime_protocol_version') != 1 or metadata.get('supported') is not True:
+                raise JobConflict()
+
+    def report_job(self, token, job_id, lease, result=None, renew=False):
         from control_store import digest
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             agent_id = self._authenticate(db, token)
-            self._job_agent(db, agent_id)
+            agent = self._job_agent(db, agent_id)
             row = db.execute("SELECT * FROM jobs WHERE id=? AND agent_id=?", (job_id, agent_id)).fetchone()
             if not row:
                 raise JobNotFound()
+            self._runtime_capability(agent, row['type'])
             if not row["lease_hash"] or not hmac.compare_digest(row["lease_hash"], digest(lease)):
                 raise JobConflict()
             encoded = json.dumps(result, sort_keys=True) if result is not None else None
@@ -155,6 +173,10 @@ class JobStoreMixin:
                 raise JobConflict()
             if row["lease_until"] <= self.clock() or row["deadline"] <= self.clock():
                 raise JobConflict()
+            if renew:
+                until = min(self.clock() + LEASE_SECONDS, row['deadline'])
+                db.execute('UPDATE jobs SET lease_until=? WHERE id=?', (until, job_id))
+                return {'lease_until': until}
             if result is None:
                 db.execute("UPDATE jobs SET status='running',started_at=COALESCE(started_at,?) WHERE id=?",
                            (self.clock(), job_id))

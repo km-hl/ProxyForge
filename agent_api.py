@@ -66,6 +66,7 @@ class AgentMetadata(Payload):
     agent_version: ShortText
     protocol_version: StrictInt = Field(ge=1, le=1000)
     job_protocol_version: StrictInt = Field(default=0, ge=0, le=1000)
+    runtime_protocol_version: StrictInt = Field(default=0, ge=0, le=1000)
     uptime: StrictInt = Field(default=0, ge=0)
     addresses: list[ShortText] = Field(default_factory=list, max_length=16)
     supported: StrictBool = False

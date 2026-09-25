@@ -1,10 +1,11 @@
-# ProxyForge reference Agent (B2)
+# ProxyForge reference Agent (B3)
 
 This standard-library Python Agent sends inventory and pulls allowlisted jobs.
-It opens no listening socket. B2 supports only `singbox.status`, a read-only
-probe of the independent ProxyForge runtime. It installs no sing-box and changes
-no firewall. Inventory protocol remains version 1; job protocol is version 1.
-Upgrade the Controller before upgrading Agents; B1 Agents remain inventory-only.
+It opens no network listener. B3 optionally manages one independent sing-box
+instance through a separately enabled local Unix-socket helper. Inventory and
+job protocol remain version 1; runtime capability is version 1. Upgrade the
+Controller before Agents. B1 remains inventory-only; B2 remains read-only.
+See [B3 runtime setup and recovery](../docs/AGENT_B3.md) before enabling the helper.
 
 ## Install from inspected source
 
@@ -131,17 +132,20 @@ jobs; investigate locally before restarting. The journal is bound to Controller,
 Agent and instance identity. See [the protocol guarantees](../docs/AGENT_B2.md)
 for lease limits, crash behavior and retention; this is not exactly-once execution.
 
-For an existing B1 installation, first back up and upgrade the Controller as
-described in the B2 report. On the Agent machine, stop `proxyforge-agent.service`,
+For an existing B1/B2 installation, first back up and upgrade the Controller as
+described in the B3 report. On the Agent machine, stop `proxyforge-agent.service`,
 privately back up `/etc/proxyforge-agent`, and back up the installed Python
-package. From a verified B2 checkout, replace the five files `__init__.py`,
-`main.py`, `client.py`, `system_info.py` and `jobs.py`. Preserve root ownership and
+package. From a verified B3 checkout, install all files listed in the copy loop of
+`agent/install.sh` (including `job_lease.py`, runtime modules and the pinned JSON
+release manifest). Preserve root ownership and
 0644 modes under `/opt/proxyforge-agent/agent`, and preserve the private config
 directory, token and instance ID. Start the service and verify heartbeat plus a
 status query. Do not rerun the fresh-install script: it deliberately refuses an
 existing installation. There is no automatic in-place upgrade command.
 
 To roll back just the Agent, stop it and restore the previously backed-up package;
-the B2 Controller continues to accept B1 inventory. Keep the job journal private
-for a later B2 return. Controller rollback to B1 additionally requires restoring
+the B3 Controller continues to accept B1/B2 inventory. If reverting to B2,
+privately archive the active B3 job journal first: B2 rejects runtime entries.
+Disable the optional runtime socket/helper and cancel pending runtime jobs.
+Keep credentials and runtime files for recovery. Controller rollback to B1 requires restoring
 the pre-migration database; do not lower `schema_migrations` by hand.

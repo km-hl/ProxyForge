@@ -1,0 +1,28 @@
+[Unit]
+Description=ProxyForge managed sing-box (independent instance)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/var/lib/proxyforge-runtime/current/config.json
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=proxyforge-singbox
+Group=proxyforge-singbox
+ExecStart=/var/lib/proxyforge-runtime/current/sing-box run -c /var/lib/proxyforge-runtime/current/config.json
+WorkingDirectory=/var/lib/proxyforge-runtime
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=20
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

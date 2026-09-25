@@ -1,0 +1,13 @@
+[Unit]
+Description=ProxyForge local managed-runtime socket
+
+[Socket]
+ListenStream=/run/proxyforge-runtime.sock
+SocketUser=root
+SocketGroup=proxyforge-agent
+SocketMode=0660
+RemoveOnStop=true
+Backlog=4
+
+[Install]
+WantedBy=sockets.target

@@ -6,6 +6,7 @@ import socket
 import subprocess
 
 from . import VERSION, PROTOCOL_VERSION
+from .runtime_client import available as runtime_available
 
 SUPPORTED = {("debian", "12"), ("debian", "13"), ("ubuntu", "22.04"), ("ubuntu", "24.04")}
 
@@ -31,7 +32,7 @@ def singbox_status():
         return result
     try:
         version = subprocess.run([str(binary), "version"], capture_output=True, text=True, timeout=3)
-        result["version"] = version.stdout.splitlines()[0][:128] if version.returncode == 0 else ""
+        result["version"] = version.stdout.splitlines()[0][:128] if version.returncode == 0 and version.stdout else ""
         active = subprocess.run(["/usr/bin/systemctl", "is-active", "proxyforge-singbox.service"],
                                 capture_output=True, text=True, timeout=3)
         result["running"] = active.returncode == 0
@@ -56,6 +57,7 @@ def collect(instance_id):
     return {"instance_id": instance_id, "hostname": socket.gethostname()[:128],
             "machine_id": machine_id, "os": system, "os_version": version, "arch": arch,
             "agent_version": VERSION, "protocol_version": PROTOCOL_VERSION, "job_protocol_version": 1,
+            "runtime_protocol_version": 1 if runtime_available() else 0,
             "uptime": uptime, "addresses": [],
             "supported": (system, version) in SUPPORTED and arch in {"amd64", "arm64"},
             "singbox": singbox_status()}

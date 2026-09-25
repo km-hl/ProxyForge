@@ -1,0 +1,20 @@
+[Unit]
+Description=ProxyForge restricted local runtime helper
+Requires=proxyforge-runtime.socket
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/proxyforge-agent
+ExecStart=/usr/bin/python3 -I -c "import sys; sys.path.insert(0, '/opt/proxyforge-agent'); from agent.runtime_helper import main; main()"
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/proxyforge-runtime
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+TimeoutStopSec=45

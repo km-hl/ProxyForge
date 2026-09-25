@@ -7,6 +7,10 @@ import re
 
 from .client import AgentConnectionError, JobRejected
 from .system_info import singbox_status
+from .runtime_spec import RUNTIME_ACTIONS, RUNTIME_ERRORS, valid_output, validate_runtime_job
+from .runtime_client import execute as execute_runtime
+from .runtime_engine import RuntimeCancelled
+from .job_lease import JobLease
 
 
 @contextlib.contextmanager
@@ -36,11 +40,17 @@ def runner_lock(config_path):
 
 def validate_job(job):
     if (not isinstance(job, dict) or job.get('job_protocol_version') != 1 or
-            job.get('type') != 'singbox.status' or job.get('payload') != {} or
-            job.get('deployment_revision') is not None or
             not isinstance(job.get('id'), str) or not re.fullmatch(r'[a-f0-9]{32}', job['id']) or
             not isinstance(job.get('lease_token'), str) or
             not re.fullmatch(r'[A-Za-z0-9_-]{43}', job['lease_token'])):
+        raise AgentConnectionError('Unsupported job schema')
+    if job.get('type') in RUNTIME_ACTIONS:
+        try:
+            validate_runtime_job(job)
+        except ValueError:
+            raise AgentConnectionError('Unsupported runtime job schema') from None
+    elif (job.get('type') != 'singbox.status' or job.get('payload') != {} or
+            job.get('deployment_revision') is not None):
         raise AgentConnectionError('Unsupported job schema')
 
 
@@ -56,22 +66,24 @@ def validate_journal(journal, binding):
         identity, result = entry['identity'], entry['result']
         if (not isinstance(identity, dict) or set(identity) != {'id', 'type', 'deployment_revision'} or
                 not isinstance(identity['id'], str) or not re.fullmatch(r'[a-f0-9]{32}', identity['id']) or
-                identity['type'] != 'singbox.status' or identity['deployment_revision'] is not None or
+                identity['type'] not in ('singbox.status', *RUNTIME_ACTIONS) or
                 identity['id'] in seen):
             raise ValueError('Invalid job journal identity')
+        if identity['type'] == 'singbox.status':
+            if identity['deployment_revision'] is not None:
+                raise ValueError('Invalid status revision')
+        elif not isinstance(identity['deployment_revision'], str) or not re.fullmatch(r'[a-f0-9]{64}', identity['deployment_revision']):
+            raise ValueError('Invalid runtime revision')
         seen.add(identity['id'])
         if not isinstance(result, dict) or set(result) != {'status', 'output', 'error'}:
             raise ValueError('Invalid job journal result')
         if result['status'] == 'failed':
-            if result['output'] is not None or result['error'] != 'probe_failed':
+            allowed_errors = RUNTIME_ERRORS if identity['type'] in RUNTIME_ACTIONS else ('probe_failed',)
+            if result['output'] is not None or result['error'] not in allowed_errors:
                 raise ValueError('Invalid job journal failure')
         elif result['status'] == 'success':
             output = result['output']
-            if (result['error'] is not None or not isinstance(output, dict) or
-                    set(output) != {'installed', 'running', 'version', 'status'} or
-                    type(output['installed']) is not bool or type(output['running']) is not bool or
-                    not isinstance(output['version'], str) or len(output['version']) > 128 or
-                    output['status'] not in ('not_installed', 'running', 'stopped', 'unknown')):
+            if result['error'] is not None or not valid_output(output):
                 raise ValueError('Invalid job journal output')
         else:
             raise ValueError('Invalid job journal status')
@@ -100,11 +112,21 @@ def process_job(client, config, config_path):
         if previous is not None:
             result = previous['result']
         else:
-            try:
-                output = singbox_status()
-                result = {'status': 'success', 'output': output, 'error': None}
-            except (OSError, ValueError):
-                result = {'status': 'failed', 'output': None, 'error': 'probe_failed'}
+            if job['type'] in RUNTIME_ACTIONS:
+                try:
+                    with JobLease(config, job) as guard:
+                        result = execute_runtime(job, guard)
+                        guard()
+                except RuntimeCancelled:
+                    result = {'status': 'failed', 'output': None, 'error': 'runtime_cancelled'}
+                except (OSError, ValueError):
+                    result = {'status': 'failed', 'output': None, 'error': 'runtime_unavailable'}
+            else:
+                try:
+                    output = singbox_status()
+                    result = {'status': 'success', 'output': output, 'error': None}
+                except (OSError, ValueError):
+                    result = {'status': 'failed', 'output': None, 'error': 'probe_failed'}
             journal['entries'] = (journal['entries'] + [{'identity': identity, 'result': result}])[-128:]
             # Durability before uploading; never persist the per-attempt lease credential.
             if len(json.dumps(journal).encode('utf-8')) > 262144:
