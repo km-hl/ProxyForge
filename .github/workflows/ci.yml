@@ -51,7 +51,9 @@ jobs:
         run: python -m compileall -q main.py network_config.py mihomo_compat.py template_store.py control_store.py agent_api.py job_store.py job_api.py agent scripts
 
       - name: Check Agent installer syntax
-        run: bash -n agent/install.sh
+        run: |
+          bash -n agent/install.sh
+          bash -n agent/install-runtime.sh
 
       - name: Check frontend JavaScript syntax
         run: |
@@ -73,6 +75,19 @@ jobs:
       - name: Check pushed commit whitespace errors
         if: github.event_name == 'push'
         run: git show --check --oneline --no-renames HEAD
+
+  singbox-runtime:
+    name: sing-box managed runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify pinned binary and real systemd activation and rollback
+        # Dedicated disposable runner; script refuses pre-existing unit/account.
+        run: sudo "$(command -v python)" scripts/check_singbox_runtime.py --disposable-system-test
 
   mihomo-compatibility:
     name: Mihomo parser compatibility

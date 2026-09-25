@@ -1,0 +1,14 @@
+{
+  "version": "1.14.2",
+  "repository": "SagerNet/sing-box",
+  "assets": {
+    "amd64": {
+      "name": "sing-box-1.14.2-linux-amd64.tar.gz",
+      "sha256": "a684484d7477d1437282ee411f4d131d0340aaad60a7868841ebd5d87dd8a0c6"
+    },
+    "arm64": {
+      "name": "sing-box-1.14.2-linux-arm64.tar.gz",
+      "sha256": "b43a1fb1bda131c6653576741ce527eb2bdeab7c9308ca90ee8b972abb7e4a7f"
+    }
+  }
+}

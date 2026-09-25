@@ -47,7 +47,7 @@ class Client:
 
     def post(self, path, payload, token=None):
         if path not in ("/api/agent/register", "/api/agent/heartbeat", "/api/agent/jobs/claim") and not re.fullmatch(
-                r'/api/agent/jobs/[a-f0-9]{32}/(start|result)', path):
+                r'/api/agent/jobs/[a-f0-9]{32}/(start|result|renew)', path):
             raise ValueError("Unsupported Agent endpoint")
         content = json.dumps(payload).encode("utf-8")
         if len(content) > 16384:

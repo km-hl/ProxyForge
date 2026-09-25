@@ -5,14 +5,30 @@ function agentCanRunJobs(agent) {
     return agent.status !== 'revoked' && agent.compatible && agent.metadata.job_protocol_version === 1;
 }
 
+function agentCanManageRuntime(agent) {
+    return agentCanRunJobs(agent) && agent.metadata.supported && agent.metadata.runtime_protocol_version === 1;
+}
+
 async function showAgentJobs(agent) {
-    openModal('Agent 任务', '<p>仅查询 ProxyForge 独立 sing-box 的状态。任务最多等待 1 小时，断线后可重试。</p>' +
-        '<button class="btn" id="agent-job-create">查询 sing-box 状态</button> ' +
+    const release = await (await fetchAuth('/agents/runtime/release')).json();
+    openModal('Agent 任务', '<p>管理 ProxyForge 独立 sing-box 实例。安装后默认没有公网监听；不会修改用户已有的 sing-box。</p>' +
+        '<p>取消任务不能保证中止已开始的服务变更，请刷新状态核实结果。</p>' +
+        '<select id="agent-job-action"><option value="singbox.status">查询状态</option></select>' +
+        '<p id="agent-runtime-notice"></p><button class="btn" id="agent-job-create">创建任务</button> ' +
         '<button class="btn" id="agent-job-refresh">刷新任务</button><p id="agent-job-notice"></p>' +
         '<div id="agent-job-list"></div>', closeModal);
     const target = document.getElementById('agent-job-list');
     const notice = document.getElementById('agent-job-notice');
     const create = document.getElementById('agent-job-create');
+    const selector = document.getElementById('agent-job-action');
+    if (agentCanManageRuntime(agent)) {
+        for (const [value, label] of [['singbox.install', '安装 / 更新至 ' + release.version],
+            ['singbox.start', '启动'], ['singbox.stop', '停止'], ['singbox.restart', '重启'], ['singbox.rollback', '恢复上一次运行版本']]) {
+            const option = document.createElement('option'); option.value = value; option.textContent = label; selector.append(option);
+        }
+    } else {
+        document.getElementById('agent-runtime-notice').textContent = '运行环境管理需要升级 Agent，并在目标机器本地启用辅助服务。';
+    }
     create.disabled = !agentCanRunJobs(agent);
     if (create.disabled) notice.textContent = '此 Agent 尚不支持任务或已撤销，请先升级 Agent。';
     async function refresh() {
@@ -41,18 +57,22 @@ async function showAgentJobs(agent) {
         }
     }
     create.onclick = async () => {
+        const type = selector.value;
+        if (type !== 'singbox.status' && !confirm('确认对该 Agent 的 ProxyForge 独立实例执行“' + selector.selectedOptions[0].textContent + '”？启停或重启可能中断其连接。')) return;
         create.disabled = true;
         try {
-            let requestId = pendingAgentJobRequests.get(agent.id);
+            const payload = type === 'singbox.install' ? { version: release.version } : {};
+            const key = agent.id + ':' + type + ':' + JSON.stringify(payload);
+            let requestId = pendingAgentJobRequests.get(key);
             if (!requestId) {
                 // getRandomValues also works when the admin UI is served over HTTP.
                 requestId = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
-                pendingAgentJobRequests.set(agent.id, requestId);
+                pendingAgentJobRequests.set(key, requestId);
             }
             await fetchAuth('/agents/' + agent.id + '/jobs', { method: 'POST', body: JSON.stringify({
-                request_id: requestId, type: 'singbox.status', payload: {}, deployment_revision: null
+                request_id: requestId, type, payload, deployment_revision: null
             }) });
-            pendingAgentJobRequests.delete(agent.id);
+            pendingAgentJobRequests.delete(key);
             notice.textContent = '任务已创建；等待 Agent 下次同步。';
             await refresh().catch(error => { notice.textContent = '任务已创建，刷新列表失败：' + error.message; });
         } catch (error) { notice.textContent = error.message + '；可重试，同一请求不会重复创建任务。'; }
@@ -174,4 +194,4 @@ if (typeof document !== 'undefined') {
             refreshAgents();
     }, 30000);
 }
-if (typeof module !== 'undefined' && module.exports) module.exports = { agentStatusLabel, agentCanRunJobs };
+if (typeof module !== 'undefined' && module.exports) module.exports = { agentStatusLabel, agentCanRunJobs, agentCanManageRuntime };

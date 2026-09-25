@@ -8,13 +8,23 @@ from pydantic import Field, constr, model_validator
 from agent_api import Payload, Identifier, SingboxStatus
 from control_store import UnauthorizedAgent
 from job_store import JobConflict, JobNotFound
+from agent.runtime_spec import RELEASE, validate_action
 
 
 class JobRequest(Payload):
     request_id: Identifier
-    type: Literal['singbox.status']
-    payload: Payload = Field(default_factory=Payload)
+    type: Literal['singbox.status', 'singbox.install', 'singbox.start', 'singbox.stop', 'singbox.restart', 'singbox.rollback']
+    payload: dict = Field(default_factory=dict)
     deployment_revision: None = None
+
+    @model_validator(mode='after')
+    def action_schema(self):
+        if self.type == 'singbox.status':
+            if self.payload:
+                raise ValueError('Status takes no arguments')
+        else:
+            validate_action(self.type, self.payload)
+        return self
 
 
 class ClaimRequest(Payload):
@@ -32,7 +42,7 @@ class StatusOutput(SingboxStatus):
 class JobResult(Payload):
     status: Literal['success', 'failed']
     output: Optional[StatusOutput] = None
-    error: Optional[Literal['probe_failed']] = None
+    error: Optional[Literal['probe_failed', 'runtime_unavailable', 'runtime_failed', 'runtime_cancelled', 'rollback_failed']] = None
 
     @model_validator(mode='after')
     def coherent(self):
@@ -63,7 +73,11 @@ def attach_job_routes(app, admin, agent, store_provider):
 
     @admin.post('/{agent_id}/jobs')
     def create_job(agent_id: str, data: JobRequest):
-        return store_provider().create_job(agent_id, data.request_id)
+        return store_provider().create_job(agent_id, data.request_id, data.type, data.payload)
+
+    @admin.get('/runtime/release')
+    def runtime_release():
+        return {'version': RELEASE['version'], 'runtime_protocol_version': 1}
 
     @admin.get('/{agent_id}/jobs')
     def list_jobs(agent_id: str):
@@ -85,3 +99,7 @@ def attach_job_routes(app, admin, agent, store_provider):
     def result_job(job_id: str, data: ResultRequest, authorization: str = Header(default='')):
         return store_provider().report_job(credential(authorization), job_id, data.lease_token,
                                            data.result.model_dump())
+
+    @agent.post('/jobs/{job_id}/renew')
+    def renew_job(job_id: str, data: LeaseRequest, authorization: str = Header(default='')):
+        return store_provider().report_job(credential(authorization), job_id, data.lease_token, renew=True)
