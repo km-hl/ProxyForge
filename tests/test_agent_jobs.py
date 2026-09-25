@@ -166,7 +166,8 @@ class QueueTest(unittest.TestCase):
     def test_v1_migration_preserves_credentials_and_inventory(self):
         with self.store.connection() as db:
             db.execute('DROP TABLE jobs')
-            db.execute('DELETE FROM schema_migrations WHERE version=2')
+            db.execute('DROP TABLE deployments')
+            db.execute('DELETE FROM schema_migrations WHERE version>=2')
         reopened = ControlStore(self.path)
         reopened.heartbeat(self.first['agent_token'], capable(), '')
         self.assertEqual(reopened.get_agent(self.first['agent_id'])['name'], 'jobs')
@@ -177,7 +178,8 @@ class QueueTest(unittest.TestCase):
     def test_migration_failure_rolls_back_schema(self):
         with self.store.connection() as db:
             db.execute('DROP TABLE jobs')
-            db.execute('DELETE FROM schema_migrations WHERE version=2')
+            db.execute('DROP TABLE deployments')
+            db.execute('DELETE FROM schema_migrations WHERE version>=2')
         def fail(db):
             db.execute('CREATE TABLE incomplete(x TEXT)')
             raise sqlite3.OperationalError('test interrupted migration')

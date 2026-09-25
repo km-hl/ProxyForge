@@ -3,16 +3,19 @@ import hashlib
 import json
 from pathlib import Path
 import re
+from .deployment_spec import DEPLOYMENT_ACTIONS, validate_reference, validate_spec, spec_hash
 
 RELEASE = json.loads(Path(__file__).with_name('singbox-release.json').read_text(encoding='utf-8'))
-RUNTIME_ACTIONS = ('singbox.install', 'singbox.start', 'singbox.stop', 'singbox.restart', 'singbox.rollback')
+RUNTIME_ACTIONS = ('singbox.install', 'singbox.start', 'singbox.stop', 'singbox.restart', 'singbox.rollback', *DEPLOYMENT_ACTIONS)
 RUNTIME_ERRORS = ('runtime_unavailable', 'runtime_failed', 'runtime_cancelled', 'rollback_failed')
 
 
 def validate_action(action, payload):
     if action not in RUNTIME_ACTIONS or not isinstance(payload, dict):
         raise ValueError('Unsupported runtime action')
-    if action == 'singbox.install':
+    if action in DEPLOYMENT_ACTIONS:
+        validate_reference(payload)
+    elif action == 'singbox.install':
         if payload != {'version': RELEASE['version']}:
             raise ValueError('Only the pinned release is allowed')
     elif payload:
@@ -30,6 +33,10 @@ def validate_runtime_job(job):
     validate_action(job.get('type'), job.get('payload'))
     if job.get('deployment_revision') != revision(job['id'], job['type'], job['payload']):
         raise ValueError('Invalid runtime revision')
+    if job['type'] in DEPLOYMENT_ACTIONS:
+        validate_spec(job['type'], job.get('deployment'))
+        if spec_hash(job['deployment']) != job['payload']['spec_hash']:
+            raise ValueError('Deployment snapshot changed')
 
 
 def valid_output(output):

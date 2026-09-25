@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import pwd
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agent.runtime_download import download_binary
 from agent.runtime_engine import RuntimeEngine, SystemBackend, UNIT
 from agent.runtime_spec import RELEASE, revision
+from agent.deployment_spec import spec_hash
+from deployment_store import new_spec
 
 
 def job(action):
@@ -40,6 +43,55 @@ def check_installer_preflight(root):
     result = subprocess.run(['bash', str(candidate)], capture_output=True, text=True, timeout=10)
     assert result.returncode != 0 and 'root-owned' in result.stderr, 'Unsafe package was not rejected by preflight'
     assert not marker.exists(), 'Installer executed untrusted package before its ownership check'
+
+
+def deployment_job(spec, remove=False):
+    identifier = uuid.uuid4().hex
+    action = 'deployment.remove' if remove else 'deployment.apply'
+    payload = {'deployment_id': 'a' * 32, 'revision': 1, 'spec_hash': spec_hash(spec)}
+    return {'id': identifier, 'type': action, 'payload': payload, 'deployment': spec,
+            'deployment_revision': revision(identifier, action, payload)}
+
+
+def check_deployment(engine, backend):
+    # Reserve an unused privileged port without touching another service.
+    port = None
+    for candidate in range(900, 1024):
+        with socket.socket(socket.AF_INET6) as probe:
+            try:
+                probe.bind(('::', candidate))
+                port = candidate
+                break
+            except OSError:
+                continue
+    assert port is not None, 'No isolated low port available'
+    spec = new_spec({'name': 'Disposable Reality test', 'server': 'vps.example.com',
+                     'server_name': 'www.example.com', 'listen_port': port})
+    apply = deployment_job(spec)
+    assert engine.apply(apply)['output']['running']
+    previous = engine.pointer('current')
+    with socket.create_connection(('::1', port), timeout=2):
+        pass
+    engine.apply(apply)
+    assert engine.pointer('current') == previous
+    # A real bind error must restore the previous config AND running process.
+    with socket.socket(socket.AF_INET6) as occupied:
+        occupied.bind(('::', 0))
+        occupied.listen()
+        blocked = {**spec, 'listen_port': occupied.getsockname()[1]}
+        try:
+            engine.apply(deployment_job(blocked))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('Expected real listener conflict')
+    assert engine.pointer('current') == previous
+    assert backend.matches(engine.root / previous)
+    assert engine.apply(deployment_job({}, remove=True))['output']['running']
+    with socket.socket(socket.AF_INET6) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        probe.bind(('::', port))  # Listener removed.
+    print('Reality: real parser, privileged listener, replay, bind-failure rollback and removal passed')
 
 
 def main():
@@ -105,6 +157,8 @@ def main():
                 raise AssertionError('Expected failed activation')
             assert engine.pointer('current') == previous
             assert backend.matches(root / previous)
+            backend.activate = activate
+            check_deployment(engine, backend)
             print('Pinned sing-box ' + RELEASE['version'] + ': real check/start/restart/stop/rollback passed')
         finally:
             subprocess.run(['systemctl', 'stop', UNIT], check=False)

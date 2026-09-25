@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { agentStatusLabel, agentCanRunJobs, agentCanManageRuntime } = require('../static/agents.js');
+const { agentStatusLabel, agentCanRunJobs, agentCanManageRuntime, agentCanDeploy } = require('../static/agents.js');
 
 test('inventory separates online state, compatibility and supported platform', () => {
     const agent = { status: 'online', compatible: true, metadata: { supported: true } };
@@ -36,4 +36,13 @@ test('runtime changes additionally require supported platform and local helper c
     assert.equal(agentCanManageRuntime(agent), false);
     agent.metadata.supported = true; agent.status = 'revoked';
     assert.equal(agentCanManageRuntime(agent), false);
+});
+
+test('deployment requires its own upgraded helper capability', () => {
+    const agent = { status: 'online', compatible: true, metadata: { job_protocol_version: 1, runtime_protocol_version: 1, supported: true } };
+    assert.equal(agentCanDeploy(agent), false);
+    agent.metadata.deployment_protocol_version = 1;
+    assert.equal(agentCanDeploy(agent), true);
+    agent.status = 'revoked';
+    assert.equal(agentCanDeploy(agent), false);
 });

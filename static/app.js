@@ -516,7 +516,7 @@ function renderNodes() {
                  ondrop="handleDrop(event, ${index})"
                  ondragend="handleDragEnd(event)">
                 <span class="drag-handle" style="cursor: grab; margin-right: 10px; color: #999;">⠿</span>
-                ${getCheckboxHTML('cb-node', index)}
+                ${n._managed_by ? '<span class="type-badge">Agent 托管 · 只读</span>' : getCheckboxHTML('cb-node', index)}
                 <span class="type-badge badge-node">${escapeHtml(n.type || 'unknown')}</span>
                 <div class="item-info">
                     <div class="item-name">${escapeHtml(displayName)}</div>
@@ -525,8 +525,8 @@ function renderNodes() {
                 <div class="item-actions">
                     ${index > 0 ? `<button class="btn btn-sm" onclick="moveNodeUp(${index})" title="上移">⬆️</button>` : ''}
                     ${index < state.nodes.length - 1 ? `<button class="btn btn-sm" onclick="moveNodeDown(${index})" title="下移">⬇️</button>` : ''}
-                    <button class="btn btn-sm" onclick="editNode(${index})">编辑</button>
-                    <button class="btn btn-sm btn-danger" onclick="deleteNode(${index})">删除</button>
+                    ${n._managed_by ? '<span>通过 Agent 部署管理</span>' : `<button class="btn btn-sm" onclick="editNode(${index})">编辑</button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteNode(${index})">删除</button>`}
                 </div>
             </div>
         `;
@@ -1282,6 +1282,7 @@ document.getElementById('btn-bulk-smart-filter').addEventListener('click', () =>
 
 // === Actions: Nodes ===
 window.editNode = function(index) {
+    if (index >= 0 && state.nodes[index]._managed_by) return showToast('请在 Agent 的部署页面修改此节点', 'error');
     let isNew = index < 0;
     let yamlStr = isNew ? "name: New Node\ntype: vmess\nserver: 1.1.1.1\nport: 443" : jsyaml.dump(state.nodes[index]);
     const html = `
@@ -1374,6 +1375,7 @@ document.getElementById('btn-import-nodes').addEventListener('click', () => {
 });
 
 window.deleteNode = function(index) {
+    if (state.nodes[index]._managed_by) return showToast('请在 Agent 的部署页面移除监听', 'error');
     state.nodes.splice(index, 1);
     saveNodesObj();
 };

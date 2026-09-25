@@ -1,4 +1,4 @@
-# ProxyForge reference Agent (B3)
+# ProxyForge reference Agent (B4)
 
 This standard-library Python Agent sends inventory and pulls allowlisted jobs.
 It opens no network listener. B3 optionally manages one independent sing-box
@@ -6,6 +6,12 @@ instance through a separately enabled local Unix-socket helper. Inventory and
 job protocol remain version 1; runtime capability is version 1. Upgrade the
 Controller before Agents. B1 remains inventory-only; B2 remains read-only.
 See [B3 runtime setup and recovery](../docs/AGENT_B3.md) before enabling the helper.
+For VLESS Reality, follow [B4 deployment, migration and recovery](../docs/AGENT_B4.md).
+After enabling the B4 helper locally, use **Agent 服务器 → 部署** to provide the
+public endpoint, SNI and port. First deployment installs the pinned runtime if
+needed. Successful deployment automatically publishes a read-only client node.
+Deployment capability is separately versioned; do not advertise it until both
+the helper package and the low-port-capable systemd unit have been upgraded.
 
 ## Install from inspected source
 

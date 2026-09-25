@@ -205,7 +205,7 @@ def save_airports(urls: List[str]):
         yaml.dump(urls, f, allow_unicode=True, sort_keys=False)
 
 @configuration_locked
-def load_custom_nodes() -> List[Dict[str, Any]]:
+def load_manual_nodes() -> List[Dict[str, Any]]:
     initialize_custom_nodes_storage()
     if not os.path.exists(CUSTOM_NODES_PATH):
         return []
@@ -221,6 +221,31 @@ def load_custom_nodes() -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"读取自建节点文件失败: {e}")
     return []
+
+def managed_nodes():
+    # Preserve generation without a control-plane DB for standalone installations.
+    if not (Path(DATA_DIR) / 'proxyforge.db').exists():
+        return []
+    return [{**node, '_airport_name': CUSTOM_NODES_SOURCE} for node in control_store().managed_nodes()]
+
+
+@configuration_locked
+def load_custom_nodes() -> List[Dict[str, Any]]:
+    return load_manual_nodes() + managed_nodes()
+
+
+def manual_node_input(nodes):
+    managed = {node['name']: node for node in managed_nodes()}
+    manual = []
+    for node in nodes:
+        name = node.get('name', '') if isinstance(node, dict) else ''
+        if name in managed and node == managed[name]:
+            continue
+        if (isinstance(node, dict) and '_managed_by' in node) or ' [pf:' in str(name):
+            raise HTTPException(status_code=409, detail='Agent-managed nodes must be changed through their deployment')
+        manual.append(node)
+    return manual
+
 
 def strip_internal_proxy_fields(node: Dict[str, Any]) -> Dict[str, Any]:
     return {
@@ -2028,11 +2053,12 @@ class NodesModel(BaseModel):
 @app.post("/api/nodes", dependencies=[Depends(verify_api_token)])
 @configuration_locked
 def update_nodes(data: NodesModel):
+    data.nodes = manual_node_input(data.nodes)
     errors = validate_proxy_nodes(data.nodes, location="nodes")
     if errors:
         raise HTTPException(status_code=400, detail={"message": "节点配置校验失败", "errors": errors})
     old_names = {
-        proxy.get("name") for proxy in load_custom_nodes()
+        proxy.get("name") for proxy in load_manual_nodes()
         if isinstance(proxy, dict) and proxy.get("name")
     }
     new_names = {
@@ -2157,11 +2183,12 @@ def restore_template(entry_id: str, data: TemplateRestoreModel):
 @configuration_locked
 def import_template(data: ImportModel):
     require_revision(data.expected_revision)
+    data.nodes = manual_node_input(data.nodes)
     errors = validate_proxy_nodes(data.nodes, location="nodes")
     if errors:
         raise HTTPException(status_code=400, detail={"message": "节点配置校验失败", "errors": errors})
     check_airport_urls(data.urls)
-    validate_saved_template(data.content, data.nodes, data.urls)
+    validate_saved_template(data.content, data.nodes + managed_nodes(), data.urls)
     snapshot = template_store().commit({
         "template.yaml": data.content,
         "custom_nodes.yaml": yaml.safe_dump([strip_internal_proxy_fields(n) for n in data.nodes],

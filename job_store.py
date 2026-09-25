@@ -4,6 +4,7 @@ import json
 import secrets
 import uuid
 from agent.runtime_spec import RUNTIME_ACTIONS, revision, validate_action
+from agent.deployment_spec import DEPLOYMENT_ACTIONS
 
 JOB_PROTOCOL_VERSION = 1
 LEASE_SECONDS = 60
@@ -48,6 +49,7 @@ class JobStoreMixin:
     def _job_view(self, row):
         item = dict(row)
         item.pop("lease_hash", None)
+        item.pop('secret_payload', None)
         item["payload"] = json.loads(item["payload"])
         item["result"] = json.loads(item["result"]) if item["result"] else None
         return item
@@ -63,38 +65,45 @@ class JobStoreMixin:
         return row
 
     def create_job(self, agent_id, request_id, action='singbox.status', payload=None):
-        from control_store import CapacityExceeded
+        if action in DEPLOYMENT_ACTIONS:
+            raise JobConflict()  # Only the atomic desired-state API may enqueue these.
         payload = {} if payload is None else payload
         if action != 'singbox.status':
             validate_action(action, payload)
         elif payload:
             raise ValueError('Status takes no arguments')
-        now = self.clock()
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             agent = self._job_agent(db, agent_id)
             self._runtime_capability(agent, action)
             self._expire_jobs(db, agent_id)
-            existing = db.execute("SELECT * FROM jobs WHERE agent_id=? AND request_id=?",
-                                  (agent_id, request_id)).fetchone()
-            if existing:
-                if existing['type'] != action or json.loads(existing['payload']) != payload:
-                    raise JobConflict()
-                return self._job_view(existing)
-            # Retain idempotency keys/results for seven days, with a hard global cap.
-            db.execute("DELETE FROM jobs WHERE status IN ('success','failed','cancelled') AND finished_at<?",
-                       (now - 7 * 86400,))
-            if db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] >= 10000 or db.execute(
-                    "SELECT COUNT(*) FROM jobs WHERE agent_id=? AND status IN ('pending','assigned','running')",
-                    (agent_id,)).fetchone()[0] >= 20:
-                raise CapacityExceeded()
-            job_id = uuid.uuid4().hex
-            deployment_revision = revision(job_id, action, payload) if action in RUNTIME_ACTIONS else None
-            db.execute("""INSERT INTO jobs(id,agent_id,request_id,type,payload,deployment_revision,status,created_at,deadline)
-                VALUES(?,?,?,?,?,?,'pending',?,?)""",
-                       (job_id, agent_id, request_id, action, json.dumps(payload), deployment_revision, now, now + JOB_TTL))
-            self._audit(db, "job_created", agent_id)
-            return self._job_view(db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
+            if action in RUNTIME_ACTIONS and db.execute('SELECT 1 FROM deployments WHERE agent_id=?', (agent_id,)).fetchone():
+                raise JobConflict()  # Do not silently revert/stop a published managed deployment.
+            return self._enqueue_job(db, agent_id, request_id, action, payload)
+
+    def _enqueue_job(self, db, agent_id, request_id, action, payload):
+        from control_store import CapacityExceeded
+        now = self.clock()
+        existing = db.execute("SELECT * FROM jobs WHERE agent_id=? AND request_id=?",
+                              (agent_id, request_id)).fetchone()
+        if existing:
+            if existing['type'] != action or json.loads(existing['payload']) != payload:
+                raise JobConflict()
+            return self._job_view(existing)
+        # Retain idempotency keys/results for seven days, with a hard global cap.
+        db.execute("DELETE FROM jobs WHERE status IN ('success','failed','cancelled') AND finished_at<? AND id NOT IN (SELECT job_id FROM deployments)",
+                   (now - 7 * 86400,))
+        if db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] >= 10000 or db.execute(
+                "SELECT COUNT(*) FROM jobs WHERE agent_id=? AND status IN ('pending','assigned','running')",
+                (agent_id,)).fetchone()[0] >= 20:
+            raise CapacityExceeded()
+        job_id = uuid.uuid4().hex
+        deployment_revision = revision(job_id, action, payload) if action in RUNTIME_ACTIONS else None
+        db.execute("""INSERT INTO jobs(id,agent_id,request_id,type,payload,deployment_revision,status,created_at,deadline)
+            VALUES(?,?,?,?,?,?,'pending',?,?)""",
+                   (job_id, agent_id, request_id, action, json.dumps(payload), deployment_revision, now, now + JOB_TTL))
+        self._audit(db, "job_created", agent_id)
+        return self._job_view(db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
 
     def list_jobs(self, agent_id):
         with self.connection() as db:
@@ -145,12 +154,16 @@ class JobStoreMixin:
             result = self._job_view(db.execute("SELECT * FROM jobs WHERE id=?", (row["id"],)).fetchone())
             result["lease_token"] = lease
             result["job_protocol_version"] = JOB_PROTOCOL_VERSION
+            if row['type'] in DEPLOYMENT_ACTIONS:
+                result['deployment'] = self._decrypt_spec(db, row['secret_payload'])
             return result
 
     def _runtime_capability(self, agent, action):
         if action in RUNTIME_ACTIONS:
             metadata = json.loads(agent['metadata'])
             if metadata.get('runtime_protocol_version') != 1 or metadata.get('supported') is not True:
+                raise JobConflict()
+            if action in DEPLOYMENT_ACTIONS and metadata.get('deployment_protocol_version') != 1:
                 raise JobConflict()
 
     def report_job(self, token, job_id, lease, result=None, renew=False):
@@ -184,6 +197,10 @@ class JobStoreMixin:
             if row["status"] != "running":
                 raise JobConflict()
             status = result["status"]
+            if row['type'] in DEPLOYMENT_ACTIONS and status == 'success':
+                output = result.get('output') or {}
+                if output.get('installed') is not True or output.get('running') is not True:
+                    raise JobConflict()
             db.execute("UPDATE jobs SET status=?,result=?,error=?,finished_at=? WHERE id=?",
                        (status, encoded, result.get("error"), self.clock(), job_id))
             self._audit(db, "job_" + status, agent_id)

@@ -4,11 +4,23 @@ import os
 import socket
 import stat
 import time
+from pathlib import Path
 
 from .runtime_engine import RuntimeCancelled
 from .runtime_spec import RUNTIME_ERRORS, valid_output
+from .deployment_spec import DEPLOYMENT_ACTIONS
 
 SOCKET = '/run/proxyforge-runtime.sock'
+
+
+def deployment_available():
+    marker = Path('/opt/proxyforge-agent/deployment-protocol')
+    try:
+        info = marker.lstat()
+        return (available() and stat.S_ISREG(info.st_mode) and info.st_uid == 0 and
+                not info.st_mode & 0o022 and marker.read_text().strip() == '1')
+    except OSError:
+        return False
 
 
 def available():
@@ -31,7 +43,10 @@ def execute(job, guard):
         import struct
         if struct.unpack('3i', connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))[1] != 0:
             raise ValueError('Invalid runtime helper peer')
-        connection.sendall(json.dumps({key: job[key] for key in ('id', 'type', 'payload', 'deployment_revision')}).encode() + b'\n')
+        request = {key: job[key] for key in ('id', 'type', 'payload', 'deployment_revision')}
+        if job['type'] in DEPLOYMENT_ACTIONS:
+            request['deployment'] = job['deployment']
+        connection.sendall(json.dumps(request).encode() + b'\n')
         connection.settimeout(0.5)
         deadline, data = time.monotonic() + 620, b''
         while not data.endswith(b'\n'):

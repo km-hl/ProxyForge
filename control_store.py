@@ -11,6 +11,7 @@ import time
 import uuid
 
 from job_store import JobStoreMixin, migrate_jobs
+from deployment_store import DeploymentStoreMixin, migrate_deployments
 
 PROTOCOL_VERSION = 1
 ONLINE_SECONDS = 90
@@ -42,7 +43,7 @@ def online_status(last_seen, now):
     return "online" if age < ONLINE_SECONDS else "degraded" if age < OFFLINE_SECONDS else "offline"
 
 
-class ControlStore(JobStoreMixin):
+class ControlStore(DeploymentStoreMixin, JobStoreMixin):
     def __init__(self, path, clock=time.time):
         self.path = Path(path).resolve()
         self.clock = clock
@@ -54,7 +55,7 @@ class ControlStore(JobStoreMixin):
             db.execute("BEGIN IMMEDIATE")
             db.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)")
             version = db.execute("SELECT COALESCE(MAX(version),0) FROM schema_migrations").fetchone()[0]
-            if version > 2:
+            if version > 3:
                 raise RuntimeError("Control database is newer than this application")
             if version == 0:
                 # Individual statements stay within the migration transaction.
@@ -79,6 +80,8 @@ class ControlStore(JobStoreMixin):
                     db.execute(statement)
             if version < 2:
                 migrate_jobs(db)
+            if version < 3:
+                migrate_deployments(db)
             db.commit()
 
     @contextlib.contextmanager

@@ -5,11 +5,13 @@ from pathlib import Path
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import time
 
 from .runtime_download import download_binary
 from .runtime_spec import RELEASE, validate_runtime_job
+from .deployment_spec import DEPLOYMENT_ACTIONS, runtime_config
 
 UNIT = 'proxyforge-singbox.service'
 EMPTY_CONFIG = {'log': {'level': 'warn'}, 'inbounds': [], 'outbounds': [{'type': 'direct', 'tag': 'direct'}]}
@@ -82,8 +84,14 @@ class SystemBackend:
         if value.returncode or not pid.isdigit() or int(pid) <= 1:
             return False
         try:
-            return Path('/proc/' + pid + '/exe').resolve(strict=True) == (release / 'sing-box').resolve(strict=True)
-        except OSError:
+            if Path('/proc/' + pid + '/exe').resolve(strict=True) != (release / 'sing-box').resolve(strict=True):
+                return False
+            config = json.loads((release / 'config.json').read_text())
+            for inbound in config.get('inbounds', []):
+                with socket.create_connection(('::1', inbound['listen_port']), timeout=1):
+                    pass
+            return True
+        except (OSError, ValueError, KeyError):
             return False
 
     def stop(self):
@@ -214,7 +222,7 @@ class RuntimeEngine:
         current, previous = self.pointer('current'), self.pointer('previous')
         was_running = self.backend.active()
         action = job['type']
-        if action != 'singbox.install' and not current:
+        if action not in ('singbox.install', *DEPLOYMENT_ACTIONS) and not current:
             raise ValueError('Runtime is not installed')
         if action == 'singbox.rollback' and not previous:
             raise ValueError('No previous release')
@@ -238,13 +246,17 @@ class RuntimeEngine:
             candidate.mkdir(mode=0o750)
             try:
                 source = previous if action == 'singbox.rollback' else current
-                if action == 'singbox.install':
+                if action == 'singbox.install' or (action in DEPLOYMENT_ACTIONS and not current):
                     self.downloader(candidate, self.arch, guard)
                     release_info = {'version': RELEASE['version']}
                 else:
                     shutil.copy2(self.root / source / 'sing-box', candidate / 'sing-box')
                     release_info = json.loads((self.root / source / 'release.json').read_text())
                 config = json.loads((self.root / source / 'config.json').read_text()) if source else EMPTY_CONFIG
+                if action == 'deployment.apply':
+                    config = runtime_config(job['deployment'])
+                elif action == 'deployment.remove':
+                    config = EMPTY_CONFIG
                 write_json(candidate / 'config.json', config)
                 write_json(candidate / 'release.json', release_info, 0o644)
                 self.backend.check(candidate)
@@ -259,6 +271,8 @@ class RuntimeEngine:
                 raise
         transaction = {'job': {key: job[key] for key in ('id', 'type', 'payload', 'deployment_revision')},
                        'old': current, 'previous': previous, 'new': new, 'was_running': was_running, 'running': running}
+        if action in DEPLOYMENT_ACTIONS:
+            transaction['job']['deployment'] = job['deployment']
         write_json(self.root / 'transaction.json', transaction)
         try:
             guard()
