@@ -109,7 +109,7 @@ docker compose exec proxyforge python -c "import json; print(json.load(open('/ap
 
 ## 🔄 日常更新代码指南
 
-Agent B1 提供服务器注册、心跳、在线状态、角色标签与凭据撤销。Agent 主动连接 HTTPS 主控，无入站监听；当前不执行远程任务或安装 sing-box。参见 [Agent 安装与恢复](agent/README.md) 和 [B1 架构、API 与安全边界](docs/AGENT_B1.md)。
+Agent 提供服务器注册、心跳、在线状态、角色标签与凭据撤销。Agent 主动连接 HTTPS 主控，无入站监听；B2 增加受控任务的领取、回报、重试和取消，当前仅支持只读 sing-box 状态查询。参见 [Agent 安装与恢复](agent/README.md)、[B1 注册协议](docs/AGENT_B1.md) 和 [B2 任务协议、迁移与回滚](docs/AGENT_B2.md)。
 
 模板编辑现已使用内容版本进行并发保护：保存冲突时保留草稿，并可在底层配置页查看、比较和恢复历史。旧页面升级后需要刷新；API 保存请求须携带 `expected_revision`。全局导入通过统一接口提交节点、机场和模板。接口、存储恢复与回滚说明见 [模板版本与历史](docs/TEMPLATE_REVISIONS.md)。
 

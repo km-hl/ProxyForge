@@ -1,8 +1,10 @@
-# ProxyForge reference Agent (B1)
+# ProxyForge reference Agent (B2)
 
-This standard-library Python Agent sends inventory to the Controller. It opens
-no listening socket, polls no jobs, installs no sing-box, and changes no firewall.
-Controller and Agent must both include the B1 protocol (version 1).
+This standard-library Python Agent sends inventory and pulls allowlisted jobs.
+It opens no listening socket. B2 supports only `singbox.status`, a read-only
+probe of the independent ProxyForge runtime. It installs no sing-box and changes
+no firewall. Inventory protocol remains version 1; job protocol is version 1.
+Upgrade the Controller before upgrading Agents; B1 Agents remain inventory-only.
 
 ## Install from inspected source
 
@@ -111,3 +113,35 @@ After verifying their paths, an administrator may remove
 `/opt/proxyforge-agent` and `/etc/proxyforge-agent` and the dedicated user if no
 other service uses it. This never removes sing-box or modifies firewall rules.
 There is no remote uninstall or self-upgrade action.
+
+## B2 jobs and upgrading an existing Agent
+
+In **Agent 服务器 → 任务**, create a sing-box status query, refresh its result or
+cancel a pending/running query. The default loop claims at most one job after a
+successful heartbeat, every 30–33 seconds under normal conditions. `run --once`
+performs one heartbeat and at most one job. An unavailable query/Controller uses
+the same bounded backoff. Cancellation rejects further results but cannot stop
+an already executing read-only probe.
+
+Keep one config per directory. The Agent holds `config.lock` while running and
+saves the last 128 results in `job-results.json` beside the config (0600, atomic
+replace/fsync, maximum 256 KiB). Never edit or delete that journal during an
+active attempt. A damaged/mismatched journal stops the process without executing
+jobs; investigate locally before restarting. The journal is bound to Controller,
+Agent and instance identity. See [the protocol guarantees](../docs/AGENT_B2.md)
+for lease limits, crash behavior and retention; this is not exactly-once execution.
+
+For an existing B1 installation, first back up and upgrade the Controller as
+described in the B2 report. On the Agent machine, stop `proxyforge-agent.service`,
+privately back up `/etc/proxyforge-agent`, and back up the installed Python
+package. From a verified B2 checkout, replace the five files `__init__.py`,
+`main.py`, `client.py`, `system_info.py` and `jobs.py`. Preserve root ownership and
+0644 modes under `/opt/proxyforge-agent/agent`, and preserve the private config
+directory, token and instance ID. Start the service and verify heartbeat plus a
+status query. Do not rerun the fresh-install script: it deliberately refuses an
+existing installation. There is no automatic in-place upgrade command.
+
+To roll back just the Agent, stop it and restore the previously backed-up package;
+the B2 Controller continues to accept B1 inventory. Keep the job journal private
+for a later B2 return. Controller rollback to B1 additionally requires restoring
+the pre-migration database; do not lower `schema_migrations` by hand.

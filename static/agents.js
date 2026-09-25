@@ -1,4 +1,66 @@
-/* B1 inventory UI; no execution or deployment buttons. */
+/* Inventory and explicitly allowlisted read-only jobs. */
+const pendingAgentJobRequests = new Map();
+
+function agentCanRunJobs(agent) {
+    return agent.status !== 'revoked' && agent.compatible && agent.metadata.job_protocol_version === 1;
+}
+
+async function showAgentJobs(agent) {
+    openModal('Agent 任务', '<p>仅查询 ProxyForge 独立 sing-box 的状态。任务最多等待 1 小时，断线后可重试。</p>' +
+        '<button class="btn" id="agent-job-create">查询 sing-box 状态</button> ' +
+        '<button class="btn" id="agent-job-refresh">刷新任务</button><p id="agent-job-notice"></p>' +
+        '<div id="agent-job-list"></div>', closeModal);
+    const target = document.getElementById('agent-job-list');
+    const notice = document.getElementById('agent-job-notice');
+    const create = document.getElementById('agent-job-create');
+    create.disabled = !agentCanRunJobs(agent);
+    if (create.disabled) notice.textContent = '此 Agent 尚不支持任务或已撤销，请先升级 Agent。';
+    async function refresh() {
+        const { jobs } = await (await fetchAuth('/agents/' + agent.id + '/jobs')).json();
+        target.replaceChildren();
+        if (!jobs.length) { target.textContent = '暂无任务'; return; }
+        for (const job of jobs) {
+            const row = document.createElement('div');
+            const text = document.createElement('pre'); text.style.whiteSpace = 'pre-wrap';
+            text.textContent = job.id + ' · ' + job.type + ' · ' + job.status + ' · 尝试 ' + job.attempts + '\n' +
+                new Date(job.created_at * 1000).toLocaleString() +
+                (job.result ? '\n' + JSON.stringify(job.result, null, 2) : '') + (job.error ? '\n' + job.error : '');
+            row.append(text);
+            if (['pending', 'assigned', 'running'].includes(job.status)) {
+                const cancel = document.createElement('button'); cancel.className = 'btn'; cancel.textContent = '取消任务';
+                cancel.onclick = async () => {
+                    cancel.disabled = true;
+                    try {
+                        await fetchAuth('/agents/' + agent.id + '/jobs/' + job.id + '/cancel', { method: 'POST' });
+                        await refresh();
+                    } catch (error) { notice.textContent = error.message; cancel.disabled = false; }
+                };
+                row.append(cancel);
+            }
+            target.append(row);
+        }
+    }
+    create.onclick = async () => {
+        create.disabled = true;
+        try {
+            let requestId = pendingAgentJobRequests.get(agent.id);
+            if (!requestId) {
+                // getRandomValues also works when the admin UI is served over HTTP.
+                requestId = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+                pendingAgentJobRequests.set(agent.id, requestId);
+            }
+            await fetchAuth('/agents/' + agent.id + '/jobs', { method: 'POST', body: JSON.stringify({
+                request_id: requestId, type: 'singbox.status', payload: {}, deployment_revision: null
+            }) });
+            pendingAgentJobRequests.delete(agent.id);
+            notice.textContent = '任务已创建；等待 Agent 下次同步。';
+            await refresh().catch(error => { notice.textContent = '任务已创建，刷新列表失败：' + error.message; });
+        } catch (error) { notice.textContent = error.message + '；可重试，同一请求不会重复创建任务。'; }
+        finally { create.disabled = !agentCanRunJobs(agent); }
+    };
+    document.getElementById('agent-job-refresh').onclick = () => refresh().catch(error => { notice.textContent = error.message; });
+    await refresh();
+}
 function agentStatusLabel(agent) {
     const labels = { online: '在线', degraded: '心跳延迟', offline: '离线', never_seen: '等待首次心跳', revoked: '已撤销' };
     return (labels[agent.status] || '未知') + (!agent.compatible ? ' · 协议不兼容' : '') +
@@ -28,7 +90,7 @@ async function refreshAgents() {
                 const cell = document.createElement('td'); cell.textContent = value; row.append(cell);
             }
             const actions = document.createElement('td');
-            for (const [label, action] of [['详情', 'details'], ['编辑', 'edit'], ['撤销', 'revoke'], ['移除', 'remove']]) {
+            for (const [label, action] of [['详情', 'details'], ['任务', 'jobs'], ['编辑', 'edit'], ['撤销', 'revoke'], ['移除', 'remove']]) {
                 const button = document.createElement('button'); button.textContent = label; button.className = 'btn';
                 button.onclick = () => agentAction(agent, action).catch(error => showToast(error.message, 'error'));
                 actions.append(button);
@@ -40,6 +102,10 @@ async function refreshAgents() {
 }
 
 async function agentAction(agent, action) {
+    if (action === 'jobs') {
+        await showAgentJobs(await (await fetchAuth('/agents/' + agent.id)).json());
+        return;
+    }
     if (action === 'details') {
         const current = await (await fetchAuth('/agents/' + agent.id)).json();
         openModal('Agent 详情', '<pre id="agent-detail" style="white-space:pre-wrap"></pre>', closeModal);
@@ -82,7 +148,7 @@ async function addAgent() {
                 '<p>在目标 VPS 下载并审查固定版本的安装程序后运行，将此 token 粘贴到安装程序的隐藏输入提示中。不要放进命令行参数。</p>' +
                 '<input id="agent-registration-token" readonly autocomplete="off">' +
                 '<p id="agent-registration-expiry"></p>' +
-                '<p>注册响应丢失时：检查并移除孤儿 Agent，生成新 token 再注册。B1 只上报状态，不部署节点。</p>',
+                '<p>注册响应丢失时：检查并移除孤儿 Agent，生成新 token 再注册。当前仅支持状态查询任务。</p>',
                 () => { clearRegistrationToken(); closeModal(); });
             document.getElementById('agent-registration-token').value = registration.registration_token;
             document.getElementById('agent-registration-expiry').textContent =
@@ -108,4 +174,4 @@ if (typeof document !== 'undefined') {
             refreshAgents();
     }, 30000);
 }
-if (typeof module !== 'undefined' && module.exports) module.exports = { agentStatusLabel };
+if (typeof module !== 'undefined' && module.exports) module.exports = { agentStatusLabel, agentCanRunJobs };
