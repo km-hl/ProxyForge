@@ -24,7 +24,7 @@ for unit in proxyforge-runtime.socket proxyforge-runtime.service proxyforge-sing
     state=$(systemctl show --property=LoadState --value "$unit")
     [[ $state == not-found ]] || { echo "Existing runtime unit found" >&2; exit 1; }
 done
-for file in runtime_spec.py runtime_download.py runtime_engine.py runtime_helper.py runtime_client.py singbox-release.json proxyforge-runtime.socket proxyforge-runtime.service proxyforge-singbox.service; do
+for file in runtime_spec.py deployment_spec.py runtime_download.py runtime_engine.py runtime_helper.py runtime_client.py singbox-release.json proxyforge-runtime.socket proxyforge-runtime.service proxyforge-singbox.service; do
     [[ -f "$source_dir/$file" ]] || { echo "Incomplete runtime distribution" >&2; exit 1; }
 done
 if id proxyforge-singbox >/dev/null 2>&1; then
@@ -32,7 +32,7 @@ if id proxyforge-singbox >/dev/null 2>&1; then
     exit 1
 fi
 useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin proxyforge-singbox
-for file in runtime_spec.py runtime_download.py runtime_engine.py runtime_helper.py runtime_client.py singbox-release.json; do
+for file in runtime_spec.py deployment_spec.py runtime_download.py runtime_engine.py runtime_helper.py runtime_client.py singbox-release.json; do
     install -m 0644 "$source_dir/$file" "/opt/proxyforge-agent/agent/$file"
 done
 install -d -m 0755 /var/lib/proxyforge-runtime /var/lib/proxyforge-runtime/releases /opt/proxyforge-agent/bin
@@ -40,6 +40,8 @@ ln -s /var/lib/proxyforge-runtime/current/sing-box /opt/proxyforge-agent/bin/sin
 for unit in proxyforge-runtime.socket proxyforge-runtime.service proxyforge-singbox.service; do
     install -m 0644 "$source_dir/$unit" "/etc/systemd/system/$unit"
 done
+printf '1\n' > /opt/proxyforge-agent/deployment-protocol
+chmod 0644 /opt/proxyforge-agent/deployment-protocol
 systemctl daemon-reload
 systemctl enable proxyforge-singbox.service
 systemctl enable --now proxyforge-runtime.socket

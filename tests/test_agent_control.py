@@ -89,7 +89,7 @@ class ControlStoreTest(unittest.TestCase):
         with self.assertRaises(UnauthorizedAgent):
             self.store.heartbeat(enrolled["agent_token"], metadata(), "")
         with self.store.connection() as db:
-            db.execute("INSERT INTO schema_migrations VALUES(3)")
+            db.execute("INSERT INTO schema_migrations VALUES(4)")
         with self.assertRaisesRegex(RuntimeError, "newer"):
             ControlStore(self.path)
 

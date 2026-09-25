@@ -5,3 +5,4 @@ pyyaml
 requests
 cachetools
 python-dotenv
+cryptography==46.0.5

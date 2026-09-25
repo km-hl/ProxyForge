@@ -99,6 +99,17 @@ class RuntimeEngineTest(unittest.TestCase):
         self.assertIsNone(self.engine.pointer('current'))
         self.assertEqual(list((self.root / 'releases').iterdir()), [])
 
+    def test_lost_health_before_receipt_rolls_back_instead_of_caching_success(self):
+        self.engine.apply(job())
+        before = self.engine.pointer('current')
+        change = job('singbox.restart')
+        stopped = {'installed': True, 'running': False, 'version': RELEASE['version'], 'status': 'stopped'}
+        with patch.object(self.engine, 'status', return_value=stopped), self.assertRaises(ValueError):
+            self.engine.apply(change)
+        self.assertNotIn(change['id'], self.engine.receipts())
+        self.assertEqual(self.engine.pointer('current'), before)
+        self.assertEqual(self.backend.running, self.root / before)
+
     def test_lease_loss_before_activation_retains_old_generation(self):
         self.engine.apply(job())
         before = self.engine.pointer('current')

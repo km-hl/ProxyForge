@@ -25,9 +25,10 @@ class CiGenerationTest(unittest.TestCase):
                 config = generator.build_sample(application)
                 self.assertEqual(build.call_count, 1)
                 self.assertEqual(validate.call_count, 2)
-                self.assertEqual(build.call_args.args[:3], (template, nodes, []))
+                self.assertEqual(build.call_args.args[:3], (template, nodes + [generator.managed_sample()], []))
         self.assertEqual(config["proxies"][0]["name"], "🇭🇰 HK CI SOCKS")
-        self.assertEqual(config["proxy-groups"][0]["proxies"], ["🇭🇰 HK CI SOCKS", "DIRECT"])
+        self.assertEqual(config["proxy-groups"][0]["proxies"],
+                         ["🇭🇰 HK CI SOCKS", "DIRECT", generator.managed_sample()['name']])
         self.assertNotIn("use", config["proxy-groups"][0])
         self.assertNotIn("default", config["proxy-groups"][0])
         self.assertNotIn("proxy-providers", config)

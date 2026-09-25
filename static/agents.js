@@ -9,8 +9,71 @@ function agentCanManageRuntime(agent) {
     return agentCanRunJobs(agent) && agent.metadata.supported && agent.metadata.runtime_protocol_version === 1;
 }
 
+function agentCanDeploy(agent) {
+    return agentCanManageRuntime(agent) && agent.metadata.deployment_protocol_version === 1;
+}
+
+async function showAgentDeployment(agent) {
+    const url = '/agents/' + agent.id + '/deployment';
+    let deployment = (await (await fetchAuth(url)).json()).deployment;
+    openModal('VLESS Reality 部署',
+        '<p>每台 Agent 当前支持一个直连节点；首次部署会自动安装固定版本的 sing-box。公网地址、SNI 和防火墙放行需自行确认。</p>' +
+        '<label>名称（创建后固定）</label><input id="deployment-name" maxlength="64">' +
+        '<label>公网 IP / 域名</label><input id="deployment-server" placeholder="vps.example.com">' +
+        '<label>Reality 握手域名 / SNI</label><input id="deployment-sni" placeholder="支持 TLS 1.3 的目标域名">' +
+        '<label>监听端口</label><input id="deployment-port" type="number" min="1" max="65535" value="443">' +
+        '<p>应用会重启该托管实例，可能中断连接。只有最新部署成功后才会生成节点；失败或取消后请重新应用以核实状态。</p>' +
+        '<button class="btn" id="deployment-apply">应用 / 重试</button> ' +
+        '<button class="btn btn-danger" id="deployment-remove">移除监听</button> ' +
+        '<button class="btn" id="deployment-refresh">刷新状态</button><pre id="deployment-state" style="white-space:pre-wrap"></pre>', closeModal);
+    const fields = { name: 'deployment-name', server: 'deployment-server', server_name: 'deployment-sni', listen_port: 'deployment-port' };
+    const status = document.getElementById('deployment-state');
+    const apply = document.getElementById('deployment-apply');
+    const remove = document.getElementById('deployment-remove');
+    function render(fill) {
+        if (fill && deployment) for (const [key, id] of Object.entries(fields)) document.getElementById(id).value = deployment.settings[key];
+        document.getElementById('deployment-name').readOnly = !!deployment;
+        const busy = deployment && ['pending', 'assigned', 'running'].includes(deployment.status);
+        apply.disabled = !agentCanDeploy(agent) || !!busy;
+        remove.disabled = apply.disabled || !deployment;
+        status.textContent = !agentCanDeploy(agent) ? '请升级 Agent 和本地运行环境辅助服务以支持部署。' :
+            deployment ? '版本 ' + deployment.revision + ' · ' + deployment.action + ' · ' + deployment.status +
+                (deployment.error ? '\n' + deployment.error : '') : '尚未创建部署。';
+    }
+    async function refresh() {
+        deployment = (await (await fetchAuth(url)).json()).deployment;
+        render(true);
+    }
+    async function submit(removing) {
+        if (!confirm(removing ? '确认移除该托管实例的公网监听？' : '确认应用 VLESS Reality 配置并重启托管实例？')) return;
+        apply.disabled = true; remove.disabled = true;
+        const settings = removing ? deployment.settings : Object.fromEntries(Object.entries(fields).map(([key, id]) =>
+            [key, key === 'listen_port' ? Number(document.getElementById(id).value) : document.getElementById(id).value.trim()]));
+        const data = { expected_revision: deployment ? deployment.revision : 0, settings, remove: removing };
+        const key = url + ':' + JSON.stringify(data);
+        let requestId = pendingAgentJobRequests.get(key);
+        if (!requestId) {
+            requestId = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+            pendingAgentJobRequests.set(key, requestId);
+        }
+        try {
+            deployment = await (await fetchAuth(url, { method: 'PUT', body: JSON.stringify({ ...data, request_id: requestId }) })).json();
+            pendingAgentJobRequests.delete(key);
+            render(true);
+        } catch (error) {
+            render(false);
+            status.textContent = error.message + '；可重试相同请求。若版本冲突，请刷新后再操作。';
+        }
+    }
+    apply.onclick = () => submit(false);
+    remove.onclick = () => submit(true);
+    document.getElementById('deployment-refresh').onclick = () => refresh().catch(error => { status.textContent = error.message; });
+    render(true);
+}
+
 async function showAgentJobs(agent) {
     const release = await (await fetchAuth('/agents/runtime/release')).json();
+    const owned = (await (await fetchAuth('/agents/' + agent.id + '/deployment')).json()).deployment;
     openModal('Agent 任务', '<p>管理 ProxyForge 独立 sing-box 实例。安装后默认没有公网监听；不会修改用户已有的 sing-box。</p>' +
         '<p>取消任务不能保证中止已开始的服务变更，请刷新状态核实结果。</p>' +
         '<select id="agent-job-action"><option value="singbox.status">查询状态</option></select>' +
@@ -21,13 +84,13 @@ async function showAgentJobs(agent) {
     const notice = document.getElementById('agent-job-notice');
     const create = document.getElementById('agent-job-create');
     const selector = document.getElementById('agent-job-action');
-    if (agentCanManageRuntime(agent)) {
+    if (agentCanManageRuntime(agent) && !owned) {
         for (const [value, label] of [['singbox.install', '安装 / 更新至 ' + release.version],
             ['singbox.start', '启动'], ['singbox.stop', '停止'], ['singbox.restart', '重启'], ['singbox.rollback', '恢复上一次运行版本']]) {
             const option = document.createElement('option'); option.value = value; option.textContent = label; selector.append(option);
         }
     } else {
-        document.getElementById('agent-runtime-notice').textContent = '运行环境管理需要升级 Agent，并在目标机器本地启用辅助服务。';
+        document.getElementById('agent-runtime-notice').textContent = owned ? '该实例已有托管部署，请通过“部署”应用或移除监听。' : '运行环境管理需要升级 Agent，并在目标机器本地启用辅助服务。';
     }
     create.disabled = !agentCanRunJobs(agent);
     if (create.disabled) notice.textContent = '此 Agent 尚不支持任务或已撤销，请先升级 Agent。';
@@ -110,7 +173,7 @@ async function refreshAgents() {
                 const cell = document.createElement('td'); cell.textContent = value; row.append(cell);
             }
             const actions = document.createElement('td');
-            for (const [label, action] of [['详情', 'details'], ['任务', 'jobs'], ['编辑', 'edit'], ['撤销', 'revoke'], ['移除', 'remove']]) {
+            for (const [label, action] of [['详情', 'details'], ['任务', 'jobs'], ['部署', 'deployment'], ['编辑', 'edit'], ['撤销', 'revoke'], ['移除', 'remove']]) {
                 const button = document.createElement('button'); button.textContent = label; button.className = 'btn';
                 button.onclick = () => agentAction(agent, action).catch(error => showToast(error.message, 'error'));
                 actions.append(button);
@@ -122,6 +185,10 @@ async function refreshAgents() {
 }
 
 async function agentAction(agent, action) {
+    if (action === 'deployment') {
+        await showAgentDeployment(await (await fetchAuth('/agents/' + agent.id)).json());
+        return;
+    }
     if (action === 'jobs') {
         await showAgentJobs(await (await fetchAuth('/agents/' + agent.id)).json());
         return;
@@ -168,7 +235,7 @@ async function addAgent() {
                 '<p>在目标 VPS 下载并审查固定版本的安装程序后运行，将此 token 粘贴到安装程序的隐藏输入提示中。不要放进命令行参数。</p>' +
                 '<input id="agent-registration-token" readonly autocomplete="off">' +
                 '<p id="agent-registration-expiry"></p>' +
-                '<p>注册响应丢失时：检查并移除孤儿 Agent，生成新 token 再注册。当前仅支持状态查询任务。</p>',
+                '<p>注册响应丢失时：检查并移除孤儿 Agent，生成新 token 再注册。启用本地辅助服务后可安装运行环境和部署节点。</p>',
                 () => { clearRegistrationToken(); closeModal(); });
             document.getElementById('agent-registration-token').value = registration.registration_token;
             document.getElementById('agent-registration-expiry').textContent =
@@ -194,4 +261,4 @@ if (typeof document !== 'undefined') {
             refreshAgents();
     }, 30000);
 }
-if (typeof module !== 'undefined' && module.exports) module.exports = { agentStatusLabel, agentCanRunJobs, agentCanManageRuntime };
+if (typeof module !== 'undefined' && module.exports) module.exports = { agentStatusLabel, agentCanRunJobs, agentCanManageRuntime, agentCanDeploy };

@@ -85,6 +85,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install deployment crypto dependency
+        run: python -m pip install cryptography==46.0.5
       - name: Verify pinned binary and real systemd activation and rollback
         # Dedicated disposable runner; script refuses pre-existing unit/account.
         run: sudo "$(command -v python)" scripts/check_singbox_runtime.py --disposable-system-test

@@ -7,6 +7,7 @@ import subprocess
 
 from . import VERSION, PROTOCOL_VERSION
 from .runtime_client import available as runtime_available
+from .runtime_client import deployment_available
 
 SUPPORTED = {("debian", "12"), ("debian", "13"), ("ubuntu", "22.04"), ("ubuntu", "24.04")}
 
@@ -58,6 +59,7 @@ def collect(instance_id):
             "machine_id": machine_id, "os": system, "os_version": version, "arch": arch,
             "agent_version": VERSION, "protocol_version": PROTOCOL_VERSION, "job_protocol_version": 1,
             "runtime_protocol_version": 1 if runtime_available() else 0,
+            "deployment_protocol_version": 1 if deployment_available() else 0,
             "uptime": uptime, "addresses": [],
             "supported": (system, version) in SUPPORTED and arch in {"amd64", "arm64"},
             "singbox": singbox_status()}

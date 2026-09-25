@@ -109,7 +109,7 @@ docker compose exec proxyforge python -c "import json; print(json.load(open('/ap
 
 ## 🔄 日常更新代码指南
 
-Agent 提供服务器注册、心跳、在线状态、角色标签与凭据撤销，主动连接 HTTPS 主控，无入站监听。受控任务支持领取、回报、重试和取消；本地可选启用独立 sing-box 运行环境的固定版本安装、启停、重启与回退，初始配置不开放代理监听。参见 [Agent 安装与恢复](agent/README.md)、[B1 注册协议](docs/AGENT_B1.md)、[B2 任务协议](docs/AGENT_B2.md) 和 [B3 托管运行环境](docs/AGENT_B3.md)。
+Agent 提供服务器注册、心跳、在线状态、角色标签与凭据撤销，主动连接 HTTPS 主控，无入站监听。受控任务支持领取、回报、重试和取消；本地可选启用独立 sing-box 运行环境，并从控制台部署直连 VLESS Reality、自动生成客户端节点。参见 [Agent 安装与恢复](agent/README.md)、[B1 注册协议](docs/AGENT_B1.md)、[B2 任务协议](docs/AGENT_B2.md)、[B3 托管运行环境](docs/AGENT_B3.md) 和 [B4 Reality 部署](docs/AGENT_B4.md)。
 
 模板编辑现已使用内容版本进行并发保护：保存冲突时保留草稿，并可在底层配置页查看、比较和恢复历史。旧页面升级后需要刷新；API 保存请求须携带 `expected_revision`。全局导入通过统一接口提交节点、机场和模板。接口、存储恢复与回滚说明见 [模板版本与历史](docs/TEMPLATE_REVISIONS.md)。
 
@@ -210,10 +210,13 @@ docker compose up -d --build
 
 ## 📦 数据迁移指南 (如何无损迁移到新 VPS)
 
-ProxyForge 的所有核心数据和配置均以纯文本文件的形式持久化保存在当前目录下。如果您更换了 VPS 或需要备份，只需带走以下几个核心文件即可完美还原：
+ProxyForge 的配置文件和 Agent 控制面 SQLite 数据库保存在运行数据目录。迁移或备份前应停止服务，保存以下文件；不要在运行时只复制 SQLite 主文件：
 
 - `.env`（监听端口和首次迁移参数）
 - `data/` 文件夹（包含 `config.json`、`template.yaml`、`custom_nodes.yaml`、`airports.yaml` 和节点缓存；若尚未在 WebUI 更换首次管理密钥，还包括 `admin_token.txt`）
+- 使用 Agent 部署时，还必须一起保存 `data/proxyforge.db` 及其 WAL/SHM 文件和 `data/deployment.key`；恢复有部署的数据库必须使用同一把 key。备份含敏感凭据，需限制访问。
+
+Agent 已支持直连 VLESS Reality 的配置生成、失败回滚和自动客户端节点。使用和升级边界见 [B4 部署说明](docs/AGENT_B4.md)。
 
 **迁移步骤：**
 1. 在新 VPS 上克隆项目并进入目录：

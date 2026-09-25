@@ -50,9 +50,22 @@ def isolated_application():
                 sys.modules[MODULE_NAME] = previous_module
 
 
+def managed_sample():
+    from agent.deployment_spec import client_node
+    # Public, deterministic parser fixture, never a deployed credential or private key.
+    import base64
+    return client_node('a' * 32, 'b' * 32, {
+        'name': 'Managed Reality CI', 'server': 'vps.example.com',
+        'server_name': 'www.example.com', 'listen_port': 443,
+        'uuid': '11111111-1111-4111-8111-111111111111', 'short_id': '0123456789abcdef',
+        'public_key': base64.urlsafe_b64encode(bytes(range(32))).decode().rstrip('=')})
+
+
 def build_sample(application):
     template = yaml.safe_load((INPUTS / "sample-template.yaml").read_text(encoding="utf-8"))
     nodes = yaml.safe_load((INPUTS / "nodes.yaml").read_text(encoding="utf-8"))
+    # Exercise the same client projection used after a managed deployment succeeds.
+    nodes.append(managed_sample())
     # No airports: this sample cannot contain a subscription URL or real token.
     # Do not mock, copy or extract the builder or either static validation gate.
     return application.build_subscription_config(
