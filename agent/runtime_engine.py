@@ -159,8 +159,11 @@ class RuntimeEngine:
         return {'installed': True, 'running': running, 'version': version, 'status': 'running' if running else 'stopped'}
 
     def finish(self, transaction):
+        output = self.status()
+        if not output['installed'] or output['running'] != transaction['running']:
+            raise ValueError('Runtime lost health before commit')
         self.set_pointer('previous', transaction['old'] if transaction['new'] != transaction['old'] else transaction['previous'])
-        result = {'status': 'success', 'output': self.status(), 'error': None}
+        result = {'status': 'success', 'output': output, 'error': None}
         receipts = self.receipts()
         receipts[transaction['job']['id']] = {'revision': transaction['job']['deployment_revision'], 'result': result}
         write_json(self.root / 'receipts.json', dict(list(receipts.items())[-128:]))

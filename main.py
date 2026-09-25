@@ -229,6 +229,12 @@ def managed_nodes():
     return [{**node, '_airport_name': CUSTOM_NODES_SOURCE} for node in control_store().managed_nodes()]
 
 
+def managed_node_names():
+    if not (Path(DATA_DIR) / 'proxyforge.db').exists():
+        return []
+    return control_store().managed_node_names()
+
+
 @configuration_locked
 def load_custom_nodes() -> List[Dict[str, Any]]:
     return load_manual_nodes() + managed_nodes()
@@ -1517,9 +1523,9 @@ def cleanup_runtime_template_references() -> Dict[str, Any]:
         return {"proxyReferences": [], "providerReferences": [], "total": 0}
 
     custom_names = [
-        proxy.get("name") for proxy in load_custom_nodes()
+        proxy.get("name") for proxy in load_manual_nodes()
         if isinstance(proxy, dict) and proxy.get("name")
-    ]
+    ] + managed_node_names()
     provider_names = [
         get_airport_name(item, index) for index, item in enumerate(load_airports())
     ]
@@ -1544,23 +1550,29 @@ def build_subscription_config(
     airports: List[Any],
     base_url: str,
     token: str,
+    managed_references=(),
 ) -> Dict[str, Any]:
     config = copy.deepcopy(template_config)
     if not isinstance(config, dict):
         raise ConfigValidationError(["模板根节点必须是 YAML 对象"])
 
+    unpublished_managed = set(managed_references) - {
+        proxy.get('name') for proxy in custom_proxies if isinstance(proxy, dict)}
     cleanup_proxy_group_references(
         config,
         valid_proxy_names=[
             proxy.get("name") for proxy in custom_proxies
             if isinstance(proxy, dict) and proxy.get("name")
-        ],
+        ] + list(managed_references),
         valid_provider_names=[
             get_airport_name(item, index) for index, item in enumerate(airports)
         ],
     )
 
     output_proxies, proxy_name_map = decorate_proxy_names(custom_proxies)
+    # Resolve withheld managed targets only in this output, never in the saved template.
+    # Falling back to DIRECT here would bypass the user's selected proxy route.
+    proxy_name_map.update({name: 'REJECT' for name in unpublished_managed})
     config["proxies"] = output_proxies
 
     existing_providers = config.get("proxy-providers", {}) or {}
@@ -1631,6 +1643,9 @@ def build_subscription_config(
                     output_name = proxy_name_map.get(original_name, original_name)
                     if output_name not in final_refs:
                         final_refs.append(output_name)
+                if not final_refs and not use_names and any(
+                        not compiled_filter or compiled_filter.search(name) for name in unpublished_managed):
+                    final_refs.append('REJECT')
 
             default_value = proxy_name_map.get(group.get("default"), group.get("default"))
             if default_value in final_refs:
@@ -1772,6 +1787,7 @@ def get_subscription(
             airports,
             str(request.base_url).rstrip("/"),
             token,
+            managed_references=managed_node_names(),
         )
         yaml_content = yaml.safe_dump(final_config, allow_unicode=True, sort_keys=False)
         
@@ -2115,7 +2131,7 @@ def validate_template(data: TemplateModel):
     result = validate_network_config(config)
     errors = validate_mihomo_config(
         config,
-        external_proxy_names=[node.get("name") for node in load_custom_nodes() if isinstance(node, dict)],
+        external_proxy_names=[node.get("name") for node in load_manual_nodes() if isinstance(node, dict)] + managed_node_names(),
         external_provider_names=[get_airport_name(item, index) for index, item in enumerate(load_airports())],
         allow_internal_sources=True,
     )
@@ -2145,7 +2161,7 @@ def validate_saved_template(content, nodes, airports):
     custom_names = [
         proxy.get("name") for proxy in nodes
         if isinstance(proxy, dict) and proxy.get("name")
-    ]
+    ] + managed_node_names()
     errors = validate_mihomo_config(
         config,
         external_proxy_names=custom_names,

@@ -66,6 +66,8 @@ Agent 仍仅使用 Python 标准库；cryptography 仅装在 Controller。配置
 
 更新、失败、取消或移除期间会撤回自动节点，即使远端可能仍在运行上一版。失败不是已停机的证明；应用开始后的取消也不保证远端回滚。重新应用生成新任务来收敛状态。控制台显示的是任务结果，不声称验证了公网端到端可用性。
 
+撤回发布不删除节点归属：只要部署记录还存在，其固定名称就保留为合法模板引用。订阅请求不会因 pending/failed/remove/revoke 永久清除这些引用；生成输出时将未发布的显式节点目标映射为 REJECT，只有未发布托管节点可选的自建节点池也使用 REJECT。部署恢复成功后自动恢复原引用。普通路由规则的目标同样映射；用户明确写入的 DIRECT 选项保持原意。删除 Agent 及其部署记录后才适用原有的失效引用清理。
+
 已有部署时禁止通用 install/start/stop/restart/rollback 修改该实例，避免绕过期望配置导致节点错误。需要重启时重新应用部署；需要关闭监听时执行移除。B4 尚无独立运行环境升级入口。
 
 ## 7. Job schema 与执行
@@ -75,6 +77,8 @@ Agent 仍仅使用 Python 标准库；cryptography 仅装在 Controller。配置
 首次部署自动下载、校验固定版本 sing-box；已有实例复用受控二进制。新配置进入独立 release，使用隔离 runtime 用户运行 `sing-box check`，原子切换 current 后重启固定 unit。健康检查核对实际 PID/exe，并连接本机 IPv6 监听端口。失败恢复旧文件、指针和原运行状态。事务恢复、receipt 重放、续租、断连隔离沿用 B3。
 
 runtime 用户保持非 root；新增且仅新增 `CAP_NET_BIND_SERVICE` bounding/ambient capability，用于 443 等低端口。没有 NET_ADMIN、TUN、透明代理或自动防火墙操作。Reality 为 TCP + `xtls-rprx-vision`，出口 direct。
+
+写入成功 receipt 前再次核对实际状态与本次期望运行状态；若此时已失去健康状态，走失败回滚，不缓存一个无法被 Controller 接受的成功结果。
 
 ## 8. 测试
 

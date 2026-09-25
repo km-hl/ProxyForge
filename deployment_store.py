@@ -9,7 +9,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, PublicFormat, NoEncryption
 
-from agent.deployment_spec import client_node, spec_hash, validate_settings
+from agent.deployment_spec import client_node, node_name, spec_hash, validate_settings
 from job_store import JobConflict, JobNotFound
 
 
@@ -117,6 +117,13 @@ class DeploymentStoreMixin:
                        (identifier, agent_id, json.dumps(settings), expected_revision + 1, encrypted, job['id'], self.clock()))
             self._audit(db, 'deployment_requested', agent_id)
             return self._deployment_view(db, db.execute('SELECT * FROM deployments WHERE id=?', (identifier,)).fetchone())
+
+    def managed_node_names(self):
+        # Ownership outlives temporary publication (pending, failed, removed or revoked).
+        # This query requires no credentials and must not depend on an active job result.
+        with self.connection() as db:
+            return [node_name(row['id'], json.loads(row['settings'])['name'])
+                    for row in db.execute('SELECT id,settings FROM deployments')]
 
     def managed_nodes(self):
         with self.connection() as db:

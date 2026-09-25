@@ -212,6 +212,55 @@ class DeploymentSpecTest(unittest.TestCase):
 
 
 class DeploymentApiTest(unittest.TestCase):
+    def test_unpublished_deployment_keeps_template_references_and_blocks_output(self):
+        import yaml
+        from fastapi.testclient import TestClient
+        from test_api_integration import load_isolated_application, TEST_ADMIN_TOKEN, TEST_SUBSCRIPTION_TOKEN
+        with tempfile.TemporaryDirectory() as temp:
+            app = load_isolated_application(Path(temp))
+            store = app.control_store()
+            info = {**capable(), 'runtime_protocol_version': 1, 'deployment_protocol_version': 1}
+            agent = store.register(store.issue_registration('VPS')['registration_token'], info, '')
+            def apply(expected):
+                return store.put_deployment(agent['agent_id'], uuid.uuid4().hex, expected, SETTINGS)
+            def complete(result):
+                job = store.claim_job(agent['agent_token'], info['instance_id'])
+                store.report_job(agent['agent_token'], job['id'], job['lease_token'])
+                store.report_job(agent['agent_token'], job['id'], job['lease_token'], result)
+            apply(0)
+            complete(RESULT)
+            name = store.managed_nodes()[0]['name']
+            template = {'proxy-groups': [
+                {'name': 'Selected', 'type': 'select', 'proxies': [name], 'default': name},
+                {'name': 'Pool', 'type': 'select', 'use': ['_custom_nodes_']}],
+                'rules': ['DOMAIN,example.com,' + name, 'MATCH,Selected']}
+            content = yaml.safe_dump(template, allow_unicode=True, sort_keys=False)
+            app.save_template_content(content)
+            admin = {'Authorization': 'Bearer ' + TEST_ADMIN_TOKEN}
+            with TestClient(app.app) as client, patch.object(app, 'get_airport_proxies_cached', return_value=[]):
+                before = app.template_store().snapshot()
+                apply(1)
+                for state in ('pending', 'failed'):
+                    with self.subTest(state=state):
+                        response = client.get('/sub', params={'token': TEST_SUBSCRIPTION_TOKEN})
+                        self.assertEqual(app.template_store().snapshot(), before)
+                        self.assertEqual(response.status_code, 200, response.text)
+                        output = yaml.safe_load(response.text)
+                        self.assertEqual(output['proxy-groups'][0]['proxies'], ['REJECT'])
+                        self.assertEqual(output['proxy-groups'][1]['proxies'], ['REJECT'])
+                        self.assertEqual(output['rules'][0], 'DOMAIN,example.com,REJECT')
+                        validation = client.post('/api/template/validate', headers=admin, json={'content': content})
+                        self.assertEqual(validation.json()['errors'], [])
+                        app.validate_saved_template(content, app.load_custom_nodes(), [])
+                    if state == 'pending':
+                        complete({'status': 'failed', 'output': None, 'error': 'runtime_failed'})
+                apply(2)
+                complete(RESULT)
+                restored = client.get('/sub', params={'token': TEST_SUBSCRIPTION_TOKEN})
+                self.assertEqual(restored.status_code, 200, restored.text)
+                self.assertEqual(yaml.safe_load(restored.text)['proxy-groups'][0]['proxies'], [name])
+                self.assertEqual(app.template_store().snapshot(), before)
+
     def test_auth_validation_and_automatic_readonly_nodes(self):
         from fastapi.testclient import TestClient
         from test_api_integration import load_isolated_application, TEST_ADMIN_TOKEN

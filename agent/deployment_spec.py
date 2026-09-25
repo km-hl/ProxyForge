@@ -79,8 +79,12 @@ def runtime_config(spec):
     }], 'outbounds': [{'type': 'direct', 'tag': 'direct'}]}
 
 
+def node_name(identifier, name):
+    return name + ' [pf:' + identifier + ']'
+
+
 def client_node(identifier, agent_id, spec):
-    return {'name': spec['name'] + ' [pf:' + identifier + ']', 'type': 'vless',
+    return {'name': node_name(identifier, spec['name']), 'type': 'vless',
             'server': spec['server'], 'port': spec['listen_port'], 'uuid': spec['uuid'],
             'network': 'tcp', 'tls': True, 'udp': True, 'flow': 'xtls-rprx-vision',
             'servername': spec['server_name'], 'client-fingerprint': 'chrome',
