@@ -22,6 +22,26 @@ def job(action):
             'deployment_revision': revision(identifier, action, payload)}
 
 
+def check_installer_preflight(root):
+    """Execute the real installer against an intentionally untrusted package."""
+    installed = root / 'untrusted-agent'
+    (installed / 'agent').mkdir(parents=True)
+    marker = root / 'unexpected-root-import'
+    (installed / 'agent' / '__init__.py').write_text(
+        'from pathlib import Path\nPath(' + repr(str(marker)) + ').write_text("executed")\n')
+    installed.chmod(0o777)
+    credentials = root / 'test-credentials'
+    credentials.mkdir()
+    (credentials / 'config.json').write_text('{}')
+    script = (Path(__file__).resolve().parents[1] / 'agent/install-runtime.sh').read_text()
+    script = script.replace('/opt/proxyforge-agent', str(installed)).replace('/etc/proxyforge-agent', str(credentials))
+    candidate = root / 'check-installer.sh'
+    candidate.write_text(script)
+    result = subprocess.run(['bash', str(candidate)], capture_output=True, text=True, timeout=10)
+    assert result.returncode != 0 and 'root-owned' in result.stderr, 'Unsafe package was not rejected by preflight'
+    assert not marker.exists(), 'Installer executed untrusted package before its ownership check'
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--disposable-system-test', action='store_true', required=True)
@@ -42,6 +62,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='proxyforge-system-test-', dir='/var/lib') as temporary:
         root = Path(temporary)
         root.chmod(0o755)
+        check_installer_preflight(root)
         cache = root / 'cache'
         cache.mkdir()
         download_binary(cache, 'amd64')

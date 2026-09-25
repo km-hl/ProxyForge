@@ -5,6 +5,16 @@ set -euo pipefail
 source_dir=$(cd -- "$(dirname -- "$0")" && pwd)
 [[ -d /opt/proxyforge-agent/agent && -f /etc/proxyforge-agent/config.json ]] || { echo "Install Agent first" >&2; exit 1; }
 cd /opt/proxyforge-agent
+# Verify installed code before importing any of it as root. Isolated Python
+# keeps the writable current directory off sys.path during this preflight.
+/usr/bin/python3 -I - <<'PY'
+from pathlib import Path
+root = Path('/opt/proxyforge-agent')
+for path in [root, *root.parents, *root.rglob('*')]:
+    info = path.lstat()
+    if path.is_symlink() or info.st_uid != 0 or info.st_mode & 0o022:
+        raise SystemExit('Agent package must be root-owned and not group/world writable')
+PY
 /usr/bin/python3 -I -c "import sys; sys.path.insert(0, '/opt/proxyforge-agent'); from agent.system_info import os_release, SUPPORTED; import platform; assert os_release() in SUPPORTED and platform.machine() in ('x86_64','aarch64')"
 for path in /var/lib/proxyforge-runtime /etc/systemd/system/proxyforge-runtime.socket /etc/systemd/system/proxyforge-runtime.service /etc/systemd/system/proxyforge-singbox.service /opt/proxyforge-agent/bin/sing-box /run/proxyforge-runtime.sock; do
     [[ ! -e $path && ! -L $path ]] || { echo "Existing managed runtime path found; follow the upgrade/recovery guide" >&2; exit 1; }
@@ -14,16 +24,6 @@ for unit in proxyforge-runtime.socket proxyforge-runtime.service proxyforge-sing
     state=$(systemctl show --property=LoadState --value "$unit")
     [[ $state == not-found ]] || { echo "Existing runtime unit found" >&2; exit 1; }
 done
-# Do not grant a root helper access to Agent-writable code or parent directories.
-/usr/bin/python3 -I - <<'PY'
-import os, stat
-from pathlib import Path
-root = Path('/opt/proxyforge-agent')
-for path in [root, *root.parents, *root.rglob('*')]:
-    info = path.lstat()
-    if path.is_symlink() or info.st_uid != 0 or info.st_mode & 0o022:
-        raise SystemExit('Agent package must be root-owned and not group/world writable')
-PY
 for file in runtime_spec.py runtime_download.py runtime_engine.py runtime_helper.py runtime_client.py singbox-release.json proxyforge-runtime.socket proxyforge-runtime.service proxyforge-singbox.service; do
     [[ -f "$source_dir/$file" ]] || { echo "Incomplete runtime distribution" >&2; exit 1; }
 done
