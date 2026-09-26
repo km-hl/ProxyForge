@@ -154,7 +154,7 @@ class DeploymentStoreTest(unittest.TestCase):
 
     def test_v2_migration_and_atomic_failure(self):
         path = self.root / 'v2.db'
-        with patch('control_store.migrate_deployments'):
+        with patch('control_store.migrate_deployments'), patch('control_store.migrate_landings'):
             old = ControlStore(path)
         registered = old.register(old.issue_registration('old')['registration_token'], capable(), '')
         def broken(db):

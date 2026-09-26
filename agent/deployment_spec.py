@@ -26,11 +26,15 @@ def host(value, domain_only=False):
 def validate_settings(settings):
     if not isinstance(settings, dict) or set(settings) != {'name', 'server', 'server_name', 'listen_port'}:
         raise ValueError('Invalid deployment settings')
+    validate_endpoint(settings)
+    host(settings['server_name'], domain_only=True)
+
+
+def validate_endpoint(settings):
     name = settings['name']
     if not isinstance(name, str) or not name.strip() or len(name) > 64 or any(ord(c) < 32 for c in name):
         raise ValueError('Invalid name')
     host(settings['server'])
-    host(settings['server_name'], domain_only=True)
     if type(settings['listen_port']) is not int or not 1 <= settings['listen_port'] <= 65535:
         raise ValueError('Invalid port')
 

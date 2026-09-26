@@ -8,8 +8,7 @@ import struct
 import time
 
 from .runtime_engine import RuntimeEngine, RuntimeCancelled, RollbackFailed, SystemBackend
-from .runtime_spec import validate_runtime_job
-from .deployment_spec import DEPLOYMENT_ACTIONS
+from .runtime_spec import CONFIG_ACTIONS, validate_runtime_job
 from .system_info import os_release, SUPPORTED
 
 ROOT = Path('/var/lib/proxyforge-runtime')
@@ -33,7 +32,7 @@ def receive_job(connection):
         data += block
     job = json.loads(data)
     expected = {'id', 'type', 'payload', 'deployment_revision'}
-    if isinstance(job, dict) and job.get('type') in DEPLOYMENT_ACTIONS:
+    if isinstance(job, dict) and job.get('type') in CONFIG_ACTIONS:
         expected.add('deployment')
     if not isinstance(job, dict) or set(job) != expected:
         raise ValueError('Invalid runtime request')

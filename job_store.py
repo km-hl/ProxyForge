@@ -3,8 +3,9 @@ import hmac
 import json
 import secrets
 import uuid
-from agent.runtime_spec import RUNTIME_ACTIONS, revision, validate_action
+from agent.runtime_spec import RUNTIME_ACTIONS, CONFIG_ACTIONS, revision, validate_action
 from agent.deployment_spec import DEPLOYMENT_ACTIONS
+from agent.landing_spec import LANDING_ACTIONS
 
 JOB_PROTOCOL_VERSION = 1
 LEASE_SECONDS = 60
@@ -65,7 +66,7 @@ class JobStoreMixin:
         return row
 
     def create_job(self, agent_id, request_id, action='singbox.status', payload=None):
-        if action in DEPLOYMENT_ACTIONS:
+        if action in CONFIG_ACTIONS:
             raise JobConflict()  # Only the atomic desired-state API may enqueue these.
         payload = {} if payload is None else payload
         if action != 'singbox.status':
@@ -154,7 +155,7 @@ class JobStoreMixin:
             result = self._job_view(db.execute("SELECT * FROM jobs WHERE id=?", (row["id"],)).fetchone())
             result["lease_token"] = lease
             result["job_protocol_version"] = JOB_PROTOCOL_VERSION
-            if row['type'] in DEPLOYMENT_ACTIONS:
+            if row['type'] in CONFIG_ACTIONS:
                 result['deployment'] = self._decrypt_spec(db, row['secret_payload'])
             return result
 
@@ -164,6 +165,8 @@ class JobStoreMixin:
             if metadata.get('runtime_protocol_version') != 1 or metadata.get('supported') is not True:
                 raise JobConflict()
             if action in DEPLOYMENT_ACTIONS and metadata.get('deployment_protocol_version') != 1:
+                raise JobConflict()
+            if action in LANDING_ACTIONS and metadata.get('landing_protocol_version') != 1:
                 raise JobConflict()
 
     def report_job(self, token, job_id, lease, result=None, renew=False):
@@ -197,7 +200,7 @@ class JobStoreMixin:
             if row["status"] != "running":
                 raise JobConflict()
             status = result["status"]
-            if row['type'] in DEPLOYMENT_ACTIONS and status == 'success':
+            if row['type'] in CONFIG_ACTIONS and status == 'success':
                 output = result.get('output') or {}
                 if output.get('installed') is not True or output.get('running') is not True:
                     raise JobConflict()

@@ -10,8 +10,9 @@ import subprocess
 import time
 
 from .runtime_download import download_binary
-from .runtime_spec import RELEASE, validate_runtime_job
-from .deployment_spec import DEPLOYMENT_ACTIONS, runtime_config
+from .runtime_spec import RELEASE, CONFIG_ACTIONS, validate_runtime_job
+from .deployment_spec import runtime_config
+from .landing_spec import runtime_config as landing_config
 
 UNIT = 'proxyforge-singbox.service'
 EMPTY_CONFIG = {'log': {'level': 'warn'}, 'inbounds': [], 'outbounds': [{'type': 'direct', 'tag': 'direct'}]}
@@ -225,7 +226,7 @@ class RuntimeEngine:
         current, previous = self.pointer('current'), self.pointer('previous')
         was_running = self.backend.active()
         action = job['type']
-        if action not in ('singbox.install', *DEPLOYMENT_ACTIONS) and not current:
+        if action not in ('singbox.install', *CONFIG_ACTIONS) and not current:
             raise ValueError('Runtime is not installed')
         if action == 'singbox.rollback' and not previous:
             raise ValueError('No previous release')
@@ -249,7 +250,7 @@ class RuntimeEngine:
             candidate.mkdir(mode=0o750)
             try:
                 source = previous if action == 'singbox.rollback' else current
-                if action == 'singbox.install' or (action in DEPLOYMENT_ACTIONS and not current):
+                if action == 'singbox.install' or (action in CONFIG_ACTIONS and not current):
                     self.downloader(candidate, self.arch, guard)
                     release_info = {'version': RELEASE['version']}
                 else:
@@ -258,7 +259,9 @@ class RuntimeEngine:
                 config = json.loads((self.root / source / 'config.json').read_text()) if source else EMPTY_CONFIG
                 if action == 'deployment.apply':
                     config = runtime_config(job['deployment'])
-                elif action == 'deployment.remove':
+                elif action == 'landing.apply':
+                    config = landing_config(job['deployment'])
+                elif action in ('deployment.remove', 'landing.remove'):
                     config = EMPTY_CONFIG
                 write_json(candidate / 'config.json', config)
                 write_json(candidate / 'release.json', release_info, 0o644)
@@ -274,7 +277,7 @@ class RuntimeEngine:
                 raise
         transaction = {'job': {key: job[key] for key in ('id', 'type', 'payload', 'deployment_revision')},
                        'old': current, 'previous': previous, 'new': new, 'was_running': was_running, 'running': running}
-        if action in DEPLOYMENT_ACTIONS:
+        if action in CONFIG_ACTIONS:
             transaction['job']['deployment'] = job['deployment']
         write_json(self.root / 'transaction.json', transaction)
         try:

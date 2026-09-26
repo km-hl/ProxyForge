@@ -28,14 +28,14 @@ if [[ -e /opt/proxyforge-agent || -e /etc/proxyforge-agent || -e /etc/systemd/sy
     echo "Existing Agent installation found. Follow the documented recovery/upgrade procedure; nothing overwritten." >&2
     exit 1
 fi
-for file in __init__.py main.py client.py system_info.py jobs.py job_lease.py runtime_spec.py deployment_spec.py runtime_download.py runtime_engine.py runtime_client.py singbox-release.json proxyforge-agent.service; do
+for file in __init__.py main.py client.py system_info.py jobs.py job_lease.py runtime_spec.py deployment_spec.py landing_spec.py runtime_download.py runtime_engine.py runtime_client.py singbox-release.json proxyforge-agent.service; do
     [[ -f "$source_dir/$file" ]] || { echo "Incomplete Agent distribution"; exit 1; }
 done
 if ! id proxyforge-agent >/dev/null 2>&1; then
     useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin proxyforge-agent
 fi
 install -d -m 0755 /opt/proxyforge-agent/agent
-for file in __init__.py main.py client.py system_info.py jobs.py job_lease.py runtime_spec.py deployment_spec.py runtime_download.py runtime_engine.py runtime_client.py singbox-release.json; do
+for file in __init__.py main.py client.py system_info.py jobs.py job_lease.py runtime_spec.py deployment_spec.py landing_spec.py runtime_download.py runtime_engine.py runtime_client.py singbox-release.json; do
     install -m 0644 "$source_dir/$file" "/opt/proxyforge-agent/agent/$file"
 done
 install -d -m 0700 -o proxyforge-agent -g proxyforge-agent /etc/proxyforge-agent
