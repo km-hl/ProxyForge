@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { agentStatusLabel, agentCanRunJobs, agentCanManageRuntime, agentCanDeploy } = require('../static/agents.js');
+const { agentStatusLabel, agentCanRunJobs, agentCanManageRuntime, agentCanDeploy, agentCanLand } = require('../static/agents.js');
 
 test('inventory separates online state, compatibility and supported platform', () => {
     const agent = { status: 'online', compatible: true, metadata: { supported: true } };
@@ -45,4 +45,15 @@ test('deployment requires its own upgraded helper capability', () => {
     assert.equal(agentCanDeploy(agent), true);
     agent.status = 'revoked';
     assert.equal(agentCanDeploy(agent), false);
+});
+
+test('landing capability is independent from Reality and requires the runtime', () => {
+    const agent = { status: 'online', compatible: true, metadata: { job_protocol_version: 1, runtime_protocol_version: 1, deployment_protocol_version: 1, supported: true } };
+    assert.equal(agentCanLand(agent), false);
+    agent.metadata.landing_protocol_version = 1;
+    agent.metadata.deployment_protocol_version = 0;
+    assert.equal(agentCanLand(agent), true);
+    assert.equal(agentCanDeploy(agent), false);
+    agent.metadata.runtime_protocol_version = 0;
+    assert.equal(agentCanLand(agent), false);
 });

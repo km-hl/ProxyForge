@@ -13,16 +13,22 @@ function agentCanDeploy(agent) {
     return agentCanManageRuntime(agent) && agent.metadata.deployment_protocol_version === 1;
 }
 
+function agentCanLand(agent) {
+    return agentCanManageRuntime(agent) && agent.metadata.landing_protocol_version === 1;
+}
+
 async function showAgentDeployment(agent) {
     const url = '/agents/' + agent.id + '/deployment';
     let deployment = (await (await fetchAuth(url)).json()).deployment;
-    openModal('VLESS Reality 部署',
-        '<p>每台 Agent 当前支持一个直连节点；首次部署会自动安装固定版本的 sing-box。公网地址、SNI 和防火墙放行需自行确认。</p>' +
+    openModal('节点 / 落地部署',
+        '<p>每台 Agent 当前支持一种部署，创建后不能切换协议。首次部署自动安装固定版本的 sing-box；公网地址与防火墙放行需自行确认。</p>' +
+        '<label>部署类型</label><select id="deployment-protocol"><option value="vless-reality">VLESS Reality 直连节点</option><option value="ss2022">SS2022 落地</option></select>' +
+        '<p id="deployment-help"></p>' +
         '<label>名称（创建后固定）</label><input id="deployment-name" maxlength="64">' +
         '<label>公网 IP / 域名</label><input id="deployment-server" placeholder="vps.example.com">' +
-        '<label>Reality 握手域名 / SNI</label><input id="deployment-sni" placeholder="支持 TLS 1.3 的目标域名">' +
+        '<div id="deployment-reality-fields"><label>Reality 握手域名 / SNI</label><input id="deployment-sni" placeholder="支持 TLS 1.3 的目标域名"></div>' +
         '<label>监听端口</label><input id="deployment-port" type="number" min="1" max="65535" value="443">' +
-        '<p>应用会重启该托管实例，可能中断连接。只有最新部署成功后才会生成节点；失败或取消后请重新应用以核实状态。</p>' +
+        '<p>应用会重启该托管实例，可能中断连接；失败或取消后请重新应用以核实状态。</p>' +
         '<button class="btn" id="deployment-apply">应用 / 重试</button> ' +
         '<button class="btn btn-danger" id="deployment-remove">移除监听</button> ' +
         '<button class="btn" id="deployment-refresh">刷新状态</button><pre id="deployment-state" style="white-space:pre-wrap"></pre>', closeModal);
@@ -30,13 +36,24 @@ async function showAgentDeployment(agent) {
     const status = document.getElementById('deployment-state');
     const apply = document.getElementById('deployment-apply');
     const remove = document.getElementById('deployment-remove');
+    const protocol = document.getElementById('deployment-protocol');
     function render(fill) {
-        if (fill && deployment) for (const [key, id] of Object.entries(fields)) document.getElementById(id).value = deployment.settings[key];
+        if (fill && deployment) {
+            protocol.value = deployment.protocol;
+            for (const [key, id] of Object.entries(fields)) document.getElementById(id).value = deployment.settings[key] ?? '';
+        }
+        protocol.disabled = !!deployment;
+        const landing = protocol.value === 'ss2022';
+        document.getElementById('deployment-reality-fields').hidden = landing;
+        document.getElementById('deployment-help').textContent = landing ?
+            'SS2022 落地使用 2022-blake3-aes-256-gcm，自动生成并保管密码，同时监听 TCP/UDP。落地不直接出现在客户端订阅；入口关联将在链路编排阶段提供。' :
+            '填写支持 TLS 1.3 的 Reality 握手域名。部署成功后自动生成只读客户端节点。';
+        const capable = landing ? agentCanLand(agent) : agentCanDeploy(agent);
         document.getElementById('deployment-name').readOnly = !!deployment;
         const busy = deployment && ['pending', 'assigned', 'running'].includes(deployment.status);
-        apply.disabled = !agentCanDeploy(agent) || !!busy;
+        apply.disabled = !capable || !!busy;
         remove.disabled = apply.disabled || !deployment;
-        status.textContent = !agentCanDeploy(agent) ? '请升级 Agent 和本地运行环境辅助服务以支持部署。' :
+        status.textContent = !capable ? '请升级 Agent 和本地运行环境辅助服务以支持所选部署。' :
             deployment ? '版本 ' + deployment.revision + ' · ' + deployment.action + ' · ' + deployment.status +
                 (deployment.error ? '\n' + deployment.error : '') : '尚未创建部署。';
     }
@@ -45,11 +62,15 @@ async function showAgentDeployment(agent) {
         render(true);
     }
     async function submit(removing) {
-        if (!confirm(removing ? '确认移除该托管实例的公网监听？' : '确认应用 VLESS Reality 配置并重启托管实例？')) return;
+        if (!confirm(removing ? '确认移除该托管实例的公网监听？' : '确认应用配置并重启该托管实例？')) return;
         apply.disabled = true; remove.disabled = true;
         const settings = removing ? deployment.settings : Object.fromEntries(Object.entries(fields).map(([key, id]) =>
             [key, key === 'listen_port' ? Number(document.getElementById(id).value) : document.getElementById(id).value.trim()]));
-        const data = { expected_revision: deployment ? deployment.revision : 0, settings, remove: removing };
+        if (!removing && protocol.value === 'ss2022') {
+            delete settings.server_name;
+            settings.method = '2022-blake3-aes-256-gcm';
+        }
+        const data = { expected_revision: deployment ? deployment.revision : 0, settings, remove: removing, protocol: protocol.value };
         const key = url + ':' + JSON.stringify(data);
         let requestId = pendingAgentJobRequests.get(key);
         if (!requestId) {
@@ -67,6 +88,10 @@ async function showAgentDeployment(agent) {
     }
     apply.onclick = () => submit(false);
     remove.onclick = () => submit(true);
+    protocol.onchange = () => {
+        if (!deployment) document.getElementById('deployment-port').value = protocol.value === 'ss2022' ? '8388' : '443';
+        render(false);
+    };
     document.getElementById('deployment-refresh').onclick = () => refresh().catch(error => { status.textContent = error.message; });
     render(true);
 }
@@ -261,4 +286,4 @@ if (typeof document !== 'undefined') {
             refreshAgents();
     }, 30000);
 }
-if (typeof module !== 'undefined' && module.exports) module.exports = { agentStatusLabel, agentCanRunJobs, agentCanManageRuntime, agentCanDeploy };
+if (typeof module !== 'undefined' && module.exports) module.exports = { agentStatusLabel, agentCanRunJobs, agentCanManageRuntime, agentCanDeploy, agentCanLand };

@@ -1,4 +1,4 @@
-# ProxyForge reference Agent (B4)
+# ProxyForge reference Agent (B5a)
 
 This standard-library Python Agent sends inventory and pulls allowlisted jobs.
 It opens no network listener. B3 optionally manages one independent sing-box
@@ -12,6 +12,11 @@ public endpoint, SNI and port. First deployment installs the pinned runtime if
 needed. Successful deployment automatically publishes a read-only client node.
 Deployment capability is separately versioned; do not advertise it until both
 the helper package and the low-port-capable systemd unit have been upgraded.
+For a dedicated SS2022 landing, select **SS2022 落地** in the same deployment
+dialog after upgrading to Agent 0.5.0 and its helper. See
+[B5a capability, migration and recovery](../docs/AGENT_B5_LANDING.md).
+Landing passwords are generated and kept by the control plane; landings do not
+appear as client subscription nodes. Entry-to-landing orchestration is a later stage.
 
 ## Install from inspected source
 

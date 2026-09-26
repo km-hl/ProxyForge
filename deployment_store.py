@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, PublicFormat, NoEncryption
 
 from agent.deployment_spec import client_node, node_name, spec_hash, validate_settings
+from agent.landing_spec import validate_settings as validate_landing_settings
 from job_store import JobConflict, JobNotFound
 
 
@@ -32,6 +33,16 @@ def new_spec(settings):
     return {**settings, 'uuid': str(uuid.uuid4()), 'short_id': secrets.token_hex(8),
             'private_key': encode(key.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())),
             'public_key': encode(key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw))}
+
+
+def migrate_landings(db):
+    db.execute("ALTER TABLE deployments ADD COLUMN protocol TEXT NOT NULL DEFAULT 'vless-reality'")
+    db.execute('INSERT INTO schema_migrations VALUES(4)')
+
+
+def new_landing_spec(settings):
+    validate_landing_settings(settings)
+    return {**settings, 'password': base64.b64encode(secrets.token_bytes(32)).decode()}
 
 
 class DeploymentStoreMixin:
@@ -65,7 +76,8 @@ class DeploymentStoreMixin:
 
     def _deployment_view(self, db, row):
         job = db.execute('SELECT status,error,type FROM jobs WHERE id=?', (row['job_id'],)).fetchone()
-        return {'id': row['id'], 'agent_id': row['agent_id'], 'type': 'singbox_node', 'protocol': 'vless-reality',
+        return {'id': row['id'], 'agent_id': row['agent_id'],
+                'type': 'singbox_landing' if row['protocol'] == 'ss2022' else 'singbox_node', 'protocol': row['protocol'],
                 'settings': json.loads(row['settings']), 'revision': row['revision'], 'job_id': row['job_id'],
                 'action': job['type'], 'status': job['status'], 'error': job['error'], 'updated_at': row['updated_at']}
 
@@ -78,15 +90,19 @@ class DeploymentStoreMixin:
             row = db.execute('SELECT * FROM deployments WHERE agent_id=?', (agent_id,)).fetchone()
             return self._deployment_view(db, row) if row else None
 
-    def put_deployment(self, agent_id, request_id, expected_revision, settings, remove=False):
-        validate_settings(settings)
+    def put_deployment(self, agent_id, request_id, expected_revision, settings, remove=False, protocol='vless-reality'):
+        if protocol not in ('vless-reality', 'ss2022'):
+            raise ValueError('Unsupported deployment protocol')
+        (validate_landing_settings if protocol == 'ss2022' else validate_settings)(settings)
         with self.connection() as db:
             db.execute('BEGIN IMMEDIATE')
             agent = self._job_agent(db, agent_id)
-            action = 'deployment.remove' if remove else 'deployment.apply'
+            action = ('landing.' if protocol == 'ss2022' else 'deployment.') + ('remove' if remove else 'apply')
             self._runtime_capability(agent, action)
             self._expire_jobs(db, agent_id)
             row = db.execute('SELECT * FROM deployments WHERE agent_id=?', (agent_id,)).fetchone()
+            if row and row['protocol'] != protocol:
+                raise JobConflict()  # Never replace a Reality entry with a landing or vice versa.
             existing = db.execute('SELECT * FROM jobs WHERE agent_id=? AND request_id=?', (agent_id, request_id)).fetchone()
             if existing:
                 if (not row or row['job_id'] != existing['id'] or existing['type'] != action or
@@ -102,7 +118,8 @@ class DeploymentStoreMixin:
                           (agent_id,)).fetchone():
                 raise JobConflict()
             identifier = row['id'] if row else uuid.uuid4().hex
-            current = self._decrypt_spec(db, row['secret_spec']) if row else new_spec(settings)
+            generate = new_landing_spec if protocol == 'ss2022' else new_spec
+            current = self._decrypt_spec(db, row['secret_spec']) if row else generate(settings)
             spec = {**current, **settings}  # Preserve client credentials across edits/retries.
             payload = {'deployment_id': identifier, 'revision': expected_revision + 1,
                        'spec_hash': spec_hash({} if remove else spec)}
@@ -111,10 +128,11 @@ class DeploymentStoreMixin:
             job = self._enqueue_job(db, agent_id, request_id, action, payload)
             db.execute('UPDATE jobs SET secret_payload=? WHERE id=?',
                        (cipher.encrypt(json.dumps({} if remove else spec).encode()).decode(), job['id']))
-            db.execute('''INSERT INTO deployments VALUES(?,?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET
+            db.execute('''INSERT INTO deployments(id,agent_id,settings,revision,secret_spec,job_id,updated_at,protocol)
+                VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET
                 settings=excluded.settings,revision=excluded.revision,secret_spec=excluded.secret_spec,
                 job_id=excluded.job_id,updated_at=excluded.updated_at''',
-                       (identifier, agent_id, json.dumps(settings), expected_revision + 1, encrypted, job['id'], self.clock()))
+                       (identifier, agent_id, json.dumps(settings), expected_revision + 1, encrypted, job['id'], self.clock(), protocol))
             self._audit(db, 'deployment_requested', agent_id)
             return self._deployment_view(db, db.execute('SELECT * FROM deployments WHERE id=?', (identifier,)).fetchone())
 
@@ -123,11 +141,11 @@ class DeploymentStoreMixin:
         # This query requires no credentials and must not depend on an active job result.
         with self.connection() as db:
             return [node_name(row['id'], json.loads(row['settings'])['name'])
-                    for row in db.execute('SELECT id,settings FROM deployments')]
+                    for row in db.execute("SELECT id,settings FROM deployments WHERE protocol='vless-reality'")]
 
     def managed_nodes(self):
         with self.connection() as db:
             rows = db.execute('''SELECT d.* FROM deployments d JOIN jobs j ON j.id=d.job_id
                 JOIN agents a ON a.id=d.agent_id WHERE j.status='success' AND j.type='deployment.apply'
-                AND a.revoked_at IS NULL''').fetchall()
+                AND a.revoked_at IS NULL AND d.protocol='vless-reality' ''').fetchall()
             return [client_node(row['id'], row['agent_id'], self._decrypt_spec(db, row['secret_spec'])) for row in rows]

@@ -11,7 +11,7 @@ import time
 import uuid
 
 from job_store import JobStoreMixin, migrate_jobs
-from deployment_store import DeploymentStoreMixin, migrate_deployments
+from deployment_store import DeploymentStoreMixin, migrate_deployments, migrate_landings
 
 PROTOCOL_VERSION = 1
 ONLINE_SECONDS = 90
@@ -55,7 +55,7 @@ class ControlStore(DeploymentStoreMixin, JobStoreMixin):
             db.execute("BEGIN IMMEDIATE")
             db.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)")
             version = db.execute("SELECT COALESCE(MAX(version),0) FROM schema_migrations").fetchone()[0]
-            if version > 3:
+            if version > 4:
                 raise RuntimeError("Control database is newer than this application")
             if version == 0:
                 # Individual statements stay within the migration transaction.
@@ -82,6 +82,8 @@ class ControlStore(DeploymentStoreMixin, JobStoreMixin):
                 migrate_jobs(db)
             if version < 3:
                 migrate_deployments(db)
+            if version < 4:
+                migrate_landings(db)
             db.commit()
 
     @contextlib.contextmanager

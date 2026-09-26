@@ -4,16 +4,18 @@ import json
 from pathlib import Path
 import re
 from .deployment_spec import DEPLOYMENT_ACTIONS, validate_reference, validate_spec, spec_hash
+from .landing_spec import LANDING_ACTIONS, validate_spec as validate_landing_spec
 
 RELEASE = json.loads(Path(__file__).with_name('singbox-release.json').read_text(encoding='utf-8'))
-RUNTIME_ACTIONS = ('singbox.install', 'singbox.start', 'singbox.stop', 'singbox.restart', 'singbox.rollback', *DEPLOYMENT_ACTIONS)
+CONFIG_ACTIONS = (*DEPLOYMENT_ACTIONS, *LANDING_ACTIONS)
+RUNTIME_ACTIONS = ('singbox.install', 'singbox.start', 'singbox.stop', 'singbox.restart', 'singbox.rollback', *CONFIG_ACTIONS)
 RUNTIME_ERRORS = ('runtime_unavailable', 'runtime_failed', 'runtime_cancelled', 'rollback_failed')
 
 
 def validate_action(action, payload):
     if action not in RUNTIME_ACTIONS or not isinstance(payload, dict):
         raise ValueError('Unsupported runtime action')
-    if action in DEPLOYMENT_ACTIONS:
+    if action in CONFIG_ACTIONS:
         validate_reference(payload)
     elif action == 'singbox.install':
         if payload != {'version': RELEASE['version']}:
@@ -33,8 +35,9 @@ def validate_runtime_job(job):
     validate_action(job.get('type'), job.get('payload'))
     if job.get('deployment_revision') != revision(job['id'], job['type'], job['payload']):
         raise ValueError('Invalid runtime revision')
-    if job['type'] in DEPLOYMENT_ACTIONS:
-        validate_spec(job['type'], job.get('deployment'))
+    if job['type'] in CONFIG_ACTIONS:
+        validator = validate_landing_spec if job['type'] in LANDING_ACTIONS else validate_spec
+        validator(job['type'], job.get('deployment'))
         if spec_hash(job['deployment']) != job['payload']['spec_hash']:
             raise ValueError('Deployment snapshot changed')
 

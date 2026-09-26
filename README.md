@@ -217,6 +217,7 @@ ProxyForge 的配置文件和 Agent 控制面 SQLite 数据库保存在运行数
 - 使用 Agent 部署时，还必须一起保存 `data/proxyforge.db` 及其 WAL/SHM 文件和 `data/deployment.key`；恢复有部署的数据库必须使用同一把 key。备份含敏感凭据，需限制访问。
 
 Agent 已支持直连 VLESS Reality 的配置生成、失败回滚和自动客户端节点。使用和升级边界见 [B4 部署说明](docs/AGENT_B4.md)。
+另支持独立 SS2022 落地的密码生成、部署与回滚，参见 [B5a 落地说明](docs/AGENT_B5_LANDING.md)；入口关联与链路编排尚在后续阶段，落地不会直接加入客户端订阅。
 
 **迁移步骤：**
 1. 在新 VPS 上克隆项目并进入目录：
