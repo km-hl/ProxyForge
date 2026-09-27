@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from network_security import (
+from proxyforge.security.network_security import (
     ResponseTooLarge,
     UnsafeOutboundUrl,
     safe_get,
@@ -38,7 +38,7 @@ class NetworkSecurityTest(unittest.TestCase):
                 with self.assertRaises(UnsafeOutboundUrl):
                     validate_outbound_url(url)
 
-    @patch("network_security.socket.getaddrinfo")
+    @patch("proxyforge.security.network_security.socket.getaddrinfo")
     def test_rejects_hostname_that_resolves_to_private_network(self, getaddrinfo):
         getaddrinfo.return_value = [
             (2, 1, 6, "", ("192.168.1.5", 443)),
@@ -47,8 +47,8 @@ class NetworkSecurityTest(unittest.TestCase):
         with self.assertRaises(UnsafeOutboundUrl):
             validate_outbound_url("https://subscription.example/path", resolve_dns=True)
 
-    @patch("network_security.socket.getaddrinfo")
-    @patch("network_security.requests.get")
+    @patch("proxyforge.security.network_security.socket.getaddrinfo")
+    @patch("proxyforge.security.network_security.requests.get")
     def test_redirect_target_is_revalidated(self, request_get, getaddrinfo):
         getaddrinfo.return_value = [
             (2, 1, 6, "", ("93.184.216.34", 443)),
@@ -63,8 +63,8 @@ class NetworkSecurityTest(unittest.TestCase):
 
         request_get.assert_called_once()
 
-    @patch("network_security.socket.getaddrinfo")
-    @patch("network_security.requests.get")
+    @patch("proxyforge.security.network_security.socket.getaddrinfo")
+    @patch("proxyforge.security.network_security.requests.get")
     def test_response_size_is_limited(self, request_get, getaddrinfo):
         getaddrinfo.return_value = [
             (2, 1, 6, "", ("93.184.216.34", 443)),

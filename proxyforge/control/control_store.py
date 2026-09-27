@@ -10,10 +10,10 @@ import sqlite3
 import time
 import uuid
 
-from job_store import JobStoreMixin, migrate_jobs
-from deployment_store import DeploymentStoreMixin, migrate_deployments, migrate_landings
-from chain_store import ChainStoreMixin, migrate_chains
-from managed_inventory import ManagedInventoryMixin
+from proxyforge.control.job_store import JobStoreMixin, migrate_jobs
+from proxyforge.control.deployment_store import DeploymentStoreMixin, migrate_deployments, migrate_landings
+from proxyforge.control.chain_store import ChainStoreMixin, migrate_chains
+from proxyforge.control.managed_inventory import ManagedInventoryMixin
 
 PROTOCOL_VERSION = 1
 ONLINE_SECONDS = 90

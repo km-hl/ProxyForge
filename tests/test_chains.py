@@ -12,8 +12,8 @@ import uuid
 from agent.chain_spec import runtime_config, validate_spec
 from agent.deployment_spec import runtime_config as direct_config
 from agent.runtime_spec import validate_runtime_job
-from control_store import ControlStore
-from job_store import JobConflict
+from proxyforge.control.control_store import ControlStore
+from proxyforge.control.job_store import JobConflict
 from test_agent_jobs import capable
 from test_deployments import SETTINGS as DIRECT, RESULT, deployment_job
 from test_landings import SETTINGS as LANDING
@@ -174,7 +174,7 @@ class ChainStoreTest(unittest.TestCase):
         def fail(db):
             db.execute('CREATE TABLE chains(x TEXT)')
             raise sqlite3.OperationalError('interrupted')
-        with patch('control_store.migrate_chains', fail), self.assertRaises(sqlite3.OperationalError):
+        with patch('proxyforge.control.control_store.migrate_chains', fail), self.assertRaises(sqlite3.OperationalError):
             ControlStore(self.store.path)
         reopened = ControlStore(self.store.path)
         with reopened.connection() as db:
@@ -248,7 +248,7 @@ class ChainEngineTest(unittest.TestCase):
     def test_multi_inbound_rollback_recovery_replay_and_removal(self):
         from agent.runtime_engine import RuntimeEngine
         from test_runtime_engine import FakeBackend
-        from deployment_store import new_spec, new_landing_spec
+        from proxyforge.control.deployment_store import new_spec, new_landing_spec
         with tempfile.TemporaryDirectory() as temp:
             backend = FakeBackend()
             backend.check = lambda path: json.loads((path / 'config.json').read_text())

@@ -2,7 +2,7 @@
 
 ## Behavior and files
 
-`template_store.py` coordinates template, nodes and airports with a reentrant thread lock and an OS file lock. Existing routes in `main.py`, including startup/subscription cleanup, use this lock for read/modify/write. The UI session now saves the revision it originally loaded. `template-history.js` provides history, text comparison and explicit conflict choices.
+`proxyforge/config/template_store.py` coordinates template, nodes and airports with a reentrant thread lock and an OS file lock. Existing routes in `main.py`, including startup/subscription cleanup, use this lock for read/modify/write. The UI session now saves the revision it originally loaded. `template-history.js` provides history, text comparison and explicit conflict choices.
 
 `MEMORY.md` is local-only: Git, Docker build context and the repository privacy check exclude it.
 

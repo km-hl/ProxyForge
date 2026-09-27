@@ -4,8 +4,8 @@ import uuid
 
 from agent.chain_spec import validate_settings, validate_spec
 from agent.deployment_spec import client_node, node_name, spec_hash
-from deployment_store import new_spec
-from job_store import JobConflict, JobNotFound
+from proxyforge.control.deployment_store import new_spec
+from proxyforge.control.job_store import JobConflict, JobNotFound
 
 
 def migrate_chains(db):

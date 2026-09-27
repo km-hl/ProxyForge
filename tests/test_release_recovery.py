@@ -10,11 +10,11 @@ import unittest
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
-from control_store import ControlStore, UnauthorizedAgent
-from deployment_store import DeploymentKeyError
-from job_store import JobConflict
-from runtime_security import RuntimeConfigStore
-from template_store import TemplateStore
+from proxyforge.control.control_store import ControlStore, UnauthorizedAgent
+from proxyforge.control.deployment_store import DeploymentKeyError
+from proxyforge.control.job_store import JobConflict
+from proxyforge.security.runtime_security import RuntimeConfigStore
+from proxyforge.config.template_store import TemplateStore
 from test_api_integration import load_isolated_application, TEST_ADMIN_TOKEN, TEST_SUBSCRIPTION_TOKEN
 import test_chains as chain_tests
 from test_deployments import RESULT

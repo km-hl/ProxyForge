@@ -20,7 +20,7 @@ from agent.deployment_spec import spec_hash
 from agent.landing_spec import METHOD, runtime_config as landing_config
 from agent.runtime_engine import write_json
 from agent.runtime_spec import revision
-from deployment_store import new_spec, new_landing_spec
+from proxyforge.control.deployment_store import new_spec, new_landing_spec
 from scripts.check_ss2022_landing import free_port, relay_check
 
 

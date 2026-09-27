@@ -9,8 +9,8 @@ from agent.client import AgentConnectionError, CredentialRejected, JobRejected
 from agent.job_lease import JobLease
 from agent.jobs import process_job, validate_journal
 from agent.runtime_spec import RELEASE, revision
-from control_store import ControlStore
-from job_store import JobConflict
+from proxyforge.control.control_store import ControlStore
+from proxyforge.control.job_store import JobConflict
 from test_agent_jobs import capable, OUTPUT
 
 

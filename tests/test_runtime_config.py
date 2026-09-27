@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from runtime_security import (
+from proxyforge.security.runtime_security import (
     RuntimeConfigError,
     RuntimeConfigStore,
     create_session_token,

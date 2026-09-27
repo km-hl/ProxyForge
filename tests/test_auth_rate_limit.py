@@ -1,6 +1,6 @@
 import unittest
 
-from auth_rate_limit import LoginRateLimiter
+from proxyforge.security.auth_rate_limit import LoginRateLimiter
 
 
 class LoginRateLimiterTest(unittest.TestCase):

@@ -95,7 +95,7 @@ docker compose exec proxyforge python -c "import json; print(json.load(open('/ap
 - 未知 Mihomo 字段按值保留，包括 `dns` / `tun` 内高级字段。可视化保存会重新序列化 YAML，不保证保留注释、引号、锚点写法或排版。高级 YAML 预览只读，完整编辑仍在“底层配置兜底”。
 - 配置检查区分 **错误**、**建议**和**未验证**：错误阻止保存和最终订阅生成；建议允许保存。新增 `/api/template/validate` 只校验、不写文件、不访问 DNS 服务；使用既有管理鉴权。原有模板 API 请求及成功响应保持不变。
 
-静态默认值与必填条件以 [Mihomo v1.19.31 配置源码](https://github.com/MetaCubeX/mihomo/blob/v1.19.31/config/config.go) 为基线，版本、默认值及字段定义集中在 `mihomo_compat.py`。字段缺失与显式空列表不同，例如缺少 `nameserver` 时内核可采用默认值，但启用 DNS 后显式 `nameserver: []` 会被拒绝；`respect-rules: true` 或非空 `proxy-server-nameserver-policy` 都要求非空的 `proxy-server-nameserver`。
+静态默认值与必填条件以 [Mihomo v1.19.31 配置源码](https://github.com/MetaCubeX/mihomo/blob/v1.19.31/config/config.go) 为基线，版本、默认值及字段定义集中在 `proxyforge/config/mihomo_compat.py`。字段缺失与显式空列表不同，例如缺少 `nameserver` 时内核可采用默认值，但启用 DNS 后显式 `nameserver: []` 会被拒绝；`respect-rules: true` 或非空 `proxy-server-nameserver-policy` 都要求非空的 `proxy-server-nameserver`。
 
 高级 DNS 字段（IPv6 Fake-IP 地址池、TTL、IPv6 超时、缓存与策略 DNS）和 TUN 路由、接口、UID 等字段支持 Raw YAML 保留及基础校验，不要求通过普通 UI 编辑。原有默认值未改写进模板；`fake-ip-ttl` 默认 1、`ipv6-timeout` 默认 100，缓存原始零值与运行时 LRU/4096 回退分开处理。Fake-IP 允许在客户端 IPv6 条件满足时仅使用 IPv6 地址池，两个池不能同时禁用。平台行为、复杂 matcher 和 geodata 仍有未验证范围。
 
@@ -221,7 +221,7 @@ Agent 已支持直连 VLESS Reality 的配置生成、失败回滚和自动客�
 
 自建节点页提供独立的 Agent 托管节点列表，显示入口/落地、任务状态和订阅发布资格，并可直接进入部署、链路和任务管理；失败与已移除记录仍可查看。详见 [B6 托管节点界面](docs/AGENT_B6_NODES_UI.md)。
 
-升级到完整控制面前，请按[发布验收与恢复流程](docs/RELEASE_ACCEPTANCE.md)完成冷备、隔离恢复演练和分阶段上线；代码验收与生产部署分别记录。
+开发与维护请先阅读[项目目录、模块职责及依赖边界](docs/PROJECT_STRUCTURE.md)。升级到完整控制面前，请按[发布验收与恢复流程](docs/RELEASE_ACCEPTANCE.md)完成冷备、隔离恢复演练和分阶段上线；代码验收与生产部署分别记录。
 
 **迁移步骤：**
 1. 在新 VPS 上克隆项目并进入目录：

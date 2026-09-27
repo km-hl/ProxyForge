@@ -4,7 +4,7 @@
 
 ## 1. 修改文件
 
-`managed_inventory.py`、`control_store.py`、`deployment_api.py` 提供管理清单；`static/managed-nodes.js`、app/index/style 实现列表和操作入口；Python/Node 测试及 CI 增加清单、权限和展示验证。
+`proxyforge/control/managed_inventory.py`、`proxyforge/control/control_store.py`、`proxyforge/control/deployment_api.py` 提供管理清单；`static/managed-nodes.js`、app/index/style 实现列表和操作入口；Python/Node 测试及 CI 增加清单、权限和展示验证。
 
 ## 2. 数据模型
 

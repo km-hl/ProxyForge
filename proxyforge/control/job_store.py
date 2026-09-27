@@ -84,7 +84,7 @@ class JobStoreMixin:
             return self._enqueue_job(db, agent_id, request_id, action, payload)
 
     def _enqueue_job(self, db, agent_id, request_id, action, payload):
-        from control_store import CapacityExceeded
+        from proxyforge.control.control_store import CapacityExceeded
         now = self.clock()
         existing = db.execute("SELECT * FROM jobs WHERE agent_id=? AND request_id=?",
                               (agent_id, request_id)).fetchone()
@@ -133,7 +133,7 @@ class JobStoreMixin:
             return self._job_view(db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
 
     def claim_job(self, token, instance_id):
-        from control_store import digest, UnauthorizedAgent
+        from proxyforge.control.control_store import digest, UnauthorizedAgent
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             agent_id = self._authenticate(db, token)
@@ -173,7 +173,7 @@ class JobStoreMixin:
                 raise JobConflict()
 
     def report_job(self, token, job_id, lease, result=None, renew=False):
-        from control_store import digest
+        from proxyforge.control.control_store import digest
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             agent_id = self._authenticate(db, token)

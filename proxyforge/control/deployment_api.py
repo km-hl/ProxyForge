@@ -2,10 +2,10 @@
 from fastapi.responses import JSONResponse
 from typing import Literal
 from pydantic import Field, StrictInt, StrictBool, model_validator
-from agent_api import Payload, Identifier
+from proxyforge.control.agent_api import Payload, Identifier
 from agent.deployment_spec import validate_settings
 from agent.landing_spec import validate_settings as validate_landing_settings
-from deployment_store import DeploymentKeyError
+from proxyforge.control.deployment_store import DeploymentKeyError
 from agent.chain_spec import validate_settings as validate_chain_settings
 
 

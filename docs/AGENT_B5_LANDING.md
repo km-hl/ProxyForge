@@ -5,8 +5,8 @@
 ## 1. 修改文件
 
 - `agent/landing_spec.py`：SS2022 配置白名单、密码格式检查、运行配置构造。
-- `deployment_store.py`、`deployment_api.py`、`control_store.py`：部署协议区分、密码生成/加密、schema 4。
-- `job_store.py`、Agent runtime/client/helper、inventory：独立能力、配置快照下发、执行和回传。
+- `proxyforge/control/deployment_store.py`、`proxyforge/control/deployment_api.py`、`proxyforge/control/control_store.py`：部署协议区分、密码生成/加密、schema 4。
+- `proxyforge/control/job_store.py`、Agent runtime/client/helper、inventory：独立能力、配置快照下发、执行和回传。
 - installers、`static/agents.js`：本地能力标记、部署类型选择、落地说明。
 - `tests/test_landings.py`、`scripts/check_ss2022_landing.py`：协议隔离、迁移与真实 TCP/UDP 转发、认证、回滚测试。
 

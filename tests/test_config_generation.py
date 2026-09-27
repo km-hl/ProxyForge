@@ -1,73 +1,13 @@
-import ast
 import base64
 import copy
-import ipaddress
-import re
 import unittest
-import urllib.parse
-from pathlib import Path
-from typing import Any, Dict, List
 
 import yaml
-from network_config import validate_network_config, network_error_messages
 
-
-def load_config_functions():
-    source = Path(__file__).resolve().parents[1] / "main.py"
-    tree = ast.parse(source.read_text(encoding="utf-8"))
-    wanted = {
-        "get_airport_name",
-        "strip_internal_proxy_fields",
-        "has_country_flag",
-        "keyword_matches_name",
-        "add_flag_to_proxy_name",
-        "ConfigValidationError",
-        "_is_valid_port",
-        "_has_text",
-        "_is_non_negative_integer",
-        "_is_positive_integer",
-        "_is_valid_ip_address",
-        "_is_valid_wireguard_key",
-        "_is_valid_wireguard_reserved",
-        "_is_valid_ip_network_list",
-        "_is_non_empty_string_list",
-        "validate_proxy_nodes",
-        "validate_mihomo_config",
-        "assert_valid_mihomo_config",
-        "build_airport_providers",
-        "build_airport_provider_document",
-        "decorate_proxy_names",
-        "cleanup_proxy_group_references",
-        "build_subscription_config",
-    }
-    nodes = [
-        node for node in tree.body
-        if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in wanted
-    ]
-    namespace = {
-        "validate_network_config": validate_network_config,
-        "network_error_messages": network_error_messages,
-        "Any": Any,
-        "Dict": Dict,
-        "List": List,
-        "base64": base64,
-        "copy": copy,
-        "ipaddress": ipaddress,
-        "re": re,
-        "urllib": urllib,
-        "yaml": yaml,
-        "CUSTOM_NODES_SOURCE": "_custom_nodes_",
-    }
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), "exec"), namespace)
-    return namespace
-
-
-FUNCTIONS = load_config_functions()
-validate_mihomo_config = FUNCTIONS["validate_mihomo_config"]
-validate_proxy_nodes = FUNCTIONS["validate_proxy_nodes"]
-build_subscription_config = FUNCTIONS["build_subscription_config"]
-build_airport_provider_document = FUNCTIONS["build_airport_provider_document"]
-cleanup_proxy_group_references = FUNCTIONS["cleanup_proxy_group_references"]
+from proxyforge.subscription.validation import validate_mihomo_config, validate_proxy_nodes
+from proxyforge.subscription.builder import (
+    build_subscription_config, build_airport_provider_document, cleanup_proxy_group_references,
+)
 
 
 class ConfigValidationTest(unittest.TestCase):

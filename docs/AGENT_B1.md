@@ -2,8 +2,8 @@
 
 ## 1. Changed components
 
-`control_store.py`: new SQLite inventory store and migration.
-`agent_api.py`: separate management/enrollment/heartbeat routes and bounded schemas.
+`proxyforge/control/control_store.py`: new SQLite inventory store and migration.
+`proxyforge/control/agent_api.py`: separate management/enrollment/heartbeat routes and bounded schemas.
 `agent/`: standard-library reference client, read-only inventory, local installer
 and systemd unit. `static/agents.js`: inventory management UI. `main.py` wires
 these components without opening the database during import/generation. Runtime

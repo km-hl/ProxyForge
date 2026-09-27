@@ -1,42 +1,10 @@
-import ast
 import base64
-import ipaddress
 import json
-import re
 import unittest
 import urllib.parse
-from pathlib import Path
-from typing import Any, Dict
 
-
-def load_functions(*names):
-    source = Path(__file__).resolve().parents[1] / "main.py"
-    tree = ast.parse(source.read_text(encoding="utf-8"))
-    functions = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name in names
-    ]
-    namespace = {
-        "Any": Any,
-        "Dict": Dict,
-        "base64": base64,
-        "ipaddress": ipaddress,
-        "json": json,
-        "re": re,
-        "urllib": urllib,
-    }
-    exec(compile(ast.Module(body=functions, type_ignores=[]), str(source), "exec"), namespace)
-    return [namespace[name] for name in names]
-
-
-_, _, parse_share_link, strip_internal_proxy_fields, add_flag_to_proxy_name = load_functions(
-    "has_country_flag",
-    "keyword_matches_name",
-    "parse_share_link",
-    "strip_internal_proxy_fields",
-    "add_flag_to_proxy_name",
-)
+from proxyforge.subscription.links import parse_share_link
+from proxyforge.subscription.nodes import strip_internal_proxy_fields, add_flag_to_proxy_name
 
 
 class ShareLinkParserTest(unittest.TestCase):
