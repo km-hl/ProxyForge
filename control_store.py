@@ -12,6 +12,7 @@ import uuid
 
 from job_store import JobStoreMixin, migrate_jobs
 from deployment_store import DeploymentStoreMixin, migrate_deployments, migrate_landings
+from chain_store import ChainStoreMixin, migrate_chains
 
 PROTOCOL_VERSION = 1
 ONLINE_SECONDS = 90
@@ -43,7 +44,7 @@ def online_status(last_seen, now):
     return "online" if age < ONLINE_SECONDS else "degraded" if age < OFFLINE_SECONDS else "offline"
 
 
-class ControlStore(DeploymentStoreMixin, JobStoreMixin):
+class ControlStore(ChainStoreMixin, DeploymentStoreMixin, JobStoreMixin):
     def __init__(self, path, clock=time.time):
         self.path = Path(path).resolve()
         self.clock = clock
@@ -55,7 +56,7 @@ class ControlStore(DeploymentStoreMixin, JobStoreMixin):
             db.execute("BEGIN IMMEDIATE")
             db.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)")
             version = db.execute("SELECT COALESCE(MAX(version),0) FROM schema_migrations").fetchone()[0]
-            if version > 4:
+            if version > 5:
                 raise RuntimeError("Control database is newer than this application")
             if version == 0:
                 # Individual statements stay within the migration transaction.
@@ -84,6 +85,8 @@ class ControlStore(DeploymentStoreMixin, JobStoreMixin):
                 migrate_deployments(db)
             if version < 4:
                 migrate_landings(db)
+            if version < 5:
+                migrate_chains(db)
             db.commit()
 
     @contextlib.contextmanager
@@ -192,6 +195,8 @@ class ControlStore(DeploymentStoreMixin, JobStoreMixin):
             db.execute("BEGIN IMMEDIATE")
             if not db.execute("SELECT 1 FROM agents WHERE id=?", (agent_id,)).fetchone():
                 raise KeyError(agent_id)
+            if remove:
+                self._assert_no_chain(db, agent_id)
             now = self.clock()
             db.execute("UPDATE agents SET revoked_at=COALESCE(revoked_at,?) WHERE id=?", (now, agent_id))
             db.execute("UPDATE agent_credentials SET revoked_at=COALESCE(revoked_at,?) WHERE agent_id=?", (now, agent_id))

@@ -62,7 +62,7 @@ def echo_servers():
                 worker.join(timeout=5)
 
 
-def relay_check(engine, backend, spec, expected=True):
+def relay_check(engine, backend, spec, expected=True, outbound=None):
     """Use the real client implementation, not a hand-written SS cipher."""
     with echo_servers() as (tcp_echo, udp_echo):
         tcp_port, udp_port = free_port(), free_port(socket.SOCK_DGRAM)
@@ -74,6 +74,8 @@ def relay_check(engine, backend, spec, expected=True):
             'outbounds': [{'type': 'shadowsocks', 'tag': 'landing', 'server': '127.0.0.1',
                            'server_port': spec['listen_port'], 'method': METHOD, 'password': spec['password']}]}
         path = engine.root / 'test-client.json'
+        if outbound is not None:
+            config['outbounds'] = [outbound]
         write_json(path, config)
         os.chown(path, 0, backend.gid)
         path.chmod(0o640)

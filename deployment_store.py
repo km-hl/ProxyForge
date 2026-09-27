@@ -109,6 +109,7 @@ class DeploymentStoreMixin:
                         row['revision'] != expected_revision + 1 or json.loads(row['settings']) != settings):
                     raise JobConflict()
                 return self._deployment_view(db, row)
+            self._assert_no_chain(db, agent_id)
             if (row['revision'] if row else 0) != expected_revision or (remove and not row):
                 raise JobConflict()
             if row and json.loads(row['settings'])['name'] != settings['name']:
@@ -141,11 +142,11 @@ class DeploymentStoreMixin:
         # This query requires no credentials and must not depend on an active job result.
         with self.connection() as db:
             return [node_name(row['id'], json.loads(row['settings'])['name'])
-                    for row in db.execute("SELECT id,settings FROM deployments WHERE protocol='vless-reality'")]
+                    for row in db.execute("SELECT id,settings FROM deployments WHERE protocol='vless-reality'")] + self._chain_node_names(db)
 
     def managed_nodes(self):
         with self.connection() as db:
             rows = db.execute('''SELECT d.* FROM deployments d JOIN jobs j ON j.id=d.job_id
                 JOIN agents a ON a.id=d.agent_id WHERE j.status='success' AND j.type='deployment.apply'
                 AND a.revoked_at IS NULL AND d.protocol='vless-reality' ''').fetchall()
-            return [client_node(row['id'], row['agent_id'], self._decrypt_spec(db, row['secret_spec'])) for row in rows]
+            return [client_node(row['id'], row['agent_id'], self._decrypt_spec(db, row['secret_spec'])) for row in rows] + self._chain_nodes(db)

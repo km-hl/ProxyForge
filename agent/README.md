@@ -1,4 +1,4 @@
-# ProxyForge reference Agent (B5a)
+# ProxyForge reference Agent (B5b)
 
 This standard-library Python Agent sends inventory and pulls allowlisted jobs.
 It opens no network listener. B3 optionally manages one independent sing-box
@@ -15,8 +15,13 @@ the helper package and the low-port-capable systemd unit have been upgraded.
 For a dedicated SS2022 landing, select **SS2022 落地** in the same deployment
 dialog after upgrading to Agent 0.5.0 and its helper. See
 [B5a capability, migration and recovery](../docs/AGENT_B5_LANDING.md).
+
+B5b adds an independent Reality entry routed through a ready SS2022 landing,
+preserving the original direct entry. Upgrade the entry helper and all modules
+before enabling its root-owned `chain-protocol` marker. See
+[B5b association, dependency protection and recovery](../docs/AGENT_B5_CHAIN.md).
 Landing passwords are generated and kept by the control plane; landings do not
-appear as client subscription nodes. Entry-to-landing orchestration is a later stage.
+appear as client subscription nodes. The associated Reality entry is published by B5b.
 
 ## Install from inspected source
 

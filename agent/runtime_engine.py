@@ -13,6 +13,7 @@ from .runtime_download import download_binary
 from .runtime_spec import RELEASE, CONFIG_ACTIONS, validate_runtime_job
 from .deployment_spec import runtime_config
 from .landing_spec import runtime_config as landing_config
+from .chain_spec import CHAIN_ACTIONS, runtime_config as chain_config
 
 UNIT = 'proxyforge-singbox.service'
 EMPTY_CONFIG = {'log': {'level': 'warn'}, 'inbounds': [], 'outbounds': [{'type': 'direct', 'tag': 'direct'}]}
@@ -261,6 +262,8 @@ class RuntimeEngine:
                     config = runtime_config(job['deployment'])
                 elif action == 'landing.apply':
                     config = landing_config(job['deployment'])
+                elif action in CHAIN_ACTIONS:
+                    config = chain_config(job['deployment'])
                 elif action in ('deployment.remove', 'landing.remove'):
                     config = EMPTY_CONFIG
                 write_json(candidate / 'config.json', config)

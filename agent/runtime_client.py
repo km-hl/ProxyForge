@@ -20,6 +20,10 @@ def landing_available():
     return capability_available('landing-protocol')
 
 
+def chain_available():
+    return capability_available('chain-protocol')
+
+
 def capability_available(name):
     marker = Path('/opt/proxyforge-agent') / name
     try:
