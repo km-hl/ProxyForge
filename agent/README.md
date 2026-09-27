@@ -88,7 +88,7 @@ that config while troubleshooting.
   no heartbeat yet is a separate state. Server receipt time is authoritative.
 - A 401/403 stops synchronization with exit 4; systemd does not restart that exit.
 - OS support and protocol compatibility are shown separately from online status.
-- Only the future independent `proxyforge-singbox.service` and
+- Only the independent `proxyforge-singbox.service` and
   `/opt/proxyforge-agent/bin/sing-box` are probed, read-only. Existing user-managed
   sing-box instances are not adopted.
 - Machine ID is hashed before reporting and is only a hint. Each enrollment
@@ -165,3 +165,13 @@ privately archive the active B3 job journal first: B2 rejects runtime entries.
 Disable the optional runtime socket/helper and cancel pending runtime jobs.
 Keep credentials and runtime files for recovery. Controller rollback to B1 requires restoring
 the pre-migration database; do not lower `schema_migrations` by hand.
+
+## Current release acceptance
+
+The current Agent is 0.6.0 with separately gated runtime, Reality, SS2022 landing,
+and chain capabilities. The B1/B2/B3 instructions above describe those historical
+upgrade paths. For a complete installation, follow the
+[release acceptance and recovery runbook](../docs/RELEASE_ACCEPTANCE.md), including
+Controller-first upgrades, matching database/key backups, full Agent/helper module
+updates, and reconciliation of remote state before resuming a restored Controller.
+The managed-nodes UI itself does not require an Agent upgrade.
