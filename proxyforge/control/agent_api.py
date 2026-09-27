@@ -8,8 +8,8 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, StrictBool, StrictInt, constr
 
-from auth_rate_limit import LoginRateLimiter
-from control_store import CapacityExceeded, InvalidRegistration, UnauthorizedAgent
+from proxyforge.security.auth_rate_limit import LoginRateLimiter
+from proxyforge.control.control_store import CapacityExceeded, InvalidRegistration, UnauthorizedAgent
 
 ShortText = constr(strict=True, max_length=128)
 Identifier = constr(strict=True, pattern=r"^[a-f0-9]{32}$")
@@ -178,9 +178,9 @@ def attach_agent_routes(app, management_auth, store_provider):
             raise UnauthorizedAgent()
         return store_provider().heartbeat(authorization[7:], json.loads(data.model_dump_json()), observed_ip(request))
 
-    from job_api import attach_job_routes
+    from proxyforge.control.job_api import attach_job_routes
     attach_job_routes(app, admin, agent, store_provider)
-    from deployment_api import attach_deployment_routes
+    from proxyforge.control.deployment_api import attach_deployment_routes
     attach_deployment_routes(app, admin, store_provider)
     app.add_middleware(AgentBodyLimit)
     app.include_router(admin)

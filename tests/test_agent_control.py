@@ -11,7 +11,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from control_store import ControlStore, InvalidRegistration, UnauthorizedAgent, online_status
+from proxyforge.control.control_store import ControlStore, InvalidRegistration, UnauthorizedAgent, online_status
 from agent.client import Client, AgentConnectionError, CredentialRejected, controller_url
 from agent.main import register, run, load_config
 from agent.system_info import collect

@@ -109,7 +109,7 @@ IPv6 connectivity. Platform-dependent TUN behavior is not executed by `-t`.
 
 ## Static validation boundaries
 
-`mihomo_compat.py` records the selected raw defaults and field types with pinned
+`proxyforge/config/mihomo_compat.py` records the selected raw defaults and field types with pinned
 source references. Existing displayed defaults are unchanged; new projections
 include use-hosts/use-system-hosts=true, IPv6 timeout=100, fake-IP TTL=1 and the
 TUN IPv6 address. Cache raw defaults remain an empty algorithm string and size 0;

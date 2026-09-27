@@ -11,9 +11,9 @@ import uuid
 
 from agent.landing_spec import METHOD, runtime_config, validate_spec
 from agent.runtime_spec import validate_runtime_job
-from control_store import ControlStore
-from deployment_store import new_landing_spec, migrate_deployments
-from job_store import JobConflict
+from proxyforge.control.control_store import ControlStore
+from proxyforge.control.deployment_store import new_landing_spec, migrate_deployments
+from proxyforge.control.job_store import JobConflict
 from test_agent_jobs import capable
 from test_deployments import SETTINGS as REALITY, RESULT, deployment_job
 
@@ -126,7 +126,7 @@ class LandingStoreTest(unittest.TestCase):
         def broken(db):
             db.execute("ALTER TABLE deployments ADD COLUMN protocol TEXT DEFAULT 'vless-reality'")
             raise sqlite3.OperationalError('interrupted')
-        with patch('control_store.migrate_landings', broken), self.assertRaises(sqlite3.OperationalError):
+        with patch('proxyforge.control.control_store.migrate_landings', broken), self.assertRaises(sqlite3.OperationalError):
             ControlStore(path)
         with contextlib.closing(sqlite3.connect(path)) as db, db:
             self.assertEqual(db.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0], 3)

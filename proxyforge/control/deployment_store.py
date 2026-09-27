@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat
 
 from agent.deployment_spec import client_node, node_name, spec_hash, validate_settings
 from agent.landing_spec import validate_settings as validate_landing_settings
-from job_store import JobConflict, JobNotFound
+from proxyforge.control.job_store import JobConflict, JobNotFound
 
 
 class DeploymentKeyError(Exception):

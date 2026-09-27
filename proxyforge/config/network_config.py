@@ -9,7 +9,7 @@ import json
 import math
 from urllib.parse import urlsplit
 
-from mihomo_compat import (
+from proxyforge.config.mihomo_compat import (
     BASELINE, DEFAULTS, BOOL_FIELDS, INTEGER_FIELDS, KNOWN_DNS_FIELDS,
     KNOWN_TUN_FIELDS, DNS_MODES, TUN_STACKS, CACHE_ALGORITHMS,
     TUN_PREFIX_LISTS, TUN_STRING_LISTS, TUN_INTEGER_LISTS,

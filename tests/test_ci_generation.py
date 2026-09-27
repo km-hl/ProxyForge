@@ -12,6 +12,7 @@ from unittest.mock import patch
 import yaml
 
 from scripts import generate_ci_config as generator
+from proxyforge.subscription import builder
 
 
 class CiGenerationTest(unittest.TestCase):
@@ -19,9 +20,9 @@ class CiGenerationTest(unittest.TestCase):
         template = yaml.safe_load((generator.INPUTS / "sample-template.yaml").read_text())
         nodes = yaml.safe_load((generator.INPUTS / "nodes.yaml").read_text())
         with generator.isolated_application() as application:
-            self.assertEqual(Path(application.build_subscription_config.__code__.co_filename), generator.ROOT / "main.py")
+            self.assertEqual(Path(application.build_subscription_config.__code__.co_filename), generator.ROOT / "proxyforge/subscription/builder.py")
             with patch.object(application, "build_subscription_config", wraps=application.build_subscription_config) as build, \
-                    patch.object(application, "assert_valid_mihomo_config", wraps=application.assert_valid_mihomo_config) as validate:
+                    patch.object(builder, "assert_valid_mihomo_config", wraps=builder.assert_valid_mihomo_config) as validate:
                 config = generator.build_sample(application)
                 self.assertEqual(build.call_count, 1)
                 self.assertEqual(validate.call_count, 2)

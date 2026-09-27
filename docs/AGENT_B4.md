@@ -4,9 +4,9 @@
 
 ## 1. 修改文件
 
-- `deployment_store.py`、`deployment_api.py`：加密凭据、期望配置、管理 API。
+- `proxyforge/control/deployment_store.py`、`proxyforge/control/deployment_api.py`：加密凭据、期望配置、管理 API。
 - `agent/deployment_spec.py`：严格规格、sing-box 配置和 Mihomo 节点生成。
-- `control_store.py`、`job_store.py`、`agent_api.py`：schema 3、事务队列、能力门控。
+- `proxyforge/control/control_store.py`、`proxyforge/control/job_store.py`、`proxyforge/control/agent_api.py`：schema 3、事务队列、能力门控。
 - Agent runtime/client/helper/installers/unit：自动安装、配置应用、TCP 监听检查与低端口能力。
 - `main.py`、`static/agents.js`、`static/app.js`：部署入口、自动节点投影、普通节点编辑保护。
 - tests、真实运行环境脚本、Mihomo 生成样本和 CI：迁移、隔离、回滚及实际解析验证。

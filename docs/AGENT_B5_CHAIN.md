@@ -4,8 +4,8 @@
 
 ## 1. 修改文件
 
-- `chain_store.py`、`control_store.py`：关系、加密快照、事务与迁移。
-- `deployment_api.py`、`deployment_store.py`、`job_store.py`：管理 API、依赖保护、节点投影和队列。
+- `proxyforge/control/chain_store.py`、`proxyforge/control/control_store.py`：关系、加密快照、事务与迁移。
+- `proxyforge/control/deployment_api.py`、`proxyforge/control/deployment_store.py`、`proxyforge/control/job_store.py`：管理 API、依赖保护、节点投影和队列。
 - `agent/chain_spec.py`、runtime、inventory、installers：受控配置生成、能力门控和执行。
 - `static/agents.js`：链路创建、状态、重试与移除。
 - `tests/test_chains.py`、`scripts/check_ss2022_chain.py`：存储/API/运行恢复与真实转发。

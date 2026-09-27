@@ -11,9 +11,9 @@ import uuid
 
 from agent.deployment_spec import client_node, runtime_config, spec_hash, validate_spec
 from agent.runtime_spec import revision, validate_runtime_job
-from control_store import ControlStore
-from deployment_store import DeploymentKeyError, new_spec
-from job_store import JobConflict
+from proxyforge.control.control_store import ControlStore
+from proxyforge.control.deployment_store import DeploymentKeyError, new_spec
+from proxyforge.control.job_store import JobConflict
 from test_agent_jobs import capable
 
 SETTINGS = {'name': 'Direct node', 'server': 'vps.example.com', 'server_name': 'www.example.com', 'listen_port': 443}
@@ -154,13 +154,13 @@ class DeploymentStoreTest(unittest.TestCase):
 
     def test_v2_migration_and_atomic_failure(self):
         path = self.root / 'v2.db'
-        with patch('control_store.migrate_deployments'), patch('control_store.migrate_landings'), patch('control_store.migrate_chains'):
+        with patch('proxyforge.control.control_store.migrate_deployments'), patch('proxyforge.control.control_store.migrate_landings'), patch('proxyforge.control.control_store.migrate_chains'):
             old = ControlStore(path)
         registered = old.register(old.issue_registration('old')['registration_token'], capable(), '')
         def broken(db):
             db.execute('ALTER TABLE jobs ADD COLUMN secret_payload TEXT')
             raise sqlite3.OperationalError('interrupted')
-        with patch('control_store.migrate_deployments', broken), self.assertRaises(sqlite3.OperationalError):
+        with patch('proxyforge.control.control_store.migrate_deployments', broken), self.assertRaises(sqlite3.OperationalError):
             ControlStore(path)
         with old.connection() as db:
             self.assertEqual(db.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0], 2)

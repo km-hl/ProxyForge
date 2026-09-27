@@ -7,8 +7,8 @@ import unittest
 from unittest.mock import patch
 import uuid
 
-from control_store import ControlStore, UnauthorizedAgent, CapacityExceeded
-from job_store import JobConflict, JobNotFound
+from proxyforge.control.control_store import ControlStore, UnauthorizedAgent, CapacityExceeded
+from proxyforge.control.job_store import JobConflict, JobNotFound
 from agent.client import AgentConnectionError, CredentialRejected, JobRejected
 from agent.jobs import process_job, runner_lock, validate_job
 from agent.main import load_config, save_config
@@ -185,7 +185,7 @@ class QueueTest(unittest.TestCase):
         def fail(db):
             db.execute('CREATE TABLE incomplete(x TEXT)')
             raise sqlite3.OperationalError('test interrupted migration')
-        with patch('control_store.migrate_jobs', fail), self.assertRaises(sqlite3.OperationalError):
+        with patch('proxyforge.control.control_store.migrate_jobs', fail), self.assertRaises(sqlite3.OperationalError):
             ControlStore(self.path)
         with self.store.connection() as db:
             self.assertIsNone(db.execute("SELECT 1 FROM sqlite_master WHERE name='incomplete'").fetchone())

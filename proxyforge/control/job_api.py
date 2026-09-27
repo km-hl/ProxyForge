@@ -5,9 +5,9 @@ from fastapi import Header
 from fastapi.responses import JSONResponse
 from pydantic import Field, constr, model_validator
 
-from agent_api import Payload, Identifier, SingboxStatus
-from control_store import UnauthorizedAgent
-from job_store import JobConflict, JobNotFound
+from proxyforge.control.agent_api import Payload, Identifier, SingboxStatus
+from proxyforge.control.control_store import UnauthorizedAgent
+from proxyforge.control.job_store import JobConflict, JobNotFound
 from agent.runtime_spec import RELEASE, validate_action
 
 

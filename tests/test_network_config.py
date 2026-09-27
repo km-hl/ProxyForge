@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 
 import yaml
-from mihomo_compat import BASELINE, DEFAULTS, KNOWN_DNS_FIELDS, KNOWN_TUN_FIELDS
-from network_config import validate_network_config, effective_network
+from proxyforge.config.mihomo_compat import BASELINE, DEFAULTS, KNOWN_DNS_FIELDS, KNOWN_TUN_FIELDS
+from proxyforge.config.network_config import validate_network_config, effective_network
 
 
 def codes(report, level="errors"):

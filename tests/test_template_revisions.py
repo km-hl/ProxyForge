@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from template_store import TemplateStore, TemplateConflict, revision, atomic_write
+from proxyforge.config.template_store import TemplateStore, TemplateConflict, revision, atomic_write
 
 
 def compete(path, expected, content, start, results):
@@ -61,7 +61,7 @@ class RevisionStoreTest(unittest.TestCase):
             if Path(path).name == "airports.yaml":
                 raise OSError("simulated disk failure")
             return real(path, content)
-        with patch("template_store.atomic_write", side_effect=interrupted):
+        with patch("proxyforge.config.template_store.atomic_write", side_effect=interrupted):
             with self.assertRaises(OSError):
                 self.store.commit({"template.yaml": "new", "airports.yaml": "[]"})
         snapshot = TemplateStore(self.path).snapshot()
@@ -71,7 +71,7 @@ class RevisionStoreTest(unittest.TestCase):
         self.assertFalse(self.store.journal.exists())
 
     def test_failure_before_commit_preserves_template_and_history(self):
-        with patch("template_store.atomic_write", side_effect=OSError("full")):
+        with patch("proxyforge.config.template_store.atomic_write", side_effect=OSError("full")):
             with self.assertRaises(OSError):
                 self.store.commit({"template.yaml": "new"})
         self.assertEqual(self.path.read_bytes(), b"rules: []\r\n")

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import yaml
+from proxyforge.subscription.nodes import get_airport_name
 
 
 def load_cache_functions():
@@ -15,7 +16,6 @@ def load_cache_functions():
     wanted = {
         "fetch_airport_item",
         "load_cache_from_file",
-        "get_airport_name",
         "merge_airport_proxies_with_cache",
     }
     nodes = [
@@ -23,6 +23,7 @@ def load_cache_functions():
         if isinstance(node, ast.FunctionDef) and node.name in wanted
     ]
     namespace = {
+        "get_airport_name": get_airport_name,
         "Any": Any,
         "CACHE_FILE_PATH": "",
         "Dict": Dict,

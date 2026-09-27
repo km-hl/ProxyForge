@@ -12,7 +12,7 @@ from agent.deployment_spec import spec_hash
 from agent.landing_spec import METHOD
 from agent.runtime_engine import write_json
 from agent.runtime_spec import revision
-from deployment_store import new_landing_spec
+from proxyforge.control.deployment_store import new_landing_spec
 
 
 def job(spec, remove=False):

@@ -15,7 +15,7 @@ from agent.runtime_download import download_binary
 from agent.runtime_engine import RuntimeEngine, SystemBackend, UNIT
 from agent.runtime_spec import RELEASE, revision
 from agent.deployment_spec import spec_hash
-from deployment_store import new_spec
+from proxyforge.control.deployment_store import new_spec
 from scripts.check_ss2022_landing import check_landing
 from scripts.check_ss2022_chain import check_chain
 

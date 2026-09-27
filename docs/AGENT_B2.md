@@ -6,9 +6,9 @@ are not accepted actions. No production deployment is part of this change.
 
 ## 1. Files
 
-`job_store.py` implements the transactional queue; `control_store.py` migrates
-SQLite and cancels active jobs on revocation. `job_api.py` defines strict schemas
-and routes, attached by `agent_api.py`. `agent/jobs.py` implements the allowlist,
+`proxyforge/control/job_store.py` implements the transactional queue; `proxyforge/control/control_store.py` migrates
+SQLite and cancels active jobs on revocation. `proxyforge/control/job_api.py` defines strict schemas
+and routes, attached by `proxyforge/control/agent_api.py`. `agent/jobs.py` implements the allowlist,
 local process lock and result journal. Agent transport, loop and installer include
 the new protocol. `static/agents.js` provides task creation, status and cancellation.
 Tests and CI cover the protocol alongside existing configuration/Mihomo checks.
