@@ -168,7 +168,7 @@
                     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;">
                         <div>
                             <h2 style="font-size:1.2rem; font-weight:600;">🌐 自建节点管理</h2>
-                            <span style="font-size:0.8rem; color:#888;">(勾选左侧选框可批量删除)</span>
+                            <span style="font-size:0.8rem; color:#888;">手工节点可编辑；Agent 托管节点通过部署管理。</span>
                         </div>
                         <div style="margin-top:8px;">
                             <button class="btn btn-danger" id="btn-bulk-delete-nodes" style="margin-right:8px;">🗑️ 批量删除</button>
@@ -176,10 +176,25 @@
                             <button class="btn btn-success" id="btn-import-nodes">📥 YAML导入</button>
                         </div>
                     </div>
+                    <h3 class="node-section-title">手工节点</h3>
                     <div id="nodes-list">
                         <!-- Rendered by JS -->
                         <div class="empty-state">加载中...</div>
                     </div>
+                    <section id="managed-nodes-section">
+                        <h3 class="node-section-title">Agent 托管节点</h3>
+                        <div class="managed-node-toolbar">
+                            <input id="managed-node-search" aria-label="搜索托管节点" placeholder="搜索名称、入口、落地或地址">
+                            <select id="managed-node-filter" aria-label="托管节点发布状态">
+                                <option value="all">全部状态</option>
+                                <option value="published">可加入订阅</option>
+                                <option value="unpublished">暂不加入订阅</option>
+                            </select>
+                            <button class="btn" id="btn-refresh-managed-nodes">刷新托管状态</button>
+                        </div>
+                        <p id="managed-node-notice" role="status"></p>
+                        <div id="managed-nodes-list"></div>
+                    </section>
                 </div>
 
                 <!-- 路由规则 (Rules) -->
@@ -300,5 +315,6 @@
     <script src="/static/app.js"></script>
     <script src="/static/template-history.js"></script>
     <script src="/static/agents.js"></script>
+    <script src="/static/managed-nodes.js"></script>
 </body>
 </html>

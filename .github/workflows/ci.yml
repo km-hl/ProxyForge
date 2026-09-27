@@ -64,9 +64,10 @@ jobs:
           node --check static/template-session.js
           node --check static/template-history.js
           node --check static/agents.js
+          node --check static/managed-nodes.js
 
       - name: Run frontend behavior tests
-        run: node --test tests/rule_order.test.js tests/html_security.test.js tests/network_settings.test.js tests/template_session.test.js tests/agents.test.js
+        run: node --test tests/rule_order.test.js tests/html_security.test.js tests/network_settings.test.js tests/template_session.test.js tests/agents.test.js tests/managed_nodes.test.js
 
       - name: Check pull request whitespace errors
         if: github.event_name == 'pull_request'

@@ -219,6 +219,8 @@ ProxyForge 的配置文件和 Agent 控制面 SQLite 数据库保存在运行数
 Agent 已支持直连 VLESS Reality 的配置生成、失败回滚和自动客户端节点。使用和升级边界见 [B4 部署说明](docs/AGENT_B4.md)。
 支持独立 SS2022 落地的密码生成、部署与回滚，参见 [B5a 落地说明](docs/AGENT_B5_LANDING.md)。入口可新增经落地的独立 VLESS Reality 监听，同时保留直连节点；使用方式、依赖保护与迁移见 [B5b 链路说明](docs/AGENT_B5_CHAIN.md)。
 
+自建节点页提供独立的 Agent 托管节点列表，显示入口/落地、任务状态和订阅发布资格，并可直接进入部署、链路和任务管理；失败与已移除记录仍可查看。详见 [B6 托管节点界面](docs/AGENT_B6_NODES_UI.md)。
+
 **迁移步骤：**
 1. 在新 VPS 上克隆项目并进入目录：
    ```bash

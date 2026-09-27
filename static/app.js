@@ -112,6 +112,7 @@ ProxyForgeNetwork.init({
 document.addEventListener('click', event => {
     const target = event.target.closest('button, [onclick]');
     if (!target || target.id === 'logout-btn' || target.closest('#login-overlay')) return;
+    if (target.closest('#managed-nodes-section')) return;
     if (target.id === 'modal-cancel' || target.id === 'modal-close') return;
     let message = '';
     if (templateSession.isBusy() || externalTemplateBusy) message = '正在保存，请稍候';
@@ -290,6 +291,7 @@ async function loadData() {
         
         renderAirports();
         renderNodes();
+        if (typeof ProxyForgeManagedNodes !== 'undefined') ProxyForgeManagedNodes.refresh();
         // Reauthentication must not erase an unsaved draft.
         if (!rawIsDirty() && !ProxyForgeNetwork.isDirty()) installTemplate(await readTemplate());
 
@@ -500,12 +502,13 @@ function renderGroups() {
 // === Render: Custom Nodes ===
 function renderNodes() {
     const list = document.getElementById('nodes-list');
-    if (!state.nodes.length) {
-        list.innerHTML = `<div class="empty-state">暂无自建节点</div>`;
+    const manual = state.nodes.map((node, index) => ({ node, index })).filter(item => !item.node._managed_by);
+    if (!manual.length) {
+        list.innerHTML = `<div class="empty-state">暂无手工节点</div>`;
         return;
     }
     let html = '';
-    state.nodes.forEach((n, index) => {
+    manual.forEach(({ node: n, index }, position) => {
         let displayName = getFlagEmoji(n.name);
         html += `
             <div class="list-item" draggable="true" data-index="${index}" 
@@ -516,17 +519,17 @@ function renderNodes() {
                  ondrop="handleDrop(event, ${index})"
                  ondragend="handleDragEnd(event)">
                 <span class="drag-handle" style="cursor: grab; margin-right: 10px; color: #999;">⠿</span>
-                ${n._managed_by ? '<span class="type-badge">Agent 托管 · 只读</span>' : getCheckboxHTML('cb-node', index)}
+                ${getCheckboxHTML('cb-node', index)}
                 <span class="type-badge badge-node">${escapeHtml(n.type || 'unknown')}</span>
                 <div class="item-info">
                     <div class="item-name">${escapeHtml(displayName)}</div>
                     <div class="item-detail">${escapeHtml(n.server || '')} ${escapeHtml(n.port ? ':'+n.port : '')}</div>
                 </div>
                 <div class="item-actions">
-                    ${index > 0 ? `<button class="btn btn-sm" onclick="moveNodeUp(${index})" title="上移">⬆️</button>` : ''}
-                    ${index < state.nodes.length - 1 ? `<button class="btn btn-sm" onclick="moveNodeDown(${index})" title="下移">⬇️</button>` : ''}
-                    ${n._managed_by ? '<span>通过 Agent 部署管理</span>' : `<button class="btn btn-sm" onclick="editNode(${index})">编辑</button>
-                    <button class="btn btn-sm btn-danger" onclick="deleteNode(${index})">删除</button>`}
+                    ${position > 0 ? `<button class="btn btn-sm" onclick="moveNodeUp(${index})" title="上移">⬆️</button>` : ''}
+                    ${position < manual.length - 1 ? `<button class="btn btn-sm" onclick="moveNodeDown(${index})" title="下移">⬇️</button>` : ''}
+                    <button class="btn btn-sm" onclick="editNode(${index})">编辑</button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteNode(${index})">删除</button>
                 </div>
             </div>
         `;
@@ -1381,19 +1384,21 @@ window.deleteNode = function(index) {
 };
 
 window.moveNodeUp = function(index) {
-    if (index > 0) {
+    const previous = state.nodes.map((node, i) => !node._managed_by && i < index ? i : -1).filter(i => i >= 0).pop();
+    if (previous !== undefined && !state.nodes[index]._managed_by) {
         let temp = state.nodes[index];
-        state.nodes[index] = state.nodes[index - 1];
-        state.nodes[index - 1] = temp;
+        state.nodes[index] = state.nodes[previous];
+        state.nodes[previous] = temp;
         saveNodesObj();
     }
 };
 
 window.moveNodeDown = function(index) {
-    if (index < state.nodes.length - 1) {
+    const next = state.nodes.findIndex((node, i) => i > index && !node._managed_by);
+    if (next >= 0 && !state.nodes[index]._managed_by) {
         let temp = state.nodes[index];
-        state.nodes[index] = state.nodes[index + 1];
-        state.nodes[index + 1] = temp;
+        state.nodes[index] = state.nodes[next];
+        state.nodes[next] = temp;
         saveNodesObj();
     }
 };
@@ -1401,6 +1406,7 @@ window.moveNodeDown = function(index) {
 let draggedNodeIndex = null;
 
 window.handleDragStart = function(e, index) {
+    if (state.nodes[index]._managed_by) { e.preventDefault(); return; }
     draggedNodeIndex = index;
     e.dataTransfer.effectAllowed = 'move';
     e.currentTarget.classList.add('dragging');
@@ -1424,7 +1430,8 @@ window.handleDragLeave = function(e) {
 window.handleDrop = function(e, dropIndex) {
     e.stopPropagation();
     e.currentTarget.classList.remove('drag-over');
-    if (draggedNodeIndex !== null && draggedNodeIndex !== dropIndex) {
+    if (draggedNodeIndex !== null && draggedNodeIndex !== dropIndex &&
+        !state.nodes[draggedNodeIndex]._managed_by && !state.nodes[dropIndex]._managed_by) {
         let draggedItem = state.nodes.splice(draggedNodeIndex, 1)[0];
         state.nodes.splice(dropIndex, 0, draggedItem);
         saveNodesObj();
@@ -1455,7 +1462,7 @@ async function saveNodesObj() {
         externalTemplateBusy = true; locked = true; rulesEditor.readOnly = true;
         const response = await fetchAuth('/nodes', {
             method: 'POST',
-            body: JSON.stringify({ nodes: state.nodes })
+            body: JSON.stringify({ nodes: state.nodes.filter(node => !node._managed_by) })
         });
         const result = await response.json();
         if (result.cleanedReferences > 0) {
