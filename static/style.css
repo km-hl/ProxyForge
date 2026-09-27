@@ -597,3 +597,17 @@ img.emoji {
     margin: 0 .05em 0 .1em;
     vertical-align: -0.1em;
 }
+
+.node-section-title { font-size: 1rem; margin: 24px 0 12px; }
+.managed-node-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.managed-node-toolbar input { flex: 1; min-width: 180px; }
+.managed-node-toolbar input, .managed-node-toolbar select {
+    padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); font: inherit;
+}
+#managed-node-notice { color: #64748b; font-size: .85rem; margin: 12px 0; }
+#managed-nodes-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 14px; }
+.managed-node-card { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px; background: #fff; min-width: 0; }
+.managed-node-card h4 { margin: 10px 0; overflow-wrap: anywhere; }
+.managed-node-card p { font-size: .85rem; margin: 7px 0; overflow-wrap: anywhere; }
+.managed-node-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.managed-node-error { color: #b91c1c; }

@@ -36,6 +36,10 @@ class DeploymentRequest(Payload):
 
 
 def attach_deployment_routes(app, admin, store_provider):
+    @admin.get('/managed/nodes')
+    def managed_nodes():
+        return {'nodes': store_provider().managed_inventory()}
+
     @admin.get('/deployments/landings')
     def chain_landings():
         return {'landings': store_provider().chain_landings()}

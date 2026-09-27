@@ -13,6 +13,7 @@ import uuid
 from job_store import JobStoreMixin, migrate_jobs
 from deployment_store import DeploymentStoreMixin, migrate_deployments, migrate_landings
 from chain_store import ChainStoreMixin, migrate_chains
+from managed_inventory import ManagedInventoryMixin
 
 PROTOCOL_VERSION = 1
 ONLINE_SECONDS = 90
@@ -44,7 +45,7 @@ def online_status(last_seen, now):
     return "online" if age < ONLINE_SECONDS else "degraded" if age < OFFLINE_SECONDS else "offline"
 
 
-class ControlStore(ChainStoreMixin, DeploymentStoreMixin, JobStoreMixin):
+class ControlStore(ManagedInventoryMixin, ChainStoreMixin, DeploymentStoreMixin, JobStoreMixin):
     def __init__(self, path, clock=time.time):
         self.path = Path(path).resolve()
         self.clock = clock
