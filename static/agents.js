@@ -17,6 +17,78 @@ function agentCanLand(agent) {
     return agentCanManageRuntime(agent) && agent.metadata.landing_protocol_version === 1;
 }
 
+function agentCanChain(agent) {
+    return agentCanManageRuntime(agent) && agent.metadata.chain_protocol_version === 1;
+}
+
+async function showAgentChain(agent) {
+    const url = '/agents/' + agent.id + '/chain';
+    let chain = (await (await fetchAuth(url)).json()).chain;
+    const direct = (await (await fetchAuth('/agents/' + agent.id + '/deployment')).json()).deployment;
+    const { landings } = await (await fetchAuth('/agents/deployments/landings')).json();
+    openModal('入口 → SS2022 落地',
+        '<p>在此入口新增独立 VLESS Reality 监听，保留原直连节点。每个入口支持一条附加链路，成功后生成第二个客户端节点。</p>' +
+        '<label>链路名称（创建后固定）</label><input id="chain-name" maxlength="64">' +
+        '<label>链路入口端口（不同于直连端口）</label><input id="chain-port" type="number" min="1" max="65535" value="8443">' +
+        '<label>已部署的 SS2022 落地（创建后固定）</label><select id="chain-landing"></select>' +
+        '<p>沿用入口公网地址和 SNI，自动生成独立凭据。关联期间如需修改入口或落地部署，先成功移除链路。应用会重启入口托管实例。</p>' +
+        '<button class="btn" id="chain-apply">应用 / 重试</button> ' +
+        '<button class="btn btn-danger" id="chain-remove">移除链路（保留直连）</button> ' +
+        '<button class="btn" id="chain-refresh">刷新状态</button><pre id="chain-state" style="white-space:pre-wrap"></pre>', closeModal);
+    const selector = document.getElementById('chain-landing');
+    for (const landing of landings.filter(item => item.agent_id !== agent.id)) {
+        const option = document.createElement('option');
+        option.value = landing.agent_id; option.textContent = landing.name; selector.append(option);
+    }
+    if (chain && !landings.some(item => item.agent_id === chain.landing_agent_id)) {
+        const option = document.createElement('option');
+        option.value = chain.landing_agent_id; option.textContent = '原落地当前不可用（仍可移除链路）'; selector.append(option);
+    }
+    const status = document.getElementById('chain-state');
+    const apply = document.getElementById('chain-apply'), remove = document.getElementById('chain-remove');
+    function render(fill) {
+        if (fill && chain) {
+            document.getElementById('chain-name').value = chain.settings.name;
+            document.getElementById('chain-port').value = chain.settings.listen_port;
+            selector.value = chain.landing_agent_id;
+        }
+        selector.disabled = !!chain;
+        document.getElementById('chain-name').readOnly = !!chain;
+        const ready = direct && direct.protocol === 'vless-reality' && direct.action === 'deployment.apply' && direct.status === 'success';
+        const busy = chain && ['pending', 'assigned', 'running'].includes(chain.status);
+        const allowed = agentCanChain(agent) && ready && !busy;
+        apply.disabled = !allowed || !landings.some(item => item.agent_id === selector.value);
+        remove.disabled = !allowed || !chain;
+        status.textContent = !agentCanChain(agent) ? '请升级此入口 Agent 和本地辅助服务以支持链路。' :
+            !ready ? '请先成功部署此入口的 VLESS Reality 直连节点。' :
+            chain ? '版本 ' + chain.revision + ' · ' + chain.action + ' · ' + chain.status + (chain.error ? '\n' + chain.error : '') :
+            landings.length ? '选择已成功部署的落地。成功状态表示配置已应用，不代表公网端到端可达。' : '请先在另一台 Agent 成功部署 SS2022 落地。';
+    }
+    async function submit(removing) {
+        if (!confirm(removing ? '确认移除链路监听并保留直连？' : '确认应用链路并重启入口托管实例？')) return;
+        apply.disabled = true; remove.disabled = true;
+        const settings = removing ? chain.settings : { name: document.getElementById('chain-name').value.trim(), listen_port: Number(document.getElementById('chain-port').value) };
+        const data = { expected_revision: chain ? chain.revision : 0, landing_agent_id: selector.value, settings, remove: removing };
+        const key = url + ':' + JSON.stringify(data);
+        let requestId = pendingAgentJobRequests.get(key);
+        if (!requestId) {
+            requestId = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+            pendingAgentJobRequests.set(key, requestId);
+        }
+        try {
+            chain = await (await fetchAuth(url, { method: 'PUT', body: JSON.stringify({ ...data, request_id: requestId }) })).json();
+            pendingAgentJobRequests.delete(key); render(true);
+        } catch (error) {
+            render(false); status.textContent = error.message + '；可重试相同请求，版本冲突请刷新后操作。';
+        }
+    }
+    apply.onclick = () => submit(false);
+    remove.onclick = () => submit(true);
+    selector.onchange = () => render(false);
+    document.getElementById('chain-refresh').onclick = () => showAgentChain(agent).catch(error => { status.textContent = error.message; });
+    render(true);
+}
+
 async function showAgentDeployment(agent) {
     const url = '/agents/' + agent.id + '/deployment';
     let deployment = (await (await fetchAuth(url)).json()).deployment;
@@ -46,7 +118,7 @@ async function showAgentDeployment(agent) {
         const landing = protocol.value === 'ss2022';
         document.getElementById('deployment-reality-fields').hidden = landing;
         document.getElementById('deployment-help').textContent = landing ?
-            'SS2022 落地使用 2022-blake3-aes-256-gcm，自动生成并保管密码，同时监听 TCP/UDP。落地不直接出现在客户端订阅；入口关联将在链路编排阶段提供。' :
+            'SS2022 落地使用 2022-blake3-aes-256-gcm，自动生成并保管密码，同时监听 TCP/UDP。落地不直接出现在客户端订阅；部署成功后可在入口 Agent 的“链路”中关联。' :
             '填写支持 TLS 1.3 的 Reality 握手域名。部署成功后自动生成只读客户端节点。';
         const capable = landing ? agentCanLand(agent) : agentCanDeploy(agent);
         document.getElementById('deployment-name').readOnly = !!deployment;
@@ -198,7 +270,7 @@ async function refreshAgents() {
                 const cell = document.createElement('td'); cell.textContent = value; row.append(cell);
             }
             const actions = document.createElement('td');
-            for (const [label, action] of [['详情', 'details'], ['任务', 'jobs'], ['部署', 'deployment'], ['编辑', 'edit'], ['撤销', 'revoke'], ['移除', 'remove']]) {
+            for (const [label, action] of [['详情', 'details'], ['任务', 'jobs'], ['部署', 'deployment'], ['链路', 'chain'], ['编辑', 'edit'], ['撤销', 'revoke'], ['移除', 'remove']]) {
                 const button = document.createElement('button'); button.textContent = label; button.className = 'btn';
                 button.onclick = () => agentAction(agent, action).catch(error => showToast(error.message, 'error'));
                 actions.append(button);
@@ -210,6 +282,10 @@ async function refreshAgents() {
 }
 
 async function agentAction(agent, action) {
+    if (action === 'chain') {
+        await showAgentChain(await (await fetchAuth('/agents/' + agent.id)).json());
+        return;
+    }
     if (action === 'deployment') {
         await showAgentDeployment(await (await fetchAuth('/agents/' + agent.id)).json());
         return;
@@ -286,4 +362,4 @@ if (typeof document !== 'undefined') {
             refreshAgents();
     }, 30000);
 }
-if (typeof module !== 'undefined' && module.exports) module.exports = { agentStatusLabel, agentCanRunJobs, agentCanManageRuntime, agentCanDeploy, agentCanLand };
+if (typeof module !== 'undefined' && module.exports) module.exports = { agentStatusLabel, agentCanRunJobs, agentCanManageRuntime, agentCanDeploy, agentCanLand, agentCanChain };

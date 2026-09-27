@@ -17,6 +17,7 @@ from agent.runtime_spec import RELEASE, revision
 from agent.deployment_spec import spec_hash
 from deployment_store import new_spec
 from scripts.check_ss2022_landing import check_landing
+from scripts.check_ss2022_chain import check_chain
 
 
 def job(action):
@@ -161,6 +162,7 @@ def main():
             backend.activate = activate
             check_deployment(engine, backend)
             check_landing(engine, backend)
+            check_chain(engine, backend)
             print('Pinned sing-box ' + RELEASE['version'] + ': real check/start/restart/stop/rollback passed')
         finally:
             subprocess.run(['systemctl', 'stop', UNIT], check=False)

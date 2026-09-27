@@ -6,6 +6,7 @@ import uuid
 from agent.runtime_spec import RUNTIME_ACTIONS, CONFIG_ACTIONS, revision, validate_action
 from agent.deployment_spec import DEPLOYMENT_ACTIONS
 from agent.landing_spec import LANDING_ACTIONS
+from agent.chain_spec import CHAIN_ACTIONS
 
 JOB_PROTOCOL_VERSION = 1
 LEASE_SECONDS = 60
@@ -92,7 +93,7 @@ class JobStoreMixin:
                 raise JobConflict()
             return self._job_view(existing)
         # Retain idempotency keys/results for seven days, with a hard global cap.
-        db.execute("DELETE FROM jobs WHERE status IN ('success','failed','cancelled') AND finished_at<? AND id NOT IN (SELECT job_id FROM deployments)",
+        db.execute("DELETE FROM jobs WHERE status IN ('success','failed','cancelled') AND finished_at<? AND id NOT IN (SELECT job_id FROM deployments UNION SELECT job_id FROM chains)",
                    (now - 7 * 86400,))
         if db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] >= 10000 or db.execute(
                 "SELECT COUNT(*) FROM jobs WHERE agent_id=? AND status IN ('pending','assigned','running')",
@@ -167,6 +168,8 @@ class JobStoreMixin:
             if action in DEPLOYMENT_ACTIONS and metadata.get('deployment_protocol_version') != 1:
                 raise JobConflict()
             if action in LANDING_ACTIONS and metadata.get('landing_protocol_version') != 1:
+                raise JobConflict()
+            if action in CHAIN_ACTIONS and metadata.get('chain_protocol_version') != 1:
                 raise JobConflict()
 
     def report_job(self, token, job_id, lease, result=None, renew=False):

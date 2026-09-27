@@ -1,6 +1,15 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { agentStatusLabel, agentCanRunJobs, agentCanManageRuntime, agentCanDeploy, agentCanLand } = require('../static/agents.js');
+const { agentStatusLabel, agentCanRunJobs, agentCanManageRuntime, agentCanDeploy, agentCanLand, agentCanChain } = require('../static/agents.js');
+
+test('chain changes require explicit upgraded capability', () => {
+    const agent = { status: 'online', compatible: true, metadata: { job_protocol_version: 1, runtime_protocol_version: 1, supported: true } };
+    assert.equal(agentCanChain(agent), false);
+    agent.metadata.chain_protocol_version = 1;
+    assert.equal(agentCanChain(agent), true);
+    agent.status = 'revoked';
+    assert.equal(agentCanChain(agent), false);
+});
 
 test('inventory separates online state, compatibility and supported platform', () => {
     const agent = { status: 'online', compatible: true, metadata: { supported: true } };

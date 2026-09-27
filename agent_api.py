@@ -69,6 +69,7 @@ class AgentMetadata(Payload):
     runtime_protocol_version: StrictInt = Field(default=0, ge=0, le=1000)
     deployment_protocol_version: StrictInt = Field(default=0, ge=0, le=1000)
     landing_protocol_version: StrictInt = Field(default=0, ge=0, le=1000)
+    chain_protocol_version: StrictInt = Field(default=0, ge=0, le=1000)
     uptime: StrictInt = Field(default=0, ge=0)
     addresses: list[ShortText] = Field(default_factory=list, max_length=16)
     supported: StrictBool = False
