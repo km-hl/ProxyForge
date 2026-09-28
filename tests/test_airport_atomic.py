@@ -37,7 +37,7 @@ def interrupted_cache_writer(root, kind, ready):
                 "headers": {}, "text": "proxies: []", "raise_for_status": lambda self: None,
             })()
             with patch.object(app, "safe_get", return_value=response):
-                app.fetch_single_airport_info(source, force=True)
+                app.get_airports_info("all")["info"][0]
 
 
 class AirportAtomicWriteTest(unittest.TestCase):
@@ -67,7 +67,7 @@ class AirportAtomicWriteTest(unittest.TestCase):
         if kind == "nodes":
             return self.app.save_cache_to_file(self.proxies, self.snapshot)
         with patch.object(self.app, "safe_get", return_value=self.response):
-            return self.app.fetch_single_airport_info(self.source, force=True)
+            return self.app.get_airports_info("all")["info"][0]
 
     def assert_no_temporaries(self, kind):
         path = self.target(kind)
@@ -147,7 +147,7 @@ class AirportAtomicWriteTest(unittest.TestCase):
                 if kind == "nodes":
                     self.assertEqual(yaml.safe_load(content), self.proxies)
                 else:
-                    self.assertEqual(json.loads(content)[self.source["url"]]["info"]["name"], "示例机场")
+                    self.assertEqual(json.loads(content)[self.source["url"]]["info"]["name"], "airport.invalid")
                 self.assert_no_temporaries(kind)
 
     def test_reader_sees_complete_old_then_new_file_at_replace(self):
@@ -195,7 +195,7 @@ class AirportAtomicWriteTest(unittest.TestCase):
                     self.assertEqual(self.app.load_cache_from_file(), [{"name": "old"}])
                 else:
                     self.write(kind)
-                    self.assertIn("old", json.loads(path.read_text(encoding="utf-8")))
+                    self.assertIn(self.source["url"], json.loads(path.read_text(encoding="utf-8")))
                 self.assertTrue(remnant.exists())
                 if kind == "nodes":
                     self.assertEqual(path.read_bytes(), original)
@@ -251,12 +251,12 @@ class AirportAtomicWriteTest(unittest.TestCase):
     def test_written_info_preserves_cached_response_shape_and_force_behavior(self):
         first = self.write("info")
         with patch.object(self.app, "safe_get", return_value=self.response) as fetch:
-            self.assertEqual(self.app.fetch_single_airport_info(self.source), first)
+            self.assertEqual(self.app.get_airports_info()["info"][0], first)
             fetch.assert_not_called()
-            forced = self.app.fetch_single_airport_info(self.source, force=True)
+            forced = self.app.get_airports_info("all")["info"][0]
             fetch.assert_called_once()
         saved = json.loads(self.target("info").read_text(encoding="utf-8"))
-        self.assertEqual(saved[self.source["url"]], {"info": forced, "_timestamp": forced["_timestamp"]})
+        self.assertEqual(saved[self.source["url"]], {"info": dict(forced, name="airport.invalid"), "_timestamp": forced["_timestamp"]})
 
     @unittest.skipIf(os.name == "nt", "POSIX file permission bits")
     def test_new_cache_files_are_private(self):

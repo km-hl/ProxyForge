@@ -19,6 +19,7 @@ import json
 import urllib.parse
 import re
 import threading
+import time
 from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
@@ -159,6 +160,9 @@ _subscription_cache = TTLCache(maxsize=1, ttl=12 * 60 * 60)
 _subscription_cache_lock = threading.RLock()
 _airport_cache_generation = 0
 _airport_cache_sources = None
+_airport_info_generation = 0
+_airport_info_sequence = 0
+_airport_info_accepted = {}
 
 # ================= 核心读写逻辑 =================
 
@@ -231,19 +235,23 @@ class AirportSourcesChanged(Exception):
 
 @configuration_locked
 def invalidate_airport_cache(*, clear_disk=False):
-    global _airport_cache_generation
+    global _airport_cache_generation, _airport_cache_sources, _airport_info_generation
     with _subscription_cache_lock:
         _airport_cache_generation += 1
         _subscription_cache.clear()
         if clear_disk:
+            _airport_cache_sources = None
+            _airport_info_generation += 1
+            _airport_info_accepted.clear()
             # Remove before committing changed sources: a crash must not leave a
             # name-only disk cache belonging to a different URL after restart.
-            try:
-                Path(CACHE_FILE_PATH).unlink()
-            except FileNotFoundError:
-                pass
-            else:
-                sync_directory(Path(CACHE_FILE_PATH).parent)
+            for path in (Path(CACHE_FILE_PATH), Path(DATA_DIR) / "airports_info_cache.json"):
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    pass
+                else:
+                    sync_directory(path.parent)
 
 
 @configuration_locked
@@ -460,7 +468,8 @@ def fetch_airport_proxies(sources=None) -> List[Dict[str, Any]]:
             
     return all_proxies
 
-def fetch_single_airport_info(item, force=False) -> dict:
+def fetch_single_airport_info(item) -> dict:
+    """Fetch and parse only; the caller owns all cache reads and writes."""
     url = item.get("url", "").strip() if isinstance(item, dict) else item.strip()
     custom_name = item.get("name", "") if isinstance(item, dict) else ""
     
@@ -476,24 +485,6 @@ def fetch_single_airport_info(item, force=False) -> dict:
     }
     if not url: return info
     
-    import os
-    cache_file = os.path.join(DATA_DIR, "airports_info_cache.json")
-    cache_data = {}
-    if os.path.exists(cache_file):
-        try:
-            with open(cache_file, "r", encoding="utf-8") as f:
-                cache_data = json.load(f)
-        except: pass
-        
-    if not force and url in cache_data:
-        cached_info = cache_data[url]
-        # Check if cache is less than 24 hours old
-        import time
-        if time.time() - cached_info.get("_timestamp", 0) < 24 * 3600:
-            ret_info = cached_info["info"]
-            ret_info["_timestamp"] = cached_info.get("_timestamp", 0)
-            return ret_info
-            
     try:
         headers = {"User-Agent": "clash-verge/v1.6.0 clash-meta/1.18.3"}
         res = safe_get(url, headers=headers, timeout=30)
@@ -523,16 +514,49 @@ def fetch_single_airport_info(item, force=False) -> dict:
     except Exception as e:
         info["error"] = type(e).__name__
         
-    import time
-    timestamp = time.time()
-    info["_timestamp"] = timestamp
-    cache_data[url] = {"info": info, "_timestamp": timestamp}
+    info["_timestamp"] = time.time()
+    return info
+
+
+@configuration_locked
+def load_airport_info_cache():
     try:
-        atomic_write(cache_file, json.dumps(cache_data))
+        with open(Path(DATA_DIR) / "airports_info_cache.json", encoding="utf-8") as stream:
+            data = json.load(stream)
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError, UnicodeError) as exc:
+        logger.warning("读取机场信息缓存失败（%s）", type(exc).__name__)
+        return {}
+    if not isinstance(data, dict):
+        logger.warning("机场信息缓存结构无效，重新获取")
+        return {}
+    valid = {}
+    now = time.time()
+    for url, entry in data.items():
+        if not isinstance(entry, dict):
+            continue
+        stamp, info = entry.get("_timestamp"), entry.get("info")
+        if (type(stamp) not in (int, float) or not 0 <= stamp <= now
+                or not isinstance(info, dict) or info.get("url") != url
+                or not isinstance(info.get("name"), str)
+                or "error" not in info or not (info["error"] is None or isinstance(info["error"], str))
+                or any(type(info.get(field)) is not int or info[field] < 0
+                       for field in ("nodesCount", "upload", "download", "total", "expire"))):
+            continue
+        info["_timestamp"] = stamp
+        valid[url] = entry
+    if len(valid) != len(data):
+        logger.warning("机场信息缓存包含无效条目，忽略损坏条目")
+    return valid
+
+
+@configuration_locked
+def save_airport_info_cache(data):
+    try:
+        atomic_write(Path(DATA_DIR) / "airports_info_cache.json", json.dumps(data))
     except Exception as exc:
         logger.warning("持久化机场信息缓存失败（%s）", type(exc).__name__)
-        
-    return info
 
 
 @configuration_locked
@@ -916,24 +940,65 @@ def update_airports(data: AirportsModel):
 
 @app.get("/api/airports/info", dependencies=[Depends(verify_api_token)])
 def get_airports_info(force_indices: str = ""):
-    urls_data = load_airports()
-    results = []
-    
+    global _airport_info_sequence
     force_idx_list = []
     if force_indices:
         try:
             force_idx_list = [int(x) for x in force_indices.split(",") if x.strip()]
-        except: pass
-        
-    if urls_data:
-        def fetch_wrapper(args):
-            idx, item = args
-            force = (idx in force_idx_list) or (force_indices == "all")
-            return fetch_single_airport_info(item, force=force)
-            
+        except ValueError:
+            pass
+
+    for _ in range(2):
+        with template_store().locked():
+            sources = deepcopy(load_airports())
+            generation = _airport_info_generation
+            _airport_info_sequence += 1
+            sequence = _airport_info_sequence
+            cached = load_airport_info_cache()
+            urls = [(item.get("url", "") if isinstance(item, dict) else item).strip() for item in sources]
+            force_urls = {url for i, url in enumerate(urls) if i in force_idx_list or force_indices == "all"}
+            now = time.time()
+            pending = list(dict.fromkeys(url for url in urls if url in force_urls or url not in cached
+                                         or now - cached[url]["_timestamp"] >= 24 * 3600))
+
+        # One fetch per URL, independent of aliases. No configuration/cache lock
+        # is held during network I/O and workers never touch shared cache files.
         with ThreadPoolExecutor(max_workers=5) as executor:
-            results = list(executor.map(fetch_wrapper, enumerate(urls_data)))
-    return {"info": results}
+            fetched = dict(zip(pending, executor.map(fetch_single_airport_info, pending)))
+
+        with template_store().locked():
+            if generation != _airport_info_generation or sources != load_airports():
+                continue
+            latest = load_airport_info_cache()
+            # Re-read and merge only this request's fresh entries. A newer
+            # accepted refresh wins even if its replace/directory fsync failed.
+            entries = {url: value for url, value in latest.items() if url in urls}
+            changed = False
+            for url, info in fetched.items():
+                if url and sequence > _airport_info_accepted.get(url, 0):
+                    entries[url] = {"info": info, "_timestamp": info["_timestamp"]}
+                    _airport_info_accepted[url] = sequence
+                    changed = True
+            if changed:
+                save_airport_info_cache(entries)
+            results = []
+            for item, url in zip(sources, urls):
+                # Prefer a concurrent committed refresh; if persistence failed,
+                # still return the result acquired by this request.
+                if url in fetched and _airport_info_accepted.get(url) == sequence:
+                    info = fetched[url]
+                elif url in entries:
+                    info = entries[url]["info"]
+                elif url in fetched:
+                    info = fetched[url]
+                else:
+                    info = cached[url]["info"]
+                info = deepcopy(info)
+                if isinstance(item, dict) and item.get("name"):
+                    info["name"] = item["name"]
+                results.append(info)
+            return {"info": results}
+    raise HTTPException(status_code=503, detail="机场配置正在更新，请稍后重试")
 
 class ParseLinksModel(BaseModel):
     links: List[str]
