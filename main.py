@@ -24,7 +24,7 @@ from copy import deepcopy
 from pathlib import Path
 from functools import wraps
 from proxyforge.config.template_store import (
-    TemplateStore, TemplateConflict, ConfigurationTooLarge, MAX_TEMPLATE_BYTES, sync_directory,
+    TemplateStore, TemplateConflict, ConfigurationTooLarge, MAX_TEMPLATE_BYTES, sync_directory, atomic_write,
 )
 from proxyforge.control.control_store import ControlStore
 from proxyforge.control.agent_api import attach_agent_routes
@@ -342,8 +342,8 @@ def save_template_content(content: str):
 def save_cache_to_file(proxies: List[Dict[str, Any]], snapshot):
     with airport_cache_locked(snapshot):
         try:
-            with open(CACHE_FILE_PATH, "w", encoding="utf-8") as f:
-                yaml.dump(proxies, f, allow_unicode=True, sort_keys=False)
+            content = yaml.dump(proxies, allow_unicode=True, sort_keys=False)
+            atomic_write(CACHE_FILE_PATH, content)
         except Exception as e:
             logger.error("持久化节点缓存失败（%s）", type(e).__name__)
 
@@ -528,9 +528,9 @@ def fetch_single_airport_info(item, force=False) -> dict:
     info["_timestamp"] = timestamp
     cache_data[url] = {"info": info, "_timestamp": timestamp}
     try:
-        with open(cache_file, "w", encoding="utf-8") as f:
-            json.dump(cache_data, f)
-    except: pass
+        atomic_write(cache_file, json.dumps(cache_data))
+    except Exception as exc:
+        logger.warning("持久化机场信息缓存失败（%s）", type(exc).__name__)
         
     return info
 
