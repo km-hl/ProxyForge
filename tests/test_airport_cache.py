@@ -1,49 +1,17 @@
-import ast
-import os
 import tempfile
 import unittest
-import urllib.parse
 from pathlib import Path
-from typing import Any, Dict, List
+from unittest.mock import patch
 
 import yaml
-from proxyforge.subscription.nodes import get_airport_name
-
-
-def load_cache_functions():
-    source = Path(__file__).resolve().parents[1] / "main.py"
-    tree = ast.parse(source.read_text(encoding="utf-8"))
-    wanted = {
-        "fetch_airport_item",
-        "load_cache_from_file",
-        "merge_airport_proxies_with_cache",
-    }
-    nodes = [
-        node for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name in wanted
-    ]
-    namespace = {
-        "get_airport_name": get_airport_name,
-        "Any": Any,
-        "CACHE_FILE_PATH": "",
-        "Dict": Dict,
-        "List": List,
-        "logger": type("Logger", (), {"error": lambda *args, **kwargs: None})(),
-        "os": os,
-        "urllib": urllib,
-        "yaml": yaml,
-    }
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), "exec"), namespace)
-    return namespace
+from test_api_integration import load_isolated_application
 
 
 class AirportCacheFallbackTest(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.cache_path = Path(self.temp_dir.name) / "airport_cache.yaml"
-        self.functions = load_cache_functions()
-        for name in ("load_cache_from_file", "merge_airport_proxies_with_cache"):
-            self.functions[name].__globals__["CACHE_FILE_PATH"] = str(self.cache_path)
+        self.app = load_isolated_application(Path(self.temp_dir.name))
+        self.cache_path = Path(self.app.CACHE_FILE_PATH)
 
     def tearDown(self):
         self.temp_dir.cleanup()
@@ -72,7 +40,7 @@ class AirportCacheFallbackTest(unittest.TestCase):
         cached = [self.node("A cached", "Airport A"), self.node("B cached", "Airport B")]
         self.write_cache(cached)
 
-        merged, missing = self.functions["merge_airport_proxies_with_cache"]([], airports)
+        merged, missing = self.app.merge_airport_proxies_with_cache([], airports)
 
         self.assertEqual(merged, cached)
         self.assertEqual(missing, [])
@@ -85,7 +53,7 @@ class AirportCacheFallbackTest(unittest.TestCase):
         fresh = [self.node("A fresh", "Airport A")]
         self.write_cache([self.node("A old", "Airport A"), self.node("B cached", "Airport B")])
 
-        merged, missing = self.functions["merge_airport_proxies_with_cache"](fresh, airports)
+        merged, missing = self.app.merge_airport_proxies_with_cache(fresh, airports)
 
         self.assertEqual([node["name"] for node in merged], ["A fresh", "B cached"])
         self.assertEqual(missing, [])
@@ -93,7 +61,7 @@ class AirportCacheFallbackTest(unittest.TestCase):
     def test_missing_cache_is_reported_instead_of_silently_publishing_empty_data(self):
         airports = [{"name": "Airport A", "url": "https://a.invalid/sub"}]
 
-        merged, missing = self.functions["merge_airport_proxies_with_cache"]([], airports)
+        merged, missing = self.app.merge_airport_proxies_with_cache([], airports)
 
         self.assertEqual(merged, [])
         self.assertEqual(missing, ["Airport A"])
@@ -120,11 +88,9 @@ class AirportCacheFallbackTest(unittest.TestCase):
             def get(url, **kwargs):
                 raise RuntimeError(f"failed to reach {url}")
 
-        fetch = self.functions["fetch_airport_item"]
-        fetch.__globals__["logger"] = CapturingLogger()
-        fetch.__globals__["requests"] = FailingRequests()
-
-        proxies = fetch(secret_url)
+        with patch.object(self.app, "logger", CapturingLogger()), \
+             patch.object(self.app, "safe_get", side_effect=FailingRequests.get):
+            proxies = self.app.fetch_airport_item(secret_url)
 
         self.assertEqual(proxies, [])
         combined_logs = "\n".join(messages)

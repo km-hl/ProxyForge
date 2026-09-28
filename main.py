@@ -18,9 +18,14 @@ import base64
 import json
 import urllib.parse
 import re
+import threading
+from contextlib import contextmanager
+from copy import deepcopy
 from pathlib import Path
 from functools import wraps
-from proxyforge.config.template_store import TemplateStore, TemplateConflict, ConfigurationTooLarge, MAX_TEMPLATE_BYTES
+from proxyforge.config.template_store import (
+    TemplateStore, TemplateConflict, ConfigurationTooLarge, MAX_TEMPLATE_BYTES, sync_directory,
+)
 from proxyforge.control.control_store import ControlStore
 from proxyforge.control.agent_api import attach_agent_routes
 from concurrent.futures import ThreadPoolExecutor
@@ -28,7 +33,7 @@ from fastapi import FastAPI, HTTPException, Query, Header, Depends, Body, Reques
 from fastapi.responses import PlainTextResponse, FileResponse, Response
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from cachetools import cached, TTLCache
+from cachetools import TTLCache
 from typing import List, Dict, Any
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -150,7 +155,10 @@ async def security_headers(request: Request, call_next):
         response.headers["Cache-Control"] = "no-store"
     return response
 
-subscription_cache = TTLCache(maxsize=1, ttl=12 * 60 * 60)
+_subscription_cache = TTLCache(maxsize=1, ttl=12 * 60 * 60)
+_subscription_cache_lock = threading.RLock()
+_airport_cache_generation = 0
+_airport_cache_sources = None
 
 # ================= 核心读写逻辑 =================
 
@@ -209,9 +217,58 @@ def load_airports() -> List[str]:
         logger.error(f"读取机场列表失败: {e}")
     return []
 
+@configuration_locked
 def save_airports(urls: List[str]):
+    # Legacy initialization also participates in cache invalidation.
+    invalidate_airport_cache(clear_disk=True)
     with open(AIRPORTS_PATH, "w", encoding="utf-8") as f:
         yaml.dump(urls, f, allow_unicode=True, sort_keys=False)
+
+
+class AirportSourcesChanged(Exception):
+    """A refresh no longer belongs to the active source/cache generation."""
+
+
+@configuration_locked
+def invalidate_airport_cache(*, clear_disk=False):
+    global _airport_cache_generation
+    with _subscription_cache_lock:
+        _airport_cache_generation += 1
+        _subscription_cache.clear()
+        if clear_disk:
+            # Remove before committing changed sources: a crash must not leave a
+            # name-only disk cache belonging to a different URL after restart.
+            try:
+                Path(CACHE_FILE_PATH).unlink()
+            except FileNotFoundError:
+                pass
+            else:
+                sync_directory(Path(CACHE_FILE_PATH).parent)
+
+
+@configuration_locked
+def airport_cache_snapshot():
+    global _airport_cache_sources
+    sources = load_airports()
+    with _subscription_cache_lock:
+        # Also notice configuration recovered from a previously committed redo
+        # journal. Direct external writers are not a supported consistency API.
+        if _airport_cache_sources is not None and _airport_cache_sources != sources:
+            invalidate_airport_cache(clear_disk=True)
+        _airport_cache_sources = deepcopy(sources)
+        return deepcopy(sources), _airport_cache_generation
+
+
+@contextmanager
+def airport_cache_locked(snapshot):
+    # Always take the configuration lock before the memory-cache lock. Never
+    # perform network I/O in this context. Recovery runs before the source read.
+    with template_store().locked():
+        sources = load_airports()
+        with _subscription_cache_lock:
+            if snapshot[1] != _airport_cache_generation or snapshot[0] != sources:
+                raise AirportSourcesChanged()
+            yield
 
 @configuration_locked
 def load_manual_nodes() -> List[Dict[str, Any]]:
@@ -282,13 +339,15 @@ def load_template_content() -> str:
 def save_template_content(content: str):
     return template_store().commit({"template.yaml": content})
 
-def save_cache_to_file(proxies: List[Dict[str, Any]]):
-    try:
-        with open(CACHE_FILE_PATH, "w", encoding="utf-8") as f:
-            yaml.dump(proxies, f, allow_unicode=True, sort_keys=False)
-    except Exception as e:
-        logger.error(f"持久化节点缓存失败: {e}")
+def save_cache_to_file(proxies: List[Dict[str, Any]], snapshot):
+    with airport_cache_locked(snapshot):
+        try:
+            with open(CACHE_FILE_PATH, "w", encoding="utf-8") as f:
+                yaml.dump(proxies, f, allow_unicode=True, sort_keys=False)
+        except Exception as e:
+            logger.error("持久化节点缓存失败（%s）", type(e).__name__)
 
+@configuration_locked
 def load_cache_from_file() -> List[Dict[str, Any]]:
     if not os.path.exists(CACHE_FILE_PATH):
         return []
@@ -372,8 +431,8 @@ def fetch_airport_item(item: Any, index: int = 0) -> List[Dict[str, Any]]:
         logger.error(f"拉取 {airport_name} 订阅失败（{type(e).__name__}）")
     return []
 
-def fetch_airport_proxies() -> List[Dict[str, Any]]:
-    urls_data = load_airports()
+def fetch_airport_proxies(sources=None) -> List[Dict[str, Any]]:
+    urls_data = load_airports() if sources is None else sources
     if not urls_data:
         logger.warning("未配置机场订阅链接，跳过拉取。")
         return []
@@ -510,9 +569,52 @@ def cleanup_runtime_template_references() -> Dict[str, Any]:
     return result
 
 
-@cached(cache=subscription_cache)
-def get_airport_proxies_cached() -> List[Dict[str, Any]]:
-    return fetch_airport_proxies()
+def get_airport_proxies_cached(snapshot=None) -> List[Dict[str, Any]]:
+    if snapshot is None:
+        for _ in range(2):
+            try:
+                return get_airport_proxies_cached(airport_cache_snapshot())
+            except AirportSourcesChanged:
+                continue
+        raise HTTPException(status_code=503, detail="机场配置正在更新，请稍后重试")
+    with airport_cache_locked(snapshot):
+        cached = _subscription_cache.get(())
+        if cached is not None:
+            return deepcopy(cached)
+    proxies = fetch_airport_proxies(snapshot[0])
+    with airport_cache_locked(snapshot):
+        # Another request may have filled the same generation while we fetched.
+        cached = _subscription_cache.get(())
+        if cached is None:
+            cached = deepcopy(proxies)
+            _subscription_cache[()] = cached
+        return deepcopy(cached)
+
+
+def subscription_airports():
+    for _ in range(2):
+        snapshot = airport_cache_snapshot()
+        try:
+            try:
+                proxies = get_airport_proxies_cached(snapshot)
+            except AirportSourcesChanged:
+                raise
+            except Exception as exc:
+                logger.error("尝试使用本地持久化备份（%s）", type(exc).__name__)
+                with airport_cache_locked(snapshot):
+                    proxies = load_cache_from_file()
+            with airport_cache_locked(snapshot):
+                proxies, missing = merge_airport_proxies_with_cache(proxies, snapshot[0])
+                if missing:
+                    raise ConfigValidationError([
+                        f"机场 [{source}] 当前未拉取到节点，且没有可用缓存" for source in missing
+                    ])
+                if proxies:
+                    save_cache_to_file(proxies, snapshot)
+                return snapshot[0], proxies
+        except AirportSourcesChanged:
+            continue
+    raise HTTPException(status_code=503, detail="机场配置正在更新，请稍后重试")
 
 # ================= 订阅下发接口 (对外公开) =================
 
@@ -561,25 +663,7 @@ def get_subscription(
 
     try:
         cleanup_runtime_template_references()
-        try:
-            airport_proxies = get_airport_proxies_cached()
-        except Exception as e:
-            logger.error(f"尝试使用本地持久化备份，原因: {e}")
-            airport_proxies = load_cache_from_file()
-
-        airports = load_airports()
-        # Fill a temporarily unavailable airport from its last persisted payload,
-        # then require every configured provider to have at least one checked node.
-        airport_proxies, unavailable_sources = merge_airport_proxies_with_cache(
-            airport_proxies, airports
-        )
-        if unavailable_sources:
-            raise ConfigValidationError([
-                f"机场 [{source}] 当前未拉取到节点，且没有可用缓存"
-                for source in unavailable_sources
-            ])
-        if airport_proxies:
-            save_cache_to_file(airport_proxies)
+        airports, airport_proxies = subscription_airports()
 
         custom_proxies = load_custom_nodes()
 
@@ -826,8 +910,8 @@ def update_airports(data: AirportsModel):
         if cleanup_result["total"]:
             updates["template.yaml"] = yaml.safe_dump(template_config, allow_unicode=True, sort_keys=False)
     updates["airports.yaml"] = yaml.safe_dump(data.urls, allow_unicode=True, sort_keys=False)
+    invalidate_airport_cache(clear_disk=(old_airports != data.urls))
     snapshot = template_store().commit(updates, source="update_airports")
-    subscription_cache.clear()
     return {"status": "ok", "cleanedReferences": cleanup_result["total"], "template_revision": snapshot["revision"]}
 
 @app.get("/api/airports/info", dependencies=[Depends(verify_api_token)])
@@ -1026,18 +1110,17 @@ def import_template(data: ImportModel):
         raise HTTPException(status_code=400, detail={"message": "节点配置校验失败", "errors": errors})
     check_airport_urls(data.urls)
     validate_saved_template(data.content, data.nodes + managed_nodes(), data.urls)
+    invalidate_airport_cache(clear_disk=(load_airports() != data.urls))
     snapshot = template_store().commit({
         "template.yaml": data.content,
         "custom_nodes.yaml": yaml.safe_dump([strip_internal_proxy_fields(n) for n in data.nodes],
                                             allow_unicode=True, sort_keys=False),
         "airports.yaml": yaml.safe_dump(data.urls, allow_unicode=True, sort_keys=False),
     }, source="import")
-    subscription_cache.clear()
     return {"status": "ok", **snapshot}
 
 
 import asyncio
-from cachetools.keys import hashkey
 
 
 def control_store():
@@ -1049,26 +1132,32 @@ attach_agent_routes(app, verify_api_token, control_store)
 
 # ================= 后台定时刷新任务 =================
 
+def refresh_airport_cache():
+    snapshot = airport_cache_snapshot()
+    proxies = fetch_airport_proxies(snapshot[0])
+    try:
+        with airport_cache_locked(snapshot):
+            proxies, missing_sources = merge_airport_proxies_with_cache(proxies, snapshot[0])
+            if proxies and not missing_sources:
+                save_cache_to_file(proxies, snapshot)
+                # Supersede in-flight foreground computations as well as the
+                # previous cached value, without changing the source list.
+                invalidate_airport_cache()
+                _subscription_cache[()] = deepcopy(proxies)
+                logger.info("后台定时任务完成，成功更新了 %s 个机场节点", len(proxies))
+            else:
+                logger.warning("后台定时任务：机场数据不完整，放弃覆盖旧缓存")
+    except AirportSourcesChanged:
+        logger.info("后台定时任务：来源已更新，丢弃旧刷新结果")
+
+
 async def background_airport_updater():
     # 启动后先等待 5 分钟，错开刚启动时的并发请求
     await asyncio.sleep(300)
     while True:
         try:
             logger.info("后台定时任务触发：开始静默拉取机场节点...")
-            # 利用已有的多线程逻辑并发拉取
-            proxies = fetch_airport_proxies()
-            proxies, missing_sources = merge_airport_proxies_with_cache(proxies, load_airports())
-            if proxies and not missing_sources:
-                save_cache_to_file(proxies)
-                subscription_cache.clear()
-                # 预热内存缓存，后续 /sub 请求将直接 0 延迟命中
-                subscription_cache[hashkey()] = proxies
-                logger.info(f"后台定时任务完成，成功更新了 {len(proxies)} 个机场节点")
-            else:
-                logger.warning(
-                    "后台定时任务：机场数据不完整 (%s)，放弃覆盖旧缓存",
-                    ", ".join(missing_sources) if missing_sources else "无节点",
-                )
+            refresh_airport_cache()
         except Exception as e:
             logger.error(f"后台定时任务异常: {e}")
             
