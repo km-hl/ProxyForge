@@ -51,6 +51,7 @@ from proxyforge.config.network_config import validate_network_config, network_er
 
 # ================= 加载环境变量 =================
 load_dotenv()
+AIRPORT_CA_BUNDLE = os.environ.get("PROXYFORGE_AIRPORT_CA_BUNDLE", "").strip() or None
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -431,7 +432,7 @@ def fetch_airport_item(item: Any, index: int = 0) -> List[Dict[str, Any]]:
     headers = {"User-Agent": "clash-verge/v1.6.0 clash-meta/1.18.3"}
     logger.info(f"正在从 {airport_name} 拉取节点")
     try:
-        response = safe_get(url.strip(), headers=headers, timeout=30)
+        response = safe_get(url.strip(), headers=headers, timeout=30, ca_bundle=AIRPORT_CA_BUNDLE)
         response.raise_for_status()
         proxies = parse_airport_response(response.text)
         if proxies:
@@ -498,7 +499,7 @@ def fetch_single_airport_info(item) -> dict:
     
     try:
         headers = {"User-Agent": "clash-verge/v1.6.0 clash-meta/1.18.3"}
-        res = safe_get(url, headers=headers, timeout=30)
+        res = safe_get(url, headers=headers, timeout=30, ca_bundle=AIRPORT_CA_BUNDLE)
         res.raise_for_status()
         
         # 尝试提取名称
