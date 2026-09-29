@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+from contextlib import closing
 import socket
 import urllib.parse
 from typing import Iterable, Optional
@@ -77,6 +78,13 @@ def validate_outbound_url(value: str, resolve_dns: bool = False) -> str:
     return urllib.parse.urlunsplit(parsed)
 
 
+class _OutboundSession(requests.Session):
+    def resolve_redirects(self, *args, **kwargs):
+        # safe_get owns every redirect. Even allow_redirects=False otherwise
+        # lets Requests pre-read an unbounded body while preparing Response.next.
+        return iter(())
+
+
 def safe_get(
     url: str,
     *,
@@ -84,54 +92,54 @@ def safe_get(
     timeout: int = 30,
     max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
     max_redirects: int = DEFAULT_MAX_REDIRECTS,
+    ca_bundle: Optional[str] = None,
 ):
+    if ca_bundle is not None and (not isinstance(ca_bundle, str) or not ca_bundle.strip()):
+        raise ValueError("CA bundle must be a non-empty path")
     current_url = validate_outbound_url(url)
-    for redirect_count in range(max_redirects + 1):
-        current_url = validate_outbound_url(current_url, resolve_dns=True)
-        response = requests.get(
-            current_url,
-            headers=headers,
-            timeout=timeout,
-            allow_redirects=False,
-            stream=True,
-        )
-
-        if response.status_code in REDIRECT_STATUSES:
-            location = response.headers.get("Location")
-            response.close()
-            if not location:
-                raise UnsafeOutboundUrl("订阅重定向缺少目标地址")
-            if redirect_count >= max_redirects:
-                raise UnsafeOutboundUrl("订阅地址重定向次数过多")
-            current_url = urllib.parse.urljoin(current_url, location)
-            continue
-
-        content_length = response.headers.get("Content-Length")
-        if content_length:
-            try:
-                parsed_content_length = int(content_length)
-            except ValueError:
-                parsed_content_length = None
-            if parsed_content_length is not None and parsed_content_length > max_response_bytes:
-                response.close()
-                raise ResponseTooLarge("订阅响应超过大小限制")
-
-        chunks = []
-        total = 0
-        try:
-            for chunk in response.iter_content(chunk_size=64 * 1024):
-                if not chunk:
+    with _OutboundSession() as session:
+        session.trust_env = False
+        session.verify = True if ca_bundle is None else ca_bundle
+        for redirect_count in range(max_redirects + 1):
+            current_url = validate_outbound_url(current_url, resolve_dns=True)
+            # Preserve the old per-hop requests.get cookie isolation.
+            session.cookies.clear()
+            with closing(session.get(
+                current_url,
+                headers=headers,
+                timeout=timeout,
+                allow_redirects=False,
+                stream=True,
+            )) as response:
+                if response.status_code in REDIRECT_STATUSES:
+                    location = response.headers.get("Location")
+                    if not location:
+                        raise UnsafeOutboundUrl("订阅重定向缺少目标地址")
+                    if redirect_count >= max_redirects:
+                        raise UnsafeOutboundUrl("订阅地址重定向次数过多")
+                    current_url = urllib.parse.urljoin(current_url, location)
                     continue
-                total += len(chunk)
-                if total > max_response_bytes:
-                    raise ResponseTooLarge("订阅响应超过大小限制")
-                chunks.append(chunk)
-            response._content = b"".join(chunks)
-            response._content_consumed = True
-        except Exception:
-            response.close()
-            raise
-        response.close()
-        return response
+
+                content_length = response.headers.get("Content-Length")
+                if content_length:
+                    try:
+                        parsed_content_length = int(content_length)
+                    except ValueError:
+                        parsed_content_length = None
+                    if parsed_content_length is not None and parsed_content_length > max_response_bytes:
+                        raise ResponseTooLarge("订阅响应超过大小限制")
+
+                chunks = []
+                total = 0
+                for chunk in response.iter_content(chunk_size=64 * 1024):
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > max_response_bytes:
+                        raise ResponseTooLarge("订阅响应超过大小限制")
+                    chunks.append(chunk)
+                response._content = b"".join(chunks)
+                response._content_consumed = True
+                return response
 
     raise UnsafeOutboundUrl("订阅地址重定向次数过多")

@@ -48,7 +48,7 @@ class NetworkSecurityTest(unittest.TestCase):
             validate_outbound_url("https://subscription.example/path", resolve_dns=True)
 
     @patch("proxyforge.security.network_security.socket.getaddrinfo")
-    @patch("proxyforge.security.network_security.requests.get")
+    @patch("proxyforge.security.network_security._OutboundSession.get")
     def test_redirect_target_is_revalidated(self, request_get, getaddrinfo):
         getaddrinfo.return_value = [
             (2, 1, 6, "", ("93.184.216.34", 443)),
@@ -64,7 +64,7 @@ class NetworkSecurityTest(unittest.TestCase):
         request_get.assert_called_once()
 
     @patch("proxyforge.security.network_security.socket.getaddrinfo")
-    @patch("proxyforge.security.network_security.requests.get")
+    @patch("proxyforge.security.network_security._OutboundSession.get")
     def test_response_size_is_limited(self, request_get, getaddrinfo):
         getaddrinfo.return_value = [
             (2, 1, 6, "", ("93.184.216.34", 443)),
