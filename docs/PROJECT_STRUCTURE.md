@@ -55,7 +55,7 @@ ProxyForge/
 
 `proxyforge` 包的 `__init__.py` 不装配应用；导入内部库不创建运行数据，不加载 `.env`。HTTP 路径、请求模型、静态资源 URL 和订阅输出保持原有行为。
 
-Controller 当前支持单进程、单副本运行，不启用多个 Uvicorn worker 或共享数据目录的多个 Controller。机场缓存的线程协调、来源失效与部署边界见[机场缓存并发说明](AIRPORT_CACHE_CONCURRENCY.md)。
+Controller 当前支持单进程、单副本运行，不启用多个 Uvicorn worker 或共享数据目录的多个 Controller。机场缓存的线程协调、来源失效与部署边界见[机场缓存并发说明](AIRPORT_CACHE_CONCURRENCY.md)及[后台刷新生命周期](AIRPORT_BACKGROUND.md)。
 
 ## 4. 鉴权与模块依赖
 

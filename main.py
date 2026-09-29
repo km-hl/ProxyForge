@@ -445,14 +445,19 @@ def fetch_airport_item(item: Any, index: int = 0) -> List[Dict[str, Any]]:
         logger.error(f"拉取 {airport_name} 订阅失败（{type(e).__name__}）")
     return []
 
-def fetch_airport_proxies(sources=None) -> List[Dict[str, Any]]:
+def fetch_airport_proxies(sources=None, stop_event=None) -> List[Dict[str, Any]]:
     urls_data = load_airports() if sources is None else sources
     if not urls_data:
         logger.warning("未配置机场订阅链接，跳过拉取。")
         return []
         
+    def fetch(pair):
+        if stop_event is not None and stop_event.is_set():
+            return []
+        return fetch_airport_item(pair[1], pair[0])
+
     with ThreadPoolExecutor(max_workers=5) as executor:
-        results = list(executor.map(lambda pair: fetch_airport_item(pair[1], pair[0]), enumerate(urls_data)))
+        results = list(executor.map(fetch, enumerate(urls_data)))
         
     all_proxies = []
     seen_names = set()
@@ -1203,12 +1208,24 @@ attach_agent_routes(app, verify_api_token, control_store)
 
 # ================= 后台定时刷新任务 =================
 
-def refresh_airport_cache():
+def refresh_airport_cache(stop_event=None):
+    def stopping():
+        return stop_event is not None and stop_event.is_set()
+
+    if stopping():
+        return
     snapshot = airport_cache_snapshot()
-    proxies = fetch_airport_proxies(snapshot[0])
+    if stopping():
+        return
+    proxies = fetch_airport_proxies(snapshot[0], stop_event=stop_event)
+    if stopping():
+        return
     try:
         with airport_cache_locked(snapshot):
             proxies, missing_sources = merge_airport_proxies_with_cache(proxies, snapshot[0])
+            # Check again after waiting for the configuration lock and disk I/O.
+            if stopping():
+                return
             if proxies and not missing_sources:
                 save_cache_to_file(proxies, snapshot)
                 # Supersede in-flight foreground computations as well as the
@@ -1222,24 +1239,79 @@ def refresh_airport_cache():
         logger.info("后台定时任务：来源已更新，丢弃旧刷新结果")
 
 
-async def background_airport_updater():
-    # 启动后先等待 5 分钟，错开刚启动时的并发请求
-    await asyncio.sleep(300)
-    while True:
+AIRPORT_REFRESH_START_DELAY = 300
+AIRPORT_REFRESH_INTERVAL = 4 * 3600
+AIRPORT_REFRESH_SHUTDOWN_TIMEOUT = 5
+
+
+class AirportUpdaterState:
+    def __init__(self):
+        self.stop = threading.Event()
+        self.task = None
+        self.worker = None
+        self.thread_done = threading.Event()
+        self.thread_done.set()
+
+
+async def run_airport_refresh(state):
+    def run():
         try:
+            # Includes snapshot, network, fallback reads and guarded commits.
+            refresh_airport_cache(state.stop)
+        except Exception as exc:
+            logger.error("后台定时任务异常（%s）", type(exc).__name__)
+        finally:
+            state.thread_done.set()
+
+    try:
+        await asyncio.to_thread(run)
+    except Exception as exc:
+        # Executor submission itself can fail before the thread starts.
+        state.thread_done.set()
+        logger.error("后台刷新线程启动失败（%s）", type(exc).__name__)
+
+
+async def background_airport_updater(state):
+    try:
+        await asyncio.sleep(AIRPORT_REFRESH_START_DELAY)
+        while not state.stop.is_set():
             logger.info("后台定时任务触发：开始静默拉取机场节点...")
-            refresh_airport_cache()
-        except Exception as e:
-            logger.error(f"后台定时任务异常: {e}")
-            
-        # 默认每隔 4 小时更新一次
-        await asyncio.sleep(4 * 3600)
+            state.thread_done.clear()
+            state.worker = asyncio.create_task(run_airport_refresh(state))
+            # Cancelling the scheduler must not hide the still-running thread.
+            await asyncio.shield(state.worker)
+            if not state.stop.is_set():
+                await asyncio.sleep(AIRPORT_REFRESH_INTERVAL)
+    finally:
+        state.stop.set()
 
 @app.on_event("startup")
 async def startup_event():
-    cleanup_runtime_template_references()
+    previous = getattr(app.state, "airport_updater", None)
+    if previous is not None:
+        if previous.task is not None and not previous.task.done() and not previous.stop.is_set():
+            return
+        if not previous.thread_done.is_set():
+            raise RuntimeError("Previous airport refresh is still stopping")
+    await asyncio.to_thread(cleanup_runtime_template_references)
+    state = AirportUpdaterState()
+    app.state.airport_updater = state
+    state.task = asyncio.create_task(background_airport_updater(state))
     logger.info("系统启动：已完成配置引用检查并注册后台定时更新任务")
-    asyncio.create_task(background_airport_updater())
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    state = getattr(app.state, "airport_updater", None)
+    if state is None:
+        return
+    state.stop.set()
+    state.task.cancel()
+    await asyncio.gather(state.task, return_exceptions=True)
+    if state.worker is not None and not state.worker.done():
+        _, pending = await asyncio.wait({state.worker}, timeout=AIRPORT_REFRESH_SHUTDOWN_TIMEOUT)
+        if pending:
+            logger.warning("后台刷新仍在退出，已发出停止信号；等待中的线程未被强制终止")
 
 # ================= 前端静态页面挂载 =================
 

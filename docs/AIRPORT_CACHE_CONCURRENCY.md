@@ -1,7 +1,7 @@
 # 机场节点缓存并发与失效
 
 本次实现[下一阶段计划](NEXT_STEPS.md)的第 4 项：内存缓存锁、失效代次与来源快照。
-第 3 项[缓存原子写](AIRPORT_CACHE_ATOMIC.md)和第 2 项[机场信息 JSON 汇总](AIRPORT_INFO_CACHE.md)已作为后续独立改动实现；后台 `to_thread` 仍待完成。
+第 3 项[缓存原子写](AIRPORT_CACHE_ATOMIC.md)和第 2 项[机场信息 JSON 汇总](AIRPORT_INFO_CACHE.md)已作为后续独立改动实现；后台 `to_thread` 与关闭管理已由后续第 1 项实现，见[后台刷新说明](AIRPORT_BACKGROUND.md)。
 
 ## 支持范围
 
