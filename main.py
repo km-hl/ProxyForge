@@ -170,15 +170,21 @@ def template_store():
     return TemplateStore(TEMPLATE_PATH, os.environ.get("TEMPLATE_HISTORY_LIMIT", "30"))
 
 
+@contextmanager
+def configuration_lock():
+    try:
+        with template_store().locked():
+            yield
+    except OSError:
+        raise HTTPException(status_code=503, detail={"code": "storage_unavailable",
+            "message": "存储暂不可用，提交状态待核对；请恢复存储后重新读取，勿直接重试覆盖"}) from None
+
+
 def configuration_locked(function):
     @wraps(function)
     def wrapper(*args, **kwargs):
-        try:
-            with template_store().locked():
-                return function(*args, **kwargs)
-        except OSError:
-            raise HTTPException(status_code=503, detail={"code": "storage_unavailable",
-                "message": "存储暂不可用，提交状态待核对；请恢复存储后重新读取，勿直接重试覆盖"})
+        with configuration_lock():
+            return function(*args, **kwargs)
     return wrapper
 
 
@@ -949,7 +955,7 @@ def get_airports_info(force_indices: str = ""):
             pass
 
     for _ in range(2):
-        with template_store().locked():
+        with configuration_lock():
             sources = deepcopy(load_airports())
             generation = _airport_info_generation
             _airport_info_sequence += 1
@@ -966,7 +972,7 @@ def get_airports_info(force_indices: str = ""):
         with ThreadPoolExecutor(max_workers=5) as executor:
             fetched = dict(zip(pending, executor.map(fetch_single_airport_info, pending)))
 
-        with template_store().locked():
+        with configuration_lock():
             if generation != _airport_info_generation or sources != load_airports():
                 continue
             latest = load_airport_info_cache()

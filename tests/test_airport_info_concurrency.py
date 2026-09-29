@@ -4,6 +4,7 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -124,6 +125,37 @@ class AirportInfoConcurrencyTest(unittest.TestCase):
         self.assertEqual([info["url"] for info in infos], [item["url"] for item in self.sources])
         self.assertEqual(set(infos[0]), {"url", "name", "nodesCount", "upload", "download", "total",
                                          "expire", "error", "_timestamp"})
+
+    def test_storage_lock_failures_return_safe_503_before_fetch_and_commit(self):
+        from fastapi.testclient import TestClient
+        from test_api_integration import TEST_ADMIN_TOKEN
+        self.app.save_airports(self.sources[:1])
+        original = self.app.TemplateStore.locked
+        with TestClient(self.app.app, raise_server_exceptions=False) as client:
+            for stage in ("read", "commit"):
+                with self.subTest(stage=stage):
+                    fetched = threading.Event()
+
+                    @contextmanager
+                    def failing_lock(store):
+                        if stage == "read" or fetched.is_set():
+                            raise PermissionError("private-storage-path")
+                        with original(store):
+                            yield
+
+                    def fetch(url, **kwargs):
+                        fetched.set()
+                        return response(7)
+
+                    with patch.object(self.app.TemplateStore, "locked", failing_lock), \
+                         patch.object(self.app, "safe_get", side_effect=fetch) as network:
+                        result = client.get("/api/airports/info", params={"force_indices": "all"},
+                                            headers={"Authorization": "Bearer " + TEST_ADMIN_TOKEN})
+                    self.assertEqual(result.status_code, 503, result.text)
+                    self.assertEqual(result.json()["detail"]["code"], "storage_unavailable")
+                    self.assertNotIn("private-storage-path", result.text)
+                    self.assertEqual(network.call_count, int(stage == "commit"))
+                    self.assertFalse(self.cache.exists())
 
     def test_duplicate_urls_preserve_aliases_order_and_fetch_once(self):
         url = self.sources[0]["url"]
