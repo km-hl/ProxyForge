@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.12"]
+        python-version: ["3.12", "3.13"]
 
     steps:
       - name: Check out repository
@@ -76,6 +76,36 @@ jobs:
       - name: Check pushed commit whitespace errors
         if: github.event_name == 'push'
         run: git show --check --oneline --no-renames HEAD
+
+  agent-python:
+    name: Agent standard library / Python ${{ matrix.python-version }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Check Agent without third-party packages
+        run: |
+          python -S -m compileall -q agent
+          python -S -m agent.main --help
+          python -S -m unittest discover -s tests -p test_runtime_engine.py -v
+
+  controller-image:
+    name: Controller image / Python migration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build images and rehearse isolated cold recovery
+        run: python scripts/check_controller_image.py docker
 
   singbox-runtime:
     name: sing-box managed runtime

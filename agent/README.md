@@ -1,5 +1,10 @@
 # ProxyForge reference Agent (B5b)
 
+Controller uses Python 3.12 in its image and tests source compatibility on 3.12/3.13.
+The Agent keeps its independent system Python 3.9+ requirement and standard-library-only runtime.
+Controller 镜像升级不提高 Agent 的 Python 3.9+ 门槛；Agent 继续只依赖系统 Python 标准库。
+See the [中文运行时矩阵与升级说明](../docs/PYTHON_RUNTIME.md) for verification boundaries.
+
 This standard-library Python Agent sends inventory and pulls allowlisted jobs.
 It opens no network listener. B3 optionally manages one independent sing-box
 instance through a separately enabled local Unix-socket helper. Inventory and
