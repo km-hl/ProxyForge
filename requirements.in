@@ -1,0 +1,9 @@
+# 人工维护的 Controller 直接依赖；生成命令见 docs/DEPENDENCIES.md。
+fastapi
+pydantic>=2,<3
+uvicorn
+pyyaml
+requests
+cachetools
+python-dotenv
+cryptography==46.0.5
