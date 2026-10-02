@@ -119,6 +119,8 @@ Docker、Python 测试、Mihomo 真实生成任务及 runtime CI 都使用对应
 
 ### 17. 升级 Controller Python 运行时（新增）
 
+实施状态：Controller 镜像已改为 Python 3.12 / Bookworm，完整 CI 矩阵调整为 3.12/3.13；Agent 3.9+ 单独保留。新增隔离镜像启动、3.9 → 3.12 冷恢复/重启和同 schema 回退演练，验证范围及升级命令见 [Python 运行时说明](PYTHON_RUNTIME.md)。合并及发布仍须对应 PR/发布验收通过；下一项为第 7 项依赖与构建输入锁定。
+
 将生产镜像迁移至实施时仍受支持的 Python 稳定版，建议先评估 3.12，并同步 CI/文档/依赖兼容验证。
 Controller 支持范围与使用系统 Python 的 Agent 支持范围分别决定；不因镜像升级无理由抬高 Agent 安装门槛。
 当前代码仍须兼容已声明版本，直到此任务正式调整支持矩阵。验收完整 Python/Node、真实 Mihomo、sing-box/systemd 与备份副本启动/恢复，再锁定第 7 项构建输入。
