@@ -1,0 +1,2 @@
+# 仅用于 Python 3.9 冷恢复对照镜像，不是受支持的生产环境。
+-r requirements.in
