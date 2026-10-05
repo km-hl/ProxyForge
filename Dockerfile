@@ -11,6 +11,15 @@ RUN python -m pip --isolated install --no-cache-dir --index-url https://pypi.org
 # 拷贝代码
 COPY . .
 
+# 程序文件保持 root 所有；仅持久化数据目录允许服务账号写入。
+RUN groupadd --gid 10001 proxyforge \
+    && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent \
+       --shell /usr/sbin/nologin proxyforge \
+    && install -d -m 0700 -o 10001 -g 10001 /app/data
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+USER 10001:10001
+ENTRYPOINT ["python", "scripts/container_entrypoint.py"]
+
 # 暴露 8000 端口
 EXPOSE 8000
 

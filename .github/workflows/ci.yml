@@ -125,7 +125,7 @@ jobs:
           python -S -m unittest discover -s tests -p test_runtime_engine.py -v
 
   controller-image:
-    name: Controller image / Python migration
+    name: Controller image / non-root and recovery
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -133,7 +133,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Build images and rehearse isolated cold recovery
+      - name: Verify non-root startup, permissions, migration and cold recovery
         run: python scripts/check_controller_image.py docker
 
   singbox-runtime:
