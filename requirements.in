@@ -3,7 +3,9 @@ fastapi
 pydantic>=2,<3
 uvicorn
 pyyaml
-requests
+requests>=2.32.2,<3
+# DNS pinning 使用连接适配器 API；升级时必须运行真实 TCP/TLS 回归。
+urllib3>=2.6,<3
 cachetools
 python-dotenv
 cryptography==46.0.5

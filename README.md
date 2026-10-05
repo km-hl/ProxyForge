@@ -54,7 +54,7 @@ cp .env.example .env
 
 您可以编辑 `.env` 修改监听端口。`SECRET_TOKEN` 是客户端订阅密钥；`ADMIN_TOKEN` 是 Web 控制台管理密钥，两者必须分开。留空时系统会分别自动生成：订阅密钥持久化到 `data/config.json`，首次管理密钥写入权限为 `0600` 的 `data/admin_token.txt`。
 
-机场拉取使用直接连接，不继承 `HTTP(S)_PROXY`、`ALL_PROXY`、NETRC 或 `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE`。需要私有 CA 时，在 `.env` 显式设置 `PROXYFORGE_AIRPORT_CA_BUNDLE` 为进程可读的可信 CA 文件路径；TLS 验证保持开启。升级兼容性、容器路径和配置示例见[机场 HTTP 请求说明](docs/OUTBOUND_HTTP.md)。
+机场拉取固定连接到每跳已验证的 IP，保留原域名的 Host、SNI 和证书校验；不继承 `HTTP(S)_PROXY`、`ALL_PROXY`、NETRC 或 `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE`。需要私有 CA 时，在 `.env` 显式设置 `PROXYFORGE_AIRPORT_CA_BUNDLE` 为进程可读的可信 CA 文件路径；TLS 验证保持开启。升级兼容性、容器路径和配置示例见[机场 HTTP 请求说明](docs/OUTBOUND_HTTP.md)。
 
 ### 3. 启动服务 (Docker)
 确保您的 VPS 安装了 Docker 和 Docker Compose。镜像以 UID/GID 10001:10001 运行；首次安装必须按[容器权限说明](docs/CONTAINER_PERMISSIONS.md)准备 data，已有安装必须先停机备份并迁移旧数据权限，再执行：

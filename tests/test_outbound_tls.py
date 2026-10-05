@@ -1,6 +1,7 @@
-"""Real loopback TLS; URL validation is bypassed only for this isolated fixture."""
+"""Real loopback TLS; only the loopback address is allowed by this isolated fixture."""
 import ipaddress
 import os
+import socket
 import ssl
 import tempfile
 import threading
@@ -17,7 +18,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
-from proxyforge.security.network_security import safe_get
+from proxyforge.security.network_security import _is_public_address, safe_get
 
 
 class OutboundTLSIntegrationTest(unittest.TestCase):
@@ -41,7 +42,8 @@ class OutboundTLSIntegrationTest(unittest.TestCase):
               .sign(ca_key, hashes.SHA256()))
         cls.ca_path = cls.root / "ca.pem"
         cls.ca_path.write_bytes(ca.public_bytes(serialization.Encoding.PEM))
-        for label, address in (("valid", "127.0.0.1"), ("wrong-host", "127.0.0.2")):
+        for label, address in (("valid", "127.0.0.1"), ("wrong-host", "127.0.0.2"), ("domain", "subscription.example")):
+            identity = x509.DNSName(address) if label == "domain" else x509.IPAddress(ipaddress.ip_address(address))
             key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
             cert = (x509.CertificateBuilder()
                     .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, label)]))
@@ -50,7 +52,7 @@ class OutboundTLSIntegrationTest(unittest.TestCase):
                     .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
                     .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
                     .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)
-                    .add_extension(x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address(address))]), critical=False)
+                    .add_extension(x509.SubjectAlternativeName([identity]), critical=False)
                     .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
                     .sign(ca_key, hashes.SHA256()))
             (cls.root / (label + ".pem")).write_bytes(cert.public_bytes(serialization.Encoding.PEM))
@@ -58,7 +60,7 @@ class OutboundTLSIntegrationTest(unittest.TestCase):
                 serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
 
     @contextmanager
-    def server(self, label="valid"):
+    def server(self, label="valid", server_names=None):
         received = []
 
         class Handler(BaseHTTPRequestHandler):
@@ -75,11 +77,14 @@ class OutboundTLSIntegrationTest(unittest.TestCase):
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(str(self.root / (label + ".pem")), str(self.root / (label + ".key")))
+        if server_names is not None:
+            context.set_servername_callback(lambda sock, name, context: server_names.append(name))
         server.socket = context.wrap_socket(server.socket, server_side=True)
         worker = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
         worker.start()
         try:
-            with patch("proxyforge.security.network_security.validate_outbound_url", side_effect=lambda url, **kwargs: url):
+            with patch("proxyforge.security.network_security._is_public_address",
+                       side_effect=lambda address: address == "127.0.0.1" or _is_public_address(address)):
                 yield "https://127.0.0.1:" + str(server.server_port) + "/sub", received
         finally:
             server.shutdown()
@@ -112,3 +117,30 @@ class OutboundTLSIntegrationTest(unittest.TestCase):
             with self.assertRaises(OSError):
                 safe_get(url, ca_bundle=str(self.root / "missing.pem"), timeout=2)
         self.assertEqual(received, [])
+
+    def test_pinned_tcp_preserves_domain_host_sni_and_certificate_identity(self):
+        from test_outbound_pinning import observe_connect
+
+        names = []
+        with self.server("domain", names) as (url, received), observe_connect() as destinations:
+            port = int(url.split(":")[2].split("/")[0])
+            with patch.object(socket, "getaddrinfo", side_effect=[
+                [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", port))],
+                [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.2", port))],
+            ]) as dns:
+                result = safe_get(url.replace("127.0.0.1", "subscription.example"),
+                                  ca_bundle=str(self.ca_path), timeout=2)
+            self.assertEqual(result.content, b"proxies: []")
+            self.assertEqual(destinations, [("127.0.0.1", port)])
+            dns.assert_called_once_with("subscription.example", port, type=socket.SOCK_STREAM)
+            self.assertEqual(names, ["subscription.example"])
+            self.assertEqual(received[0]["Host"], f"subscription.example:{port}")
+
+    def test_certificate_matching_pinned_ip_but_not_domain_is_rejected(self):
+        names = []
+        with self.server("valid", names) as (url, received):
+            with patch("proxyforge.security.network_security._resolved_addresses", return_value=("127.0.0.1",)):
+                with self.assertRaises(requests.exceptions.SSLError):
+                    safe_get(url.replace("127.0.0.1", "subscription.example"), ca_bundle=str(self.ca_path), timeout=2)
+            self.assertEqual(names, ["subscription.example"])
+            self.assertEqual(received, [])
