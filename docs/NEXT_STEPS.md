@@ -88,7 +88,9 @@ JSON/YAML 在调用前完成序列化；只有实际重复时再加薄封装，�
 
 ## P1：安全与可重复部署
 
-### 5. 加强安全出站 HTTP（拆成两个 PR）
+### 5. 加强安全出站 HTTP（分阶段 PR）
+
+实施状态：Session 隔离已合并；DNS pinning 及真实 TCP/TLS 回归已实现，合并须通过对应 PR 审查。紧接着单独实现单次请求与整批刷新总预算；第 5 项尚未全部完成。接口、验证和剩余边界见[机场 HTTP 请求说明](OUTBOUND_HTTP.md)。
 
 现有入口为 `proxyforge/security/network_security.py:safe_get`，保留 HTTP/HTTPS 限制、公网地址检查、逐跳校验、3 次重定向和 10 MiB 响应限制。
 
@@ -103,7 +105,7 @@ JSON/YAML 在调用前完成序列化；只有实际重复时再加薄封装，�
 
 ### 6. Controller 容器非 root
 
-实施状态：固定10001:10001、私有数据目录、启动权限检查与显式停机迁移工具已实现，新增首启/旧数据/失败/回滚容器验收。操作及平台边界见[非 root 容器说明](CONTAINER_PERMISSIONS.md)；合并须通过对应 PR 检查。下一项为第5项第二阶段 DNS pinning。
+实施状态：固定10001:10001、私有数据目录、启动权限检查与显式停机迁移工具已实现，新增首启/旧数据/失败/回滚容器验收。操作及平台边界见[非 root 容器说明](CONTAINER_PERMISSIONS.md)。第6项已通过容器验收并合并；随后推进第5项 DNS pinning 与总耗时预算。
 
 固定并记录专用 UID/GID，以非 root 启动 `uvicorn main:app`，保持端口和数据路径。Controller 不增加 runtime/helper 权限。
 镜像内权限设置不能替代 bind mount 迁移：提供首次启动目录准备及旧数据停服迁移步骤，先备份、核对路径，再仅修正 ProxyForge 数据所有权，不跟随符号链接操作目录外文件。

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import ipaddress
 from contextlib import closing
+from functools import partial
 import socket
 import urllib.parse
 from typing import Iterable, Optional
 
 import requests
+from urllib3.connection import HTTPConnection, HTTPSConnection
+from urllib3.exceptions import ConnectTimeoutError, NewConnectionError
 
 
 ALLOWED_SCHEMES = {"http", "https"}
@@ -30,15 +33,25 @@ def _resolved_addresses(hostname: str, port: int) -> Iterable[str]:
         records = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
         raise UnsafeOutboundUrl("订阅地址无法解析") from exc
-    return {record[4][0] for record in records}
+    return tuple(dict.fromkeys(record[4][0] for record in records))
 
 
 def _is_public_address(value: str) -> bool:
+    if "%" in value:
+        return False
     try:
         address = ipaddress.ip_address(value)
     except ValueError:
         return False
-    return address.is_global
+    return address.is_global and not address.is_multicast and not address.is_reserved
+
+
+def _validated_addresses(parsed) -> tuple[str, ...]:
+    port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+    addresses = tuple(_resolved_addresses(parsed.hostname, port))
+    if not addresses or any(not _is_public_address(item) for item in addresses):
+        raise UnsafeOutboundUrl("订阅地址解析到了私有或保留网络")
+    return addresses
 
 
 def validate_outbound_url(value: str, resolve_dns: bool = False) -> str:
@@ -66,16 +79,75 @@ def validate_outbound_url(value: str, resolve_dns: bool = False) -> str:
         literal_address = ipaddress.ip_address(hostname)
     except ValueError:
         literal_address = None
-    if literal_address is not None and not literal_address.is_global:
+    if literal_address is not None and not _is_public_address(hostname):
         raise UnsafeOutboundUrl("订阅地址不能指向私有或保留网络")
 
     if resolve_dns:
-        port = parsed_port or (443 if parsed.scheme.lower() == "https" else 80)
-        addresses = _resolved_addresses(hostname, port)
-        if not addresses or any(not _is_public_address(item) for item in addresses):
-            raise UnsafeOutboundUrl("订阅地址解析到了私有或保留网络")
+        _validated_addresses(parsed)
 
     return urllib.parse.urlunsplit(parsed)
+
+
+class _PinnedConnectionMixin:
+    def __init__(self, *args, pinned_addresses, **kwargs):
+        self._pinned_addresses = pinned_addresses
+        super().__init__(*args, **kwargs)
+
+    def _new_conn(self):
+        # Numeric socket.connect avoids urllib3's second getaddrinfo. Keep
+        # self.host unchanged for HTTP Host, TLS SNI and certificate matching.
+        last_error = None
+        for value in self._pinned_addresses:
+            address = ipaddress.ip_address(value)
+            family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
+            destination = (str(address), self.port, 0, 0) if address.version == 6 else (str(address), self.port)
+            sock = None
+            try:
+                sock = socket.socket(family, socket.SOCK_STREAM)
+                sock.settimeout(self.timeout)
+                for option in self.socket_options or ():
+                    sock.setsockopt(*option)
+                sock.connect(destination)
+                return sock
+            except OSError as exc:
+                last_error = exc
+                if sock is not None:
+                    sock.close()
+        if isinstance(last_error, socket.timeout):
+            raise ConnectTimeoutError(self, "订阅连接超时") from last_error
+        raise NewConnectionError(self, "无法连接已验证的订阅地址") from last_error
+
+
+class _PinnedHTTPConnection(_PinnedConnectionMixin, HTTPConnection):
+    pass
+
+
+class _PinnedHTTPSConnection(_PinnedConnectionMixin, HTTPSConnection):
+    pass
+
+
+class _PinnedAdapter(requests.adapters.HTTPAdapter):
+    def __init__(self, url, addresses):
+        self._url = url
+        self._addresses = addresses
+        self._pools = []
+        super().__init__(max_retries=0)
+
+    def get_connection_with_tls_context(self, request, verify, proxies=None, cert=None):
+        if request.url != self._url or proxies:
+            raise UnsafeOutboundUrl("订阅连接目标或代理发生变化")
+        pool = super().get_connection_with_tls_context(request, verify, proxies, cert)
+        connection_type = _PinnedHTTPSConnection if request.url.startswith("https://") else _PinnedHTTPConnection
+        # Per-instance constructor: never mutate urllib3's global pool classes.
+        pool.ConnectionCls = partial(connection_type, pinned_addresses=self._addresses)
+        self._pools.append(pool)
+        return pool
+
+    def close(self):
+        for pool in self._pools:
+            pool.close()
+        self._pools.clear()
+        super().close()
 
 
 class _OutboundSession(requests.Session):
@@ -101,45 +173,55 @@ def safe_get(
         session.trust_env = False
         session.verify = True if ca_bundle is None else ca_bundle
         for redirect_count in range(max_redirects + 1):
-            current_url = validate_outbound_url(current_url, resolve_dns=True)
+            # Validate the same canonical URL Requests will actually send (IDNA,
+            # escaping, and authority parsing), before resolving exactly once.
+            current_url = validate_outbound_url(current_url)
+            current_url = session.prepare_request(requests.Request("GET", current_url)).url
+            current_url = validate_outbound_url(current_url)
+            parsed = urllib.parse.urlsplit(current_url)
+            addresses = _validated_addresses(parsed)
+            hop_headers = requests.structures.CaseInsensitiveDict(headers or {})
+            hop_headers["Host"] = parsed.netloc.rsplit("@", 1)[-1]
             # Preserve the old per-hop requests.get cookie isolation.
             session.cookies.clear()
-            with closing(session.get(
-                current_url,
-                headers=headers,
-                timeout=timeout,
-                allow_redirects=False,
-                stream=True,
-            )) as response:
-                if response.status_code in REDIRECT_STATUSES:
-                    location = response.headers.get("Location")
-                    if not location:
-                        raise UnsafeOutboundUrl("订阅重定向缺少目标地址")
-                    if redirect_count >= max_redirects:
-                        raise UnsafeOutboundUrl("订阅地址重定向次数过多")
-                    current_url = urllib.parse.urljoin(current_url, location)
-                    continue
-
-                content_length = response.headers.get("Content-Length")
-                if content_length:
-                    try:
-                        parsed_content_length = int(content_length)
-                    except ValueError:
-                        parsed_content_length = None
-                    if parsed_content_length is not None and parsed_content_length > max_response_bytes:
-                        raise ResponseTooLarge("订阅响应超过大小限制")
-
-                chunks = []
-                total = 0
-                for chunk in response.iter_content(chunk_size=64 * 1024):
-                    if not chunk:
+            with closing(_PinnedAdapter(current_url, addresses)) as adapter:
+                session.mount(parsed.scheme + "://", adapter)
+                with closing(session.get(
+                    current_url,
+                    headers=hop_headers,
+                    timeout=timeout,
+                    allow_redirects=False,
+                    stream=True,
+                )) as response:
+                    if response.status_code in REDIRECT_STATUSES:
+                        location = response.headers.get("Location")
+                        if not location:
+                            raise UnsafeOutboundUrl("订阅重定向缺少目标地址")
+                        if redirect_count >= max_redirects:
+                            raise UnsafeOutboundUrl("订阅地址重定向次数过多")
+                        current_url = urllib.parse.urljoin(current_url, location)
                         continue
-                    total += len(chunk)
-                    if total > max_response_bytes:
-                        raise ResponseTooLarge("订阅响应超过大小限制")
-                    chunks.append(chunk)
-                response._content = b"".join(chunks)
-                response._content_consumed = True
-                return response
+
+                    content_length = response.headers.get("Content-Length")
+                    if content_length:
+                        try:
+                            parsed_content_length = int(content_length)
+                        except ValueError:
+                            parsed_content_length = None
+                        if parsed_content_length is not None and parsed_content_length > max_response_bytes:
+                            raise ResponseTooLarge("订阅响应超过大小限制")
+
+                    chunks = []
+                    total = 0
+                    for chunk in response.iter_content(chunk_size=64 * 1024):
+                        if not chunk:
+                            continue
+                        total += len(chunk)
+                        if total > max_response_bytes:
+                            raise ResponseTooLarge("订阅响应超过大小限制")
+                        chunks.append(chunk)
+                    response._content = b"".join(chunks)
+                    response._content_consumed = True
+                    return response
 
     raise UnsafeOutboundUrl("订阅地址重定向次数过多")
