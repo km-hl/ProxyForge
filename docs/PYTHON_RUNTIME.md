@@ -16,7 +16,7 @@ Controller 的生产基线为 **Python 3.12 / Debian Bookworm**，Docker 基础�
 ## 升级和回滚
 
 1. 按[发布验收与恢复流程](RELEASE_ACCEPTANCE.md)保存旧镜像的实际 ID/归档、代码版本、`.env` 和完整 `data/` 冷备份。停止写入后再备份 SQLite；数据库与 `deployment.key` 必须配套保存。
-2. Docker 部署在选定已审查提交后执行：
+2. Docker 部署选定已审查提交后，先按[容器权限说明](CONTAINER_PERMISSIONS.md)完成旧数据停机迁移或新目录准备，再执行：
 
    ```bash
    docker compose build --pull proxyforge
@@ -43,4 +43,4 @@ python scripts/check_controller_image.py docker
 
 该演练是**同代码、同 schema 的解释器升级验证**，不是历史生产镜像回放；完整 Python 测试中的 `test_release_recovery.py` 另行覆盖部署数据、在途任务恢复、WAL 在线备份及密钥缺失/错误。实际 VPS 数据恢复、arm64 容器与真实公网节点链路仍需按发布流程验收。
 
-生产/开发/旧版对照依赖、生成器和基础镜像 digest 已锁定，维护与验证命令见[依赖锁说明](DEPENDENCIES.md)。依赖版本可重复不等于镜像逐字节可复现；非 root 镜像迁移随后单独处理。
+生产/开发/旧版对照依赖、生成器和基础镜像 digest 已锁定，维护与验证命令见[依赖锁说明](DEPENDENCIES.md)。依赖版本可重复不等于镜像逐字节可复现；非 root 镜像权限和旧数据迁移见[容器权限说明](CONTAINER_PERMISSIONS.md)。

@@ -2,9 +2,11 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -130,6 +132,50 @@ def check():
     print('Controller startup/recovery passed: Python ' + sys.version.split()[0] + ', schema 5')
 
 
+def fresh_check():
+    """Exercise first-start credentials and real persistence paths as the service UID."""
+    global ADMIN
+    os.umask(0o077)
+    deadline = time.monotonic() + 30
+    while True:
+        try:
+            require(request('/')[0] == 200, 'Fresh Controller unavailable')
+            break
+        except (OSError, RuntimeError):
+            if time.monotonic() >= deadline:
+                raise RuntimeError('Fresh Controller did not become ready') from None
+            time.sleep(0.2)
+    ADMIN = (DATA / 'admin_token.txt').read_text().strip()
+    token = json.loads((DATA / 'config.json').read_text())['subscription_token']
+    require(ADMIN != token, 'Fresh credentials are not separated')
+    require(request('/api/agents', True)[0] == 200, 'Fresh database unavailable')
+    import main as application
+    from proxyforge.control.control_store import ControlStore
+    from container_data import inspect_data
+    application.save_template_content(TEMPLATE)
+    application.save_cache_to_file([], application.airport_cache_snapshot())
+    application.save_airport_info_cache({})
+    require((DATA / 'airport_cache.yaml').exists(), 'Node cache not written')
+    require((DATA / 'airports_info_cache.json').exists(), 'Info cache not written')
+    require(application.template_store().list_history(), 'Template history not created')
+    store = ControlStore(DATA / 'proxyforge.db')
+    with store.connection() as db:
+        db.execute('BEGIN IMMEDIATE')
+        store._cipher(db)
+        db.execute("INSERT INTO audit_events(event,created_at) VALUES('permission_test',0)")
+        require((DATA / 'proxyforge.db-wal').exists(), 'SQLite WAL not created')
+    require(request('/sub?token=' + token)[0] == 200, 'Fresh subscription failed')
+    inspect_data(runtime=True)
+    protected = ('config.json', 'admin_token.txt', 'deployment.key')
+    values = {name: fingerprints()[name] for name in protected}
+    saved = DATA / '.fresh-test.json'
+    if saved.exists():
+        require(json.loads(saved.read_text()) == values, 'Restart changed fresh credentials')
+    else:
+        saved.write_text(json.dumps(values))
+    print('Non-root fresh startup/persistence/restart passed')
+
+
 def docker_rehearsal():
     suffix = uuid.uuid4().hex[:12]
     candidate, legacy = ['proxyforge-runtime-' + suffix + tag for tag in (':candidate', ':legacy')]
@@ -138,20 +184,48 @@ def docker_rehearsal():
     volumes = []
 
     def docker(*args, **kwargs):
-        return subprocess.run(['docker', *args], cwd=ROOT, check=True, timeout=600, **kwargs)
+        return subprocess.run(['docker', *args], cwd=ROOT, timeout=600,
+                              check=kwargs.pop('check', True), **kwargs)
 
     def run(image, volume, *command):
         docker('run', '--rm', '--network', 'none', '-v', volume + ':/app/data', image, *command)
 
-    def start_check_stop(image, volume):
+    def start_check_stop(image, volume, phase='check'):
         name = 'proxyforge-runtime-' + uuid.uuid4().hex[:12]
         containers.append(name)
-        docker('run', '-d', '--name', name, '--network', 'none',
+        flags = ['--cap-drop', 'ALL', '--security-opt', 'no-new-privileges'] if image == candidate else []
+        docker('run', '-d', '--name', name, '--network', 'none', *flags,
                '-v', volume + ':/app/data', image, stdout=subprocess.DEVNULL)
-        docker('exec', name, 'python', 'scripts/check_controller_image.py', 'check')
+        if image == candidate:
+            docker('exec', name, 'python', '-c',
+                   "import os; from pathlib import Path; assert os.getuid() == os.getgid() == 10001; "
+                   "s=Path('/proc/1/status').read_text(); "
+                   "assert 'Uid:\\t10001\\t10001\\t10001\\t10001' in s; "
+                   "assert 'CapEff:\\t0000000000000000' in s; assert 'NoNewPrivs:\\t1' in s")
+        docker('exec', name, 'python', 'scripts/check_controller_image.py', phase)
         docker('stop', '--time', '10', name, stdout=subprocess.DEVNULL)
 
+    def migrate(volume, apply=False, succeeds=True):
+        result = docker('run', '--rm', '--network', 'none', '--user', '0:0',
+                        '--entrypoint', 'python', '--cap-drop', 'ALL',
+                        '--cap-add', 'CHOWN', '--cap-add', 'FOWNER', '--cap-add', 'DAC_OVERRIDE',
+                        '-v', volume + ':/app/data', candidate, 'scripts/container_data.py',
+                        *(['--apply'] if apply else []), check=False, capture_output=True, text=True)
+        require((result.returncode == 0) == succeeds, 'Unexpected migration result: ' + result.stderr)
+
+    def reject_start(volume, read_only=False):
+        result = docker('run', '--rm', '--network', 'none',
+                        '-v', volume + ':/app/data' + (':ro' if read_only else ''), candidate, check=False,
+                        capture_output=True, text=True)
+        require(result.returncode != 0 and 'CONTAINER_PERMISSIONS.md' in result.stderr,
+                'Unsafe data mount did not fail closed')
+
     try:
+        with tempfile.TemporaryDirectory(prefix='proxyforge-compose-') as temp:
+            config = Path(temp) / 'docker-compose.yml'
+            config.write_bytes((ROOT / 'docker-compose.yml').read_bytes())
+            (Path(temp) / '.env').write_text('')
+            docker('compose', '-f', str(config), 'config', '--quiet')
         docker('build', '--pull', '-t', candidate, '.')
         dockerfile = (ROOT / 'Dockerfile').read_text(encoding='utf-8')
         base = dockerfile.splitlines()[0]
@@ -162,22 +236,56 @@ def docker_rehearsal():
         require('COPY requirements.txt .' in dockerfile, 'Update legacy lock COPY rule')
         dockerfile = dockerfile.replace('COPY requirements.txt .',
                                         'COPY requirements-legacy.txt ./requirements.txt', 1)
+        dockerfile = dockerfile.replace('USER 10001:10001', 'USER 0:0')
+        dockerfile = dockerfile.replace('ENTRYPOINT ["python", "scripts/container_entrypoint.py"]', '')
         docker('build', '--pull', '-t', legacy, '-f', '-', '.', input=dockerfile, text=True)
         docker('run', '--rm', '--network', 'none', candidate, 'python', '-m', 'pip', 'check')
         docker('run', '--rm', '--network', 'none', candidate, 'python', '-c',
                "import sys; assert sys.version_info[:2] == (3, 12)")
+        wrong_user = docker('run', '--rm', '--network', 'none', '--user', '0:0', candidate,
+                            check=False, capture_output=True, text=True)
+        require(wrong_user.returncode != 0 and '10001:10001' in wrong_user.stderr,
+                'Root service startup was not rejected')
         for volume in (original, restored):
             docker('volume', 'create', volume, stdout=subprocess.DEVNULL)
             volumes.append(volume)
         run(legacy, original, 'python', 'scripts/check_controller_image.py', 'seed')
         start_check_stop(legacy, original)
         # Cold copy: all source writers have stopped. Include SQLite and the key.
-        docker('run', '--rm', '--network', 'none', '-v', original + ':/source:ro',
-               '-v', restored + ':/target', candidate, 'python', '-c',
+        docker('run', '--rm', '--network', 'none', '--user', '0:0', '--entrypoint', 'python',
+               '-v', original + ':/source:ro', '-v', restored + ':/target', candidate, '-c',
                "import shutil; shutil.copytree('/source', '/target', dirs_exist_ok=True)")
+        reject_start(restored)
+        migrate(restored)
+        migrate(restored, apply=True)
         start_check_stop(candidate, restored)
         start_check_stop(candidate, restored)
+        reject_start(restored, read_only=True)
         start_check_stop(legacy, restored)
+
+        # Real bind mount: the directory initially belongs to the host, not UID 10001.
+        with tempfile.TemporaryDirectory(prefix='proxyforge-container-') as temp:
+            data = Path(temp) / 'data'
+            data.mkdir(mode=0o700)
+            mount = str(data.resolve())
+            try:
+                reject_start(mount)
+                migrate(mount, apply=True)
+                start_check_stop(candidate, mount, 'fresh')
+                start_check_stop(candidate, mount, 'fresh')
+                docker('run', '--rm', '--network', 'none', '--user', '0:0',
+                       '--entrypoint', 'python', '-v', mount + ':/app/data', candidate, '-c',
+                       "from pathlib import Path; Path('/app/data/unsafe').symlink_to('/etc/passwd')")
+                migrate(mount, apply=True, succeeds=False)
+                reject_start(mount)
+            finally:
+                # Only this newly allocated synthetic bind directory is emptied.
+                docker('run', '--rm', '--network', 'none', '--user', '0:0',
+                       '--entrypoint', 'python', '-v', mount + ':/app/data', candidate, '-c',
+                       "import shutil; from pathlib import Path; "
+                       "[(p.unlink() if p.is_symlink() or p.is_file() else shutil.rmtree(p)) "
+                       "for p in Path('/app/data').iterdir()]")
+                data.rmdir()
     finally:
         # UUID-owned resources only; never prune unrelated Docker resources.
         for name in containers:
@@ -192,12 +300,14 @@ def docker_rehearsal():
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('phase', choices=('docker', 'seed', 'check'))
+    parser.add_argument('phase', choices=('docker', 'seed', 'check', 'fresh'))
     args = parser.parse_args()
     sys.path.insert(0, str(ROOT))
     if args.phase == 'docker':
         docker_rehearsal()
     elif args.phase == 'seed':
         seed()
+    elif args.phase == 'fresh':
+        fresh_check()
     else:
         check()

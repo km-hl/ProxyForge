@@ -73,9 +73,11 @@ python scripts/check_repository_privacy.py
 
 已有迁移故障测试见 `test_deployments.py`、`test_landings.py`、`test_chains.py`；模板中断恢复见 `test_template_revisions.py`。CI 另跑固定 Mihomo 解析与真实 sing-box/systemd 的激活、端口冲突回滚、Reality TCP/UDP → SS2022 和移除。
 
-待目标环境执行的项目：生产备份恢复演练、镜像构建与启动、真实公网入口/落地连通性、实际使用的 OS/架构安装验证。当前没有完整 Debian/Ubuntu × amd64/arm64 特权安装矩阵证据；依赖未完全锁定，构建也不能称为完全可复现。
+待目标环境执行的项目：生产备份恢复演练、镜像构建与启动、真实公网入口/落地连通性、实际使用的 OS/架构安装验证。当前没有完整 Debian/Ubuntu × amd64/arm64 特权安装矩阵证据；依赖和镜像输入已锁定，仍不能称为镜像逐字节可复现；见[依赖锁说明](DEPENDENCIES.md)。
 
 ## 9. Controller 上线操作
+
+非 root 版本使用10001:10001，必须在下面冷备完成后、启动新镜像前执行[数据权限迁移](CONTAINER_PERMISSIONS.md)。回滚同时恢复旧 Compose/覆盖文件与数据备份。
 
 以下是 Linux Docker Compose 的操作模板。替换路径和发布提交，核对实际挂载与 Compose 覆盖文件后执行；不应原样用于未知机器。工作树有本地改动时先保留并审查，不运行 `reset --hard`。
 

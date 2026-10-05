@@ -3,11 +3,20 @@ services:
     build: .
     container_name: proxyforge
     restart: unless-stopped
+    user: "10001:10001"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "${WEB_PORT:-8000}:8000"
     # 所有运行时数据（含 data/template.yaml）统一持久化
     volumes:
-      - ./data:/app/data
+      - type: bind
+        source: ./data
+        target: /app/data
+        bind:
+          create_host_path: false
     # 加载环境变量文件
     env_file:
       - .env

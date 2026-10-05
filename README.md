@@ -57,7 +57,7 @@ cp .env.example .env
 机场拉取使用直接连接，不继承 `HTTP(S)_PROXY`、`ALL_PROXY`、NETRC 或 `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE`。需要私有 CA 时，在 `.env` 显式设置 `PROXYFORGE_AIRPORT_CA_BUNDLE` 为进程可读的可信 CA 文件路径；TLS 验证保持开启。升级兼容性、容器路径和配置示例见[机场 HTTP 请求说明](docs/OUTBOUND_HTTP.md)。
 
 ### 3. 启动服务 (Docker)
-确保您的 VPS 安装了 Docker 和 Docker Compose，然后执行：
+确保您的 VPS 安装了 Docker 和 Docker Compose。镜像以 UID/GID 10001:10001 运行；首次安装必须按[容器权限说明](docs/CONTAINER_PERMISSIONS.md)准备 data，已有安装必须先停机备份并迁移旧数据权限，再执行：
 ```bash
 docker compose up -d --build
 ```
