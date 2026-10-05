@@ -39,7 +39,7 @@ ProxyForge 是一个**全可视化**的专属节点订阅聚合与配置下发�
 
 > 推荐使用 Docker Compose 方式进行部署。一键拉起，简单无忧。
 
-Controller 镜像使用 Python 3.12 / Debian Bookworm，源码 CI 覆盖 Python 3.12、3.13；Agent 仍使用独立的系统 Python 3.9+。版本矩阵、升级回滚和隔离恢复命令见 [Python 运行时说明](docs/PYTHON_RUNTIME.md)。
+Controller 镜像使用 Python 3.12 / Debian Bookworm，源码 CI 覆盖 Python 3.12、3.13；Agent 仍使用独立的系统 Python 3.9+。版本矩阵、升级回滚和隔离恢复命令见 [Python 运行时说明](docs/PYTHON_RUNTIME.md)，锁文件安装与更新见[依赖锁说明](docs/DEPENDENCIES.md)。
 
 ### 1. 克隆代码并进入目录
 ```bash

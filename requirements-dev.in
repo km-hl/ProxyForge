@@ -1,0 +1,5 @@
+# 开发环境完整包含生产依赖，并受生产锁约束。
+-r requirements.in
+-c requirements.txt
+httpx==0.28.1
+ruff==0.12.10

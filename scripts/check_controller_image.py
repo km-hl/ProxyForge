@@ -18,6 +18,8 @@ SUBSCRIPTION = 'synthetic-runtime-subscription-token'
 MANIFEST = '.runtime-test.json'
 TEMPLATE = 'proxy-groups: []\nrules: ["MATCH,DIRECT"]\n'
 METADATA = {'instance_id': 'a' * 32, 'protocol_version': 1}
+LEGACY_IMAGE = ('python:3.9.25-slim-bookworm@sha256:'
+                'a02e9c5406c416c504d6c9a1a306ff4080c3173f1008d192f953bd20382a2d5c')
 
 
 def require(condition, message):
@@ -152,11 +154,14 @@ def docker_rehearsal():
     try:
         docker('build', '--pull', '-t', candidate, '.')
         dockerfile = (ROOT / 'Dockerfile').read_text(encoding='utf-8')
-        require(dockerfile.splitlines()[0] == 'FROM python:3.12-slim-bookworm',
+        base = dockerfile.splitlines()[0]
+        require(base.startswith('FROM python:3.12.') and '@sha256:' in base,
                 'Update migration fixture when production runtime changes')
-        # Same application/schema, old interpreter; not a historic release image.
-        dockerfile = dockerfile.replace('FROM python:3.12-slim-bookworm',
-                                        'FROM python:3.9-slim-bookworm', 1)
+        # Same application/schema, old interpreter with a compatible dependency lock.
+        dockerfile = dockerfile.replace(base, 'FROM ' + LEGACY_IMAGE, 1)
+        require('COPY requirements.txt .' in dockerfile, 'Update legacy lock COPY rule')
+        dockerfile = dockerfile.replace('COPY requirements.txt .',
+                                        'COPY requirements-legacy.txt ./requirements.txt', 1)
         docker('build', '--pull', '-t', legacy, '-f', '-', '.', input=dockerfile, text=True)
         docker('run', '--rm', '--network', 'none', candidate, 'python', '-m', 'pip', 'check')
         docker('run', '--rm', '--network', 'none', candidate, 'python', '-c',

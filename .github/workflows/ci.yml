@@ -36,7 +36,9 @@ jobs:
             requirements-dev.txt
 
       - name: Install dependencies
-        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+        run: |
+          python -m pip --isolated install --index-url https://pypi.org/simple --require-hashes --only-binary=:all: -r requirements-dev.txt
+          python -m pip check
 
       - name: Check repository privacy boundaries
         run: python scripts/check_repository_privacy.py
@@ -77,6 +79,33 @@ jobs:
         if: github.event_name == 'push'
         run: git show --check --oneline --no-renames HEAD
 
+  dependency-locks:
+    name: Locked dependencies / ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Verify repeated clean installs and hash rejection
+        run: python scripts/check_dependency_locks.py
+      - name: Install pinned lock generator
+        if: matrix.os == 'ubuntu-24.04' && matrix.python-version == '3.12'
+        run: |
+          python -m venv .local/lock-tools
+          .local/lock-tools/bin/python -m pip --isolated install --index-url https://pypi.org/simple --require-hashes --only-binary=:all: -r requirements-lock.txt
+      - name: Regenerate locks and reject drift
+        if: matrix.os == 'ubuntu-24.04' && matrix.python-version == '3.12'
+        run: |
+          python scripts/lock_dependencies.py --uv .local/lock-tools/bin/uv
+          git diff --exit-code -- requirements.txt requirements-dev.txt requirements-legacy.txt requirements-lock.txt
+
   agent-python:
     name: Agent standard library / Python ${{ matrix.python-version }}
     runs-on: ubuntu-24.04
@@ -116,8 +145,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install deployment crypto dependency
-        run: python -m pip install cryptography==46.0.5
+      - name: Install locked Controller dependencies for deployment crypto
+        run: |
+          python -m pip --isolated install --index-url https://pypi.org/simple --require-hashes --only-binary=:all: -r requirements.txt
+          python -m pip check
       - name: Verify pinned binary and real systemd activation and rollback
         # Dedicated disposable runner; script refuses pre-existing unit/account.
         run: sudo "$(command -v python)" scripts/check_singbox_runtime.py --disposable-system-test
@@ -139,7 +170,9 @@ jobs:
         run: python scripts/download_mihomo.py --output "$RUNNER_TEMP/mihomo"
 
       - name: Install application dependencies for the real generator
-        run: python -m pip install --disable-pip-version-check -r requirements.txt
+        run: |
+          python -m pip --isolated install --index-url https://pypi.org/simple --require-hashes --only-binary=:all: -r requirements.txt
+          python -m pip check
 
       - name: Confirm binary version and CLI
         run: |
