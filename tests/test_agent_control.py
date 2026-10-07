@@ -95,6 +95,38 @@ class ControlStoreTest(unittest.TestCase):
 
 
 class AgentApiTest(unittest.TestCase):
+    def test_install_command_uses_only_trusted_config_and_creates_no_registration(self):
+        import os
+        from unittest.mock import patch
+        from proxyforge.control.agent_installation import installation_info
+        with patch.dict(os.environ, {"PROXYFORGE_PUBLIC_URL": "https://controller.example:8443/"}):
+            response = self.client.get('/api/agents/install-command', headers={
+                **self.admin, 'Host': 'evil.example', 'X-Forwarded-Host': 'evil.example',
+                'X-Forwarded-Proto': 'http', 'Forwarded': 'host=evil.example;proto=http'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers['cache-control'], 'no-store')
+        self.assertEqual(response.json(), installation_info('https://controller.example:8443'))
+        self.assertNotIn('evil.example', response.text)
+        self.assertNotIn('pfreg_', response.text)
+        with self.app.control_store().connection() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM registration_tokens').fetchone()[0], 0)
+
+    def test_install_command_requires_admin_and_invalid_config_is_not_echoed(self):
+        import os
+        from unittest.mock import patch
+        token, enrolled = self.enroll()
+        for headers in ({}, self.subscription, {'Authorization': 'Bearer ' + token},
+                        {'Authorization': 'Bearer ' + enrolled['agent_token']}):
+            self.assertEqual(self.client.get('/api/agents/install-command', headers=headers).status_code, 401)
+        for url in ('', 'https://user:secret@example.com', 'http://controller.example',
+                    'https://controller.example/?secret=test-token', 'https://127.0.0.1', 'https://$(id).example'):
+            with self.subTest(url=url), patch.dict(os.environ, {'PROXYFORGE_PUBLIC_URL': url}):
+                response = self.client.get('/api/agents/install-command', headers=self.admin)
+                self.assertEqual(response.status_code, 200)
+                self.assertFalse(response.json()['available'])
+                self.assertNotIn('commands', response.json())
+                self.assertNotIn('secret', response.text)
+
     def setUp(self):
         from test_api_integration import load_isolated_application, TEST_ADMIN_TOKEN, TEST_SUBSCRIPTION_TOKEN
         from fastapi.testclient import TestClient

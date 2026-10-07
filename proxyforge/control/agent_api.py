@@ -1,5 +1,6 @@
 """Management inventory routes and separately authenticated Agent routes."""
 import json
+import os
 import sqlite3
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -10,6 +11,7 @@ from pydantic import BaseModel, Field, StrictBool, StrictInt, constr
 
 from proxyforge.security.auth_rate_limit import LoginRateLimiter
 from proxyforge.control.control_store import CapacityExceeded, InvalidRegistration, UnauthorizedAgent
+from proxyforge.control.agent_installation import installation_info
 
 ShortText = constr(strict=True, max_length=128)
 Identifier = constr(strict=True, pattern=r"^[a-f0-9]{32}$")
@@ -128,6 +130,12 @@ def attach_agent_routes(app, management_auth, store_provider):
     @admin.get("")
     def list_agents():
         return {"agents": store_provider().list_agents()}
+
+    @admin.get("/install-command")
+    def install_command():
+        # Only deployment configuration is trusted, never Host/forwarding headers.
+        return JSONResponse(installation_info(os.environ.get("PROXYFORGE_PUBLIC_URL", "")),
+                            headers={"Cache-Control": "no-store"})
 
     @admin.get("/{agent_id}")
     def get_agent(agent_id: str):

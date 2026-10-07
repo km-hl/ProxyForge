@@ -326,23 +326,88 @@ async function agentAction(agent, action) {
     await refreshAgents();
 }
 
+async function copyAgentCommand(field) {
+    try {
+        await navigator.clipboard.writeText(field.value);
+        showToast('安装命令已复制，请在目标 VPS 终端执行', 'success');
+    } catch (_) {
+        if (field.isConnected && modalOverlay.classList.contains('active')) {
+            field.focus(); field.select();
+            showToast('无法访问剪贴板，已选中命令，请手动复制', 'error');
+        }
+    }
+}
+
 async function addAgent() {
-    openModal('添加服务器', '<label>服务器名称</label><input id="new-agent-name" maxlength="128">', async () => {
-        try {
-            const registration = await (await fetchAuth('/agents/registration-tokens', {
-                method: 'POST', body: JSON.stringify({ name: document.getElementById('new-agent-name').value })
-            })).json();
-            openModal('一次性注册凭据',
-                '<p>在目标 VPS 下载并审查固定版本的安装程序后运行，将此 token 粘贴到安装程序的隐藏输入提示中。不要放进命令行参数。</p>' +
-                '<input id="agent-registration-token" readonly autocomplete="off">' +
-                '<p id="agent-registration-expiry"></p>' +
-                '<p>注册响应丢失时：检查并移除孤儿 Agent，生成新 token 再注册。启用本地辅助服务后可安装运行环境和部署节点。</p>',
-                () => { clearRegistrationToken(); closeModal(); });
-            document.getElementById('agent-registration-token').value = registration.registration_token;
-            document.getElementById('agent-registration-expiry').textContent =
-                '有效期至 ' + new Date(registration.expires_at * 1000).toLocaleString() + '；只能成功注册一次。';
-        } catch (error) { showToast(error.message, 'error'); }
-    });
+    let busy = false, issued = false;
+    openModal('添加服务器',
+        '<p>1. 核对 Controller 地址，在目标 VPS 执行安装命令。</p>' +
+        '<p>要求：Debian 12/13 或 Ubuntu 22.04/24.04，amd64/arm64，systemd、Python 3.9+、sudo 和可信 CA。已有安装请按恢复指南操作。</p>' +
+        '<p id="agent-install-status">正在读取安装信息…</p><div id="agent-install-commands"></div>' +
+        '<p><a href="https://github.com/km-hl/ProxyForge/blob/master/docs/AGENT_INSTALL.md" target="_blank" rel="noopener noreferrer">中文安装、升级与恢复指南</a></p>' +
+        '<p>2. 终端提示隐藏输入凭据后，填写名称并点击「生成注册凭据」。凭据仅有效 10 分钟。</p>' +
+        '<label for="new-agent-name">服务器名称</label><input id="new-agent-name" maxlength="128" autocomplete="off">' +
+        '<div id="agent-registration-result" hidden><p>3. 将以下凭据粘贴到终端的隐藏输入提示中。不要放入命令或 URL。</p>' +
+        '<input id="agent-registration-token" aria-label="一次性注册凭据" readonly autocomplete="off">' +
+        '<p id="agent-registration-expiry"></p>' +
+        '<p>关闭后不再显示。安装结束后关闭此窗口并刷新服务器列表，确认状态为在线。注册响应丢失时，检查并移除孤儿 Agent，再生成新凭据恢复。</p></div>', async () => {
+            if (!current() || busy) return;
+            if (issued) { closeModal(); return; }
+            if (!name.value.trim()) { showToast('请填写服务器名称', 'error'); name.focus(); return; }
+            busy = true; modalConfirm.disabled = true;
+            try {
+                const registration = await (await fetchAuth('/agents/registration-tokens', {
+                    method: 'POST', body: JSON.stringify({ name: name.value.trim() })
+                })).json();
+                if (!current()) return;
+                document.getElementById('agent-registration-token').value = registration.registration_token;
+                document.getElementById('agent-registration-expiry').textContent =
+                    '有效期至 ' + new Date(registration.expires_at * 1000).toLocaleString() + '；只能成功注册一次。';
+                document.getElementById('agent-registration-result').hidden = false;
+                name.readOnly = true; issued = true; modalConfirm.textContent = '关闭';
+            } catch (error) {
+                if (current()) showToast(error.message, 'error');
+            } finally {
+                busy = false;
+                if (current()) modalConfirm.disabled = false;
+            }
+        });
+    const name = document.getElementById('new-agent-name');
+    const current = () => name.isConnected && modalOverlay.classList.contains('active');
+    modalConfirm.textContent = '生成注册凭据';
+    modalConfirm.disabled = true;
+    try {
+        const info = await (await fetchAuth('/agents/install-command')).json();
+        if (!current()) return;
+        const status = document.getElementById('agent-install-status');
+        if (!info.available) {
+            status.textContent = info.message + ' 当前可按中文指南手动安装并生成注册凭据。';
+            return;
+        }
+        status.textContent = 'Controller：' + info.controller_url + '；Agent ' + info.agent_version +
+            '；源码提交：' + info.source_commit + '；Bootstrap：' + info.bootstrap_commit +
+            '；SHA256：' + info.bootstrap_sha256;
+        const container = document.getElementById('agent-install-commands');
+        for (const [action, label] of [['install', '复制 Agent 安装命令'], ['check', '复制只读下载校验命令'],
+            ['runtime', '复制启用托管 runtime 命令（可选，root 辅助服务）']]) {
+            let parent = container;
+            if (action !== 'install') {
+                parent = document.createElement('details');
+                const summary = document.createElement('summary'); summary.textContent = label;
+                parent.append(summary); container.append(parent);
+            }
+            const field = document.createElement('textarea'); field.readOnly = true; field.rows = 6;
+            field.setAttribute('aria-label', label); field.value = info.commands[action];
+            const button = document.createElement('button'); button.type = 'button'; button.className = 'btn';
+            button.textContent = label; button.onclick = () => copyAgentCommand(field);
+            parent.append(field, button);
+        }
+    } catch (error) {
+        if (current()) document.getElementById('agent-install-status').textContent =
+            '安装信息读取失败，可按中文指南手动安装：' + error.message;
+    } finally {
+        if (current()) modalConfirm.disabled = false;
+    }
 }
 
 function clearRegistrationToken() {
