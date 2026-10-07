@@ -128,6 +128,9 @@ def main():
         pass
     else:
         raise SystemExit('Refusing pre-existing Agent account')
+    for name in ('/', '/var', '/var/lib', '/opt', '/etc', '/etc/systemd', '/etc/systemd/system', '/run'):
+        current = Path(name).lstat()
+        print('CI parent permissions:', name, current.st_uid, oct(stat.S_IMODE(current.st_mode)), flush=True)
     with tempfile.TemporaryDirectory(prefix='proxyforge-install-ci-') as temporary:
         root = Path(temporary)
         key, cert = certificate(root)

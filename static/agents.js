@@ -252,7 +252,7 @@ async function refreshAgents() {
     try {
         const { agents } = await (await fetchAuth('/agents')).json();
         target.replaceChildren();
-        if (!agents.length) { target.textContent = '尚无 Agent。添加服务器后，在目标机器运行参考 Agent 安装程序。'; return; }
+        if (!agents.length) { target.textContent = '尚无 Agent。点击「添加服务器」获取安装命令，在目标机器执行。'; return; }
         const table = document.createElement('table'); table.className = 'agent-table';
         const headings = document.createElement('tr');
         for (const name of ['名称 / 主机', '连接来源 IP', '系统 / 架构', 'Agent / sing-box', '状态 / 角色', '最后在线', '操作']) {
