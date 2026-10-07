@@ -231,6 +231,22 @@ class AgentBootstrapTests(unittest.TestCase):
             bootstrap.main()
             install.assert_not_called()
 
+    @unittest.skipUnless(os.name == "posix", "requires Linux controlling PTY")
+    def test_preflight_accepts_real_controlling_tty(self):
+        fixture = Path(__file__).parent / "fixtures" / "agent_tty_preflight.py"
+        result = subprocess.run([sys.executable, "-S", str(fixture), "pty"],
+                                capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(b"preflight accepted real TTY", result.stdout)
+
+    @unittest.skipUnless(os.name == "posix", "requires Linux session semantics")
+    def test_preflight_rejects_missing_controlling_tty(self):
+        fixture = Path(__file__).parent / "fixtures" / "agent_tty_preflight.py"
+        result = subprocess.run([sys.executable, "-S", str(fixture), "no-tty"],
+                                capture_output=True, timeout=15, start_new_session=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(b"preflight rejected absent TTY", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

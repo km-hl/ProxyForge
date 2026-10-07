@@ -192,7 +192,8 @@ def preflight(mode, server):
                                  "proxyforge-agent.service"], capture_output=True, timeout=10, env=SAFE_ENV)
         if result.returncode or result.stdout.strip() != b"not-found":
             raise InstallError("Agent unit 已存在或无法检查")
-        with open("/dev/tty", "rb+"):
+        # Terminals are not seekable; BufferedRandom (default rb+) rejects them.
+        with open("/dev/tty", "rb+", buffering=0):
             pass
     elif not Path("/etc/proxyforge-agent/config.json").is_file():
         raise InstallError("请先完成普通 Agent 注册安装")
