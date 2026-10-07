@@ -1,5 +1,7 @@
 # ProxyForge reference Agent (B5b)
 
+[中文安装、升级与恢复说明](README.zh-CN.md) · [固定安装产物与校验](../docs/AGENT_ARTIFACTS.md)
+
 Controller uses Python 3.12 in its image and tests source compatibility on 3.12/3.13.
 The Agent keeps its independent system Python 3.9+ requirement and standard-library-only runtime.
 Controller 镜像升级不提高 Agent 的 Python 3.9+ 门槛；Agent 继续只依赖系统 Python 标准库。

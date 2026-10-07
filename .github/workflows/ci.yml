@@ -123,6 +123,19 @@ jobs:
           python -S -m compileall -q agent
           python -S -m agent.main --help
           python -S -m unittest discover -s tests -p test_runtime_engine.py -v
+          python -S -m unittest discover -s tests -p test_agent_artifacts.py -v
+      - name: Build and verify fixed-commit Agent artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit=$(git rev-parse HEAD)
+          output=".local/agent-artifacts/$commit"
+          python -S scripts/agent_artifacts.py build --commit "$commit" --output-dir "$output"
+          manifest="$output/proxyforge-agent-$commit.manifest.json"
+          archive="$output/proxyforge-agent-$commit.tar"
+          manifest_sha256=$(python -S -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$manifest")
+          python -S scripts/agent_artifacts.py verify --commit "$commit" \
+            --manifest-sha256 "$manifest_sha256" --manifest "$manifest" --archive "$archive"
 
   controller-image:
     name: Controller image / non-root and recovery

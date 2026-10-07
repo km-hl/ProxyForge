@@ -115,6 +115,8 @@ docker compose exec proxyforge python -c "import json; print(json.load(open('/ap
 
 Agent 提供服务器注册、心跳、在线状态、角色标签与凭据撤销，主动连接 HTTPS 主控，无入站监听。受控任务支持领取、回报、重试和取消；本地可选启用独立 sing-box 运行环境，并从控制台部署直连 VLESS Reality、自动生成客户端节点。参见 [Agent 安装与恢复](agent/README.md)、[B1 注册协议](docs/AGENT_B1.md)、[B2 任务协议](docs/AGENT_B2.md)、[B3 托管运行环境](docs/AGENT_B3.md) 和 [B4 Reality 部署](docs/AGENT_B4.md)。
 
+Agent [中文安装、升级与恢复](agent/README.zh-CN.md)已提供；维护者可从完整提交构建并校验[固定安装产物](docs/AGENT_ARTIFACTS.md)。正式 Release 与控制台复制下载/安装命令仍按开发计划推进。
+
 模板编辑现已使用内容版本进行并发保护：保存冲突时保留草稿，并可在底层配置页查看、比较和恢复历史。旧页面升级后需要刷新；API 保存请求须携带 `expected_revision`。全局导入通过统一接口提交节点、机场和模板。接口、存储恢复与回滚说明见 [模板版本与历史](docs/TEMPLATE_REVISIONS.md)。
 
 当有新功能推送到 GitHub 后，在 VPS 上更新代码非常简单，且**绝对不会**覆盖或影响您的私有配置：

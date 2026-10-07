@@ -1,0 +1,19 @@
+{
+  "python_minimum": "3.9",
+  "controller_schema_baseline": 5,
+  "protocols": {
+    "inventory": 1,
+    "jobs": 1,
+    "runtime": 1,
+    "deployment": 1,
+    "landing": 1,
+    "chain": 1
+  },
+  "platforms": {
+    "debian": ["12", "13"],
+    "ubuntu": ["22.04", "24.04"]
+  },
+  "architectures": ["amd64", "arm64"],
+  "service_manager": "systemd",
+  "runtime_helper_enabled_by_default": false
+}
