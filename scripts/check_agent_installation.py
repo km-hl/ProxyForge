@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import pty
 import pwd
+import re
 import secrets
 import select
 import signal
@@ -170,7 +171,13 @@ def main():
                     assert token not in command
                     print('Executing the console installation command with a real controlling TTY', flush=True)
                     status, output, sent = command_pty(command, token)
-                    assert status == 0 and sent, 'Real installer failed (output deliberately not logged)'
+                    if status != 0 or not sent:
+                        # Installer errors contain only fixed paths/status. Still redact
+                        # both credential formats and the exact supplied token defensively.
+                        diagnostic = output.decode('utf-8', errors='replace').replace(token, '[redacted]')
+                        diagnostic = re.sub(r'pf(?:reg|agt)_[A-Za-z0-9_-]+', '[redacted]', diagnostic)
+                        print(diagnostic[-4096:], flush=True)
+                        raise AssertionError('Real installer failed')
                     assert heartbeat.wait(45), 'Service started but HTTPS heartbeat was not received'
                     agents = client.get('/api/agents', headers=headers).json()['agents']
                     assert len(agents) == 1 and agents[0]['status'] == 'online'
