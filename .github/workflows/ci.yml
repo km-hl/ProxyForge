@@ -164,7 +164,8 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install locked Controller test dependencies
-        run: python -m pip --isolated install --index-url https://pypi.org/simple --require-hashes --only-binary=:all: -r requirements-dev.txt
+        run: |
+          python -m pip --isolated install --index-url https://pypi.org/simple --require-hashes --only-binary=:all: -r requirements-dev.txt
       - name: Install from console command and verify real HTTPS heartbeat
         # Dedicated disposable VM; never run this on a deployed Agent host.
         run: sudo env GITHUB_ACTIONS=true "$(command -v python)" scripts/check_agent_installation.py --disposable-system-test
