@@ -40,6 +40,8 @@ Controller 当前 schema 5；模板历史仍在文件中，不在 SQLite。完�
 
 ## 5. Agent 版本与升级顺序
 
+固定 Agent 安装产物、manifest 字段及预期 SHA256 的可信来源要求见[安装产物说明](AGENT_ARTIFACTS.md)。构建/校验通过不等于正式 Release 已发布，也不代替目标主机安装验收。
+
 先升级 Controller，再按需要逐台升级 Agent。B6 沿用 Agent 0.6.0；旧 Agent 可以继续清单/已支持动作，新动作受各自 capability 门控。
 
 已有机器不能重跑首次安装脚本。升级前停止 Agent 以及 runtime socket/helper，确认执行中的事务已结束或先用原版本恢复；私密备份已安装包、systemd units、`/etc/proxyforge-agent/`、`/var/lib/proxyforge-runtime/`。后者包含配置秘密、current/previous 和事务/receipt，不能只备份一个 JSON。

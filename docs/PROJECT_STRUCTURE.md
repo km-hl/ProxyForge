@@ -75,6 +75,8 @@ agent → 标准库及自身模块（不依赖 Controller 包）
 
 Agent 保持独立目录和 `python -m agent.main` 入口。安装脚本的文件清单、root helper、能力标记和协议规格不移动；Controller 仍引用 `agent/*_spec.py` 共享严格规格。Agent 版本仍为 0.6.0。
 
+`scripts/agent_artifacts.py` 只从完整提交的 Git 对象构建固定 Agent 包并校验，不安装服务；`agent/install-compatibility.json` 描述安装兼容基线，具体清单与信任边界见[安装产物契约](AGENT_ARTIFACTS.md)。中文操作入口为 `agent/README.zh-CN.md`。
+
 ## 6. 状态机
 
 本次只移动模块及导入位置，不改变模板冲突、Job 租约、Deployment/Chain 版本、失败回滚或节点发布状态。`main.py` 中的生成/校验名称仍从纯模块导入，供入口编排和已有生成工具使用。
