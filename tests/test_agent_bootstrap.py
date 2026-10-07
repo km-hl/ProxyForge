@@ -224,8 +224,10 @@ class AgentBootstrapTests(unittest.TestCase):
             root.chmod(0o700)
 
     def test_cli_check_only_needs_isolation_not_root(self):
+        flags = {name: getattr(sys.flags, name) for name in dir(sys.flags) if not name.startswith("_")}
+        flags["isolated"] = 1
         with patch.object(sys, "argv", ["bootstrap", "check"]), \
-                patch.object(bootstrap.sys, "flags", SimpleNamespace(isolated=True)), \
+                patch.object(bootstrap.sys, "flags", SimpleNamespace(**flags)), \
                 patch.object(bootstrap, "download"), patch.object(bootstrap, "verified_files", return_value={}), \
                 patch.object(bootstrap, "install") as install:
             bootstrap.main()
