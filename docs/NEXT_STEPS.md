@@ -155,6 +155,8 @@ Controller 支持范围与使用系统 Python 的 Agent 支持范围分别决定
 1. 中文文档先提供从固定完整 commit 获取源码到安装、检查服务的完整命令块；不能只给需要用户预先找到源码目录的相对路径。
 2. 在控制台提供带有效固定版本、校验信息和 Controller HTTPS 地址的可复制命令；可使用固定官方归档或发布的最小 Agent 包。安装产物需先按第 14 项准备，不要求等架构重构完成。真正可用前不展示虚构下载 URL 或“即将支持”的可执行按钮。
 
+第一阶段命令与安全 bootstrap 已实现，见[Agent 完整下载安装](AGENT_INSTALL.md)：使用 #39 的完整固定提交与真实官方源码归档 SHA256，bootstrap 自身也固定提交/校验；普通 Agent 与显式 helper 分开，root 私有目录准备代码，保留隐藏输入 token。尚未完成各平台特权安装/真实 HTTPS 心跳矩阵；下一步是第二阶段可信 Controller 地址配置、控制台复制入口与空白测试主机验收。
+
 接口与安全边界：
 
 - 复用 `POST /api/agents/registration-tokens` 获取一次性凭据/到期时间、`POST /api/agent/register` 注册和 `POST /api/agent/heartbeat` 回报。命令生成不意味着需要新增注册/远程 shell API。
@@ -213,7 +215,7 @@ Controller 支持范围与使用系统 Python 的 Agent 支持范围分别决定
 区分 Controller 发布版本、Agent 软件版本、数据库 schema 和各能力协议版本；安装 manifest 记录兼容关系、完整 commit、产物与 SHA256。
 先提供第 16 项需要的可验证固定产物，再逐步完善发布自动化；不要让安装命令依赖可变 master/latest。
 
-安装产物准备已实现：`scripts/agent_artifacts.py` 从完整 Git 提交和固定文件清单构建可重复 tar + manifest，记录 Agent 版本、配套 Controller 提交、schema 基线及各能力协议；独立预期 manifest SHA256 固定整包与成员校验。见[产物契约、命令和验证边界](AGENT_ARTIFACTS.md)。这一步不创建正式 tag/Release、不解包或安装；下一步仍需第 16 项安全 bootstrap、真实固定下载来源、root 目录所有权检查、完整命令与空白主机验收。Agent 已补[中文安装、升级与恢复说明](../agent/README.zh-CN.md)，第 15 项其余说明的中文覆盖继续推进。
+安装产物准备已实现：`scripts/agent_artifacts.py` 从完整 Git 提交和固定文件清单构建可重复 tar + manifest，记录 Agent 版本、配套 Controller 提交、schema 基线及各能力协议；独立预期 manifest SHA256 固定整包与成员校验。见[产物契约、命令和验证边界](AGENT_ARTIFACTS.md)。此工具不创建正式 tag/Release、不解包或安装；第 16 项第一阶段另已提供[固定官方源码 bootstrap、root 目录检查与完整命令](AGENT_INSTALL.md)，后续仍需控制台入口与空白主机验收。Agent 已补[中文安装、升级与恢复说明](../agent/README.zh-CN.md)，第 15 项其余说明的中文覆盖继续推进。
 
 每次发布提供中文的新增功能、修复、安全变更、数据格式变化、升级步骤、Agent/helper 是否需升级、已测矩阵/已知限制和回滚方式。
 发布门禁采用 [发布验收与恢复流程](RELEASE_ACCEPTANCE.md)；Controller 先升级，DB/key 一致备份；版本化发布不等于已完成真实公网 Reality/SS2022 验收。
