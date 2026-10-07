@@ -215,7 +215,7 @@ Controller 支持范围与使用系统 Python 的 Agent 支持范围分别决定
 区分 Controller 发布版本、Agent 软件版本、数据库 schema 和各能力协议版本；安装 manifest 记录兼容关系、完整 commit、产物与 SHA256。
 先提供第 16 项需要的可验证固定产物，再逐步完善发布自动化；不要让安装命令依赖可变 master/latest。
 
-安装产物准备已实现：`scripts/agent_artifacts.py` 从完整 Git 提交和固定文件清单构建可重复 tar + manifest，记录 Agent 版本、配套 Controller 提交、schema 基线及各能力协议；独立预期 manifest SHA256 固定整包与成员校验。见[产物契约、命令和验证边界](AGENT_ARTIFACTS.md)。这一步不创建正式 tag/Release、不解包或安装；下一步仍需第 16 项安全 bootstrap、真实固定下载来源、root 目录所有权检查、完整命令与空白主机验收。Agent 已补[中文安装、升级与恢复说明](../agent/README.zh-CN.md)，第 15 项其余说明的中文覆盖继续推进。
+安装产物准备已实现：`scripts/agent_artifacts.py` 从完整 Git 提交和固定文件清单构建可重复 tar + manifest，记录 Agent 版本、配套 Controller 提交、schema 基线及各能力协议；独立预期 manifest SHA256 固定整包与成员校验。见[产物契约、命令和验证边界](AGENT_ARTIFACTS.md)。此工具不创建正式 tag/Release、不解包或安装；第 16 项第一阶段另已提供[固定官方源码 bootstrap、root 目录检查与完整命令](AGENT_INSTALL.md)，后续仍需控制台入口与空白主机验收。Agent 已补[中文安装、升级与恢复说明](../agent/README.zh-CN.md)，第 15 项其余说明的中文覆盖继续推进。
 
 每次发布提供中文的新增功能、修复、安全变更、数据格式变化、升级步骤、Agent/helper 是否需升级、已测矩阵/已知限制和回滚方式。
 发布门禁采用 [发布验收与恢复流程](RELEASE_ACCEPTANCE.md)；Controller 先升级，DB/key 一致备份；版本化发布不等于已完成真实公网 Reality/SS2022 验收。
