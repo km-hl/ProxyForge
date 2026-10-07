@@ -26,7 +26,7 @@ AGENT_FILES = (
     "system_info.py", "install-compatibility.json",
 )
 DOC_FILES = (
-    "AGENT_ARTIFACTS.md", "AGENT_B1.md", "AGENT_B2.md", "AGENT_B3.md",
+    "AGENT_ARTIFACTS.md", "AGENT_INSTALL.md", "AGENT_B1.md", "AGENT_B2.md", "AGENT_B3.md",
     "AGENT_B4.md", "AGENT_B5_LANDING.md", "AGENT_B5_CHAIN.md",
     "RELEASE_ACCEPTANCE.md", "PYTHON_RUNTIME.md", "DEPENDENCIES.md",
     "CONTAINER_PERMISSIONS.md",

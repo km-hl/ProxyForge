@@ -155,6 +155,8 @@ Controller 支持范围与使用系统 Python 的 Agent 支持范围分别决定
 1. 中文文档先提供从固定完整 commit 获取源码到安装、检查服务的完整命令块；不能只给需要用户预先找到源码目录的相对路径。
 2. 在控制台提供带有效固定版本、校验信息和 Controller HTTPS 地址的可复制命令；可使用固定官方归档或发布的最小 Agent 包。安装产物需先按第 14 项准备，不要求等架构重构完成。真正可用前不展示虚构下载 URL 或“即将支持”的可执行按钮。
 
+第一阶段命令与安全 bootstrap 已实现，见[Agent 完整下载安装](AGENT_INSTALL.md)：使用 #39 的完整固定提交与真实官方源码归档 SHA256，bootstrap 自身也固定提交/校验；普通 Agent 与显式 helper 分开，root 私有目录准备代码，保留隐藏输入 token。尚未完成各平台特权安装/真实 HTTPS 心跳矩阵；下一步是第二阶段可信 Controller 地址配置、控制台复制入口与空白测试主机验收。
+
 接口与安全边界：
 
 - 复用 `POST /api/agents/registration-tokens` 获取一次性凭据/到期时间、`POST /api/agent/register` 注册和 `POST /api/agent/heartbeat` 回报。命令生成不意味着需要新增注册/远程 shell API。

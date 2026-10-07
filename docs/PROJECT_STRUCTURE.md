@@ -77,6 +77,8 @@ Agent 保持独立目录和 `python -m agent.main` 入口。安装脚本的文�
 
 `scripts/agent_artifacts.py` 只从完整提交的 Git 对象构建固定 Agent 包并校验，不安装服务；`agent/install-compatibility.json` 描述安装兼容基线，具体清单与信任边界见[安装产物契约](AGENT_ARTIFACTS.md)。中文操作入口为 `agent/README.zh-CN.md`。
 
+`scripts/agent_bootstrap.py` 提供独立的固定源码下载、校验和 root 目录安装准备；`scripts/agent_install_command.py` 生成固定 bootstrap 提交/hash 的命令，见[完整安装指南](AGENT_INSTALL.md)。两者不在 Controller 请求中执行；当前没有新增安装 API 或远程 shell 动作。
+
 ## 6. 状态机
 
 本次只移动模块及导入位置，不改变模板冲突、Job 租约、Deployment/Chain 版本、失败回滚或节点发布状态。`main.py` 中的生成/校验名称仍从纯模块导入，供入口编排和已有生成工具使用。

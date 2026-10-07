@@ -6,6 +6,8 @@ Agent 主动通过 HTTPS 上报清单、发送心跳、领取允许列表内的�
 
 ## 首次安装与平台边界
 
+新主机请直接使用[完整下载、校验和安装命令](../docs/AGENT_INSTALL.md)，只需填写真实 Controller 地址；下方源码目录命令用于已有可信 checkout 的管理员。
+
 安装器允许 Debian 12/13、Ubuntu 22.04/24.04，amd64/arm64、systemd、Python 3.9+，拒绝其他组合。该允许列表不表示所有组合都完成了空白主机安装实测。当前是源码 Agent，没有签名二进制发行包或自动升级功能。
 
 从官方仓库取得并审查固定完整提交后，在 **root 控制、其他用户不可写**的 checkout 中执行：
@@ -15,7 +17,7 @@ sudo bash agent/install.sh https://your-controller.example
 sudo systemctl status proxyforge-agent.service --no-pager
 ```
 
-这里的相对路径命令以已有可信 checkout 为前提；固定产物构建与校验见[安装产物说明](../docs/AGENT_ARTIFACTS.md)。完整下载/bootstrap/控制台复制命令仍在开发计划第 16 项，不提供不存在的 Release 地址，也不能只下载依赖相邻文件的 `install.sh`。Controller 地址必须是可信的 HTTPS 根地址，不含用户名、密码、查询参数或片段。
+这里的相对路径命令以已有可信 checkout 为前提；固定产物构建与校验见[安装产物说明](../docs/AGENT_ARTIFACTS.md)。完整 bootstrap 命令已提供，控制台复制入口仍在开发计划第 16 项。不能只下载依赖相邻文件的 `install.sh`。Controller 地址必须是可信的 HTTPS 根地址，不含用户名、密码、查询参数或片段。
 
 在 Controller **Agent 服务器 → 添加服务器**生成一次性注册 token，在安装器隐藏提示中粘贴。有效期 10 分钟，只能注册一个 Agent。不要将 token 放进命令参数、URL、shell 历史、日志、Git、截图或浏览器持久存储。
 

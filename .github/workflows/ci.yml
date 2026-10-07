@@ -129,7 +129,17 @@ jobs:
       - name: Verify pinned official source and root staging guards
         if: matrix.python-version == '3.12'
         run: |
-          python -I scripts/agent_bootstrap.py check
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          import subprocess
+          document = Path('docs/AGENT_INSTALL.md').read_text(encoding='utf-8')
+          commands = [block for block in re.findall(r'```bash\n(.*?)```', document, re.S)
+                      if 'PROXYFORGE_BOOTSTRAP' in block]
+          command = commands[2]
+          assert command.startswith('/usr/bin/python3 -I - check ')
+          subprocess.run(['/bin/bash', '-e'], input=command, text=True, check=True, timeout=120)
+          PY
           sudo "$(command -v python)" -S -m unittest discover -s tests -p test_agent_bootstrap.py -v
       - name: Build and verify fixed-commit Agent artifacts
         shell: bash

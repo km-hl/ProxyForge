@@ -1,5 +1,7 @@
 import hashlib
 import io
+from pathlib import Path
+import re
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -57,6 +59,20 @@ class AgentInstallCommandTests(unittest.TestCase):
                        "https://x.example\nEOF\nid", "https://x.example/?token=test-token"):
             with self.subTest(server=server), self.assertRaises(ValueError):
                 self.command(b"pass", server=server)
+
+    def test_documented_commands_match_renderer_and_bootstrap_bytes(self):
+        root = Path(__file__).resolve().parents[1]
+        document = (root / "docs/AGENT_INSTALL.md").read_text(encoding="utf-8")
+        commands = [block for block in re.findall(r"```bash\n(.*?)```", document, re.S)
+                    if "PROXYFORGE_BOOTSTRAP" in block]
+        self.assertEqual(len(commands), 3)
+        source = (root / "scripts/agent_bootstrap.py").read_text(encoding="utf-8").encode("utf-8")
+        digest = hashlib.sha256(source).hexdigest()
+        for mode, command in zip(("install", "runtime", "check"), commands):
+            commit = re.search(r"/ProxyForge/([0-9a-f]{40})/scripts/agent_bootstrap.py", command).group(1)
+            expected = render(commit, digest, action=mode,
+                              server="https://your-controller.example" if mode == "install" else None)
+            self.assertEqual(command, expected)
 
 
 if __name__ == "__main__":

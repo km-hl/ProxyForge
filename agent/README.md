@@ -2,6 +2,8 @@
 
 [中文安装、升级与恢复说明](README.zh-CN.md) · [固定安装产物与校验](../docs/AGENT_ARTIFACTS.md)
 
+For a fresh host, use the [complete pinned download and installation commands (中文)](../docs/AGENT_INSTALL.md). The source-checkout commands below remain available for administrators with an inspected checkout.
+
 Controller uses Python 3.12 in its image and tests source compatibility on 3.12/3.13.
 The Agent keeps its independent system Python 3.9+ requirement and standard-library-only runtime.
 Controller 镜像升级不提高 Agent 的 Python 3.9+ 门槛；Agent 继续只依赖系统 Python 标准库。
