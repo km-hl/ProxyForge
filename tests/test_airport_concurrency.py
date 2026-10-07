@@ -47,7 +47,7 @@ class AirportConcurrencyTest(unittest.TestCase):
                 self.set_sources([self.old])
                 started, release = threading.Event(), threading.Event()
 
-                def fetch(item, index=0):
+                def fetch(item, index=0, **kwargs):
                     if item == self.old:
                         started.set()
                         self.assertTrue(release.wait(10))
@@ -73,7 +73,7 @@ class AirportConcurrencyTest(unittest.TestCase):
     def test_subscription_does_not_persist_inflight_results_after_airport_removal(self):
         started, release = threading.Event(), threading.Event()
 
-        def fetch(item, index=0):
+        def fetch(item, index=0, **kwargs):
             started.set()
             self.assertTrue(release.wait(10))
             return [self.node("removed")]
@@ -108,7 +108,7 @@ class AirportConcurrencyTest(unittest.TestCase):
     def test_background_result_is_discarded_after_source_change(self):
         started, release = threading.Event(), threading.Event()
 
-        def fetch(item, index=0):
+        def fetch(item, index=0, **kwargs):
             started.set()
             self.assertTrue(release.wait(10))
             return [self.node("old background")]
@@ -129,7 +129,7 @@ class AirportConcurrencyTest(unittest.TestCase):
     def test_background_warm_cannot_be_overwritten_by_older_subscription(self):
         started, release = threading.Event(), threading.Event()
 
-        def fetch(item, index=0):
+        def fetch(item, index=0, **kwargs):
             if not started.is_set():
                 started.set()
                 self.assertTrue(release.wait(10))
@@ -163,7 +163,7 @@ class AirportConcurrencyTest(unittest.TestCase):
     def test_repeated_changes_have_bounded_retry_and_safe_503(self):
         calls = []
 
-        def fetch(item, index=0):
+        def fetch(item, index=0, **kwargs):
             calls.append(item)
             self.set_sources([self.new] if item == self.old else [self.old])
             return [self.node("stale")]
@@ -213,7 +213,7 @@ class AirportConcurrencyTest(unittest.TestCase):
         counter = iter(range(6))
         counter_lock = threading.Lock()
 
-        def fetch(item, index=0):
+        def fetch(item, index=0, **kwargs):
             with counter_lock:
                 name = str(next(counter))
             barrier.wait(10)

@@ -90,7 +90,7 @@ JSON/YAML 在调用前完成序列化；只有实际重复时再加薄封装，�
 
 ### 5. 加强安全出站 HTTP（分阶段 PR）
 
-实施状态：Session 隔离已合并；DNS pinning 及真实 TCP/TLS 回归已实现，合并须通过对应 PR 审查。紧接着单独实现单次请求与整批刷新总预算；第 5 项尚未全部完成。接口、验证和剩余边界见[机场 HTTP 请求说明](OUTBOUND_HTTP.md)。
+实施状态：Session 隔离与 DNS pinning 已合并；单次/批次网络时间预算、有界 DNS 等待、慢流中断及回归已实现，预算 PR 待审查合并。默认单次 60 秒、每跳 DNS 10 秒、批次 180 秒、最多 8 个系统解析线程；CPU/锁/磁盘及关闭边界见[出站时间预算](OUTBOUND_BUDGETS.md)。此前接口和 TLS 边界见[机场 HTTP 请求说明](OUTBOUND_HTTP.md)。代码完成不代表已部署或通过真实公网验收。
 
 现有入口为 `proxyforge/security/network_security.py:safe_get`，保留 HTTP/HTTPS 限制、公网地址检查、逐跳校验、3 次重定向和 10 MiB 响应限制。
 

@@ -46,12 +46,14 @@ from proxyforge.security.runtime_security import (
     RuntimeConfigStore,
 )
 from proxyforge.security.network_security import UnsafeOutboundUrl, safe_get, validate_outbound_url
+from proxyforge.security.outbound_budget import check_outbound_deadline, OutboundTimeout, OutboundCancelled
 from proxyforge.security.auth_rate_limit import LoginRateLimiter
 from proxyforge.config.network_config import validate_network_config, network_error_messages
 
 # ================= 加载环境变量 =================
 load_dotenv()
 AIRPORT_CA_BUNDLE = os.environ.get("PROXYFORGE_AIRPORT_CA_BUNDLE", "").strip() or None
+AIRPORT_BATCH_TIMEOUT = 180.0
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -423,7 +425,7 @@ def merge_airport_proxies_with_cache(
     return merged, missing_sources
 
 
-def fetch_airport_item(item: Any, index: int = 0) -> List[Dict[str, Any]]:
+def fetch_airport_item(item: Any, index: int = 0, *, deadline=None, stop_event=None) -> List[Dict[str, Any]]:
     url = item.get("url", "") if isinstance(item, dict) else item
     if not isinstance(url, str) or not url.strip():
         return []
@@ -432,9 +434,12 @@ def fetch_airport_item(item: Any, index: int = 0) -> List[Dict[str, Any]]:
     headers = {"User-Agent": "clash-verge/v1.6.0 clash-meta/1.18.3"}
     logger.info(f"正在从 {airport_name} 拉取节点")
     try:
-        response = safe_get(url.strip(), headers=headers, timeout=30, ca_bundle=AIRPORT_CA_BUNDLE)
+        check_outbound_deadline(deadline, stop_event)
+        response = safe_get(url.strip(), headers=headers, timeout=30, ca_bundle=AIRPORT_CA_BUNDLE,
+                            deadline=deadline, stop_event=stop_event)
         response.raise_for_status()
         proxies = parse_airport_response(response.text)
+        check_outbound_deadline(deadline, stop_event)
         if proxies:
             for proxy in proxies:
                 if isinstance(proxy, dict):
@@ -447,15 +452,18 @@ def fetch_airport_item(item: Any, index: int = 0) -> List[Dict[str, Any]]:
     return []
 
 def fetch_airport_proxies(sources=None, stop_event=None) -> List[Dict[str, Any]]:
+    deadline = time.monotonic() + AIRPORT_BATCH_TIMEOUT
     urls_data = load_airports() if sources is None else sources
     if not urls_data:
         logger.warning("未配置机场订阅链接，跳过拉取。")
         return []
         
     def fetch(pair):
-        if stop_event is not None and stop_event.is_set():
+        try:
+            check_outbound_deadline(deadline, stop_event)
+        except (OutboundTimeout, OutboundCancelled):
             return []
-        return fetch_airport_item(pair[1], pair[0])
+        return fetch_airport_item(pair[1], pair[0], deadline=deadline, stop_event=stop_event)
 
     with ThreadPoolExecutor(max_workers=5) as executor:
         results = list(executor.map(fetch, enumerate(urls_data)))
@@ -480,7 +488,7 @@ def fetch_airport_proxies(sources=None, stop_event=None) -> List[Dict[str, Any]]
             
     return all_proxies
 
-def fetch_single_airport_info(item) -> dict:
+def fetch_single_airport_info(item, *, deadline=None) -> dict:
     """Fetch and parse only; the caller owns all cache reads and writes."""
     url = item.get("url", "").strip() if isinstance(item, dict) else item.strip()
     custom_name = item.get("name", "") if isinstance(item, dict) else ""
@@ -498,8 +506,9 @@ def fetch_single_airport_info(item) -> dict:
     if not url: return info
     
     try:
+        check_outbound_deadline(deadline)
         headers = {"User-Agent": "clash-verge/v1.6.0 clash-meta/1.18.3"}
-        res = safe_get(url, headers=headers, timeout=30, ca_bundle=AIRPORT_CA_BUNDLE)
+        res = safe_get(url, headers=headers, timeout=30, ca_bundle=AIRPORT_CA_BUNDLE, deadline=deadline)
         res.raise_for_status()
         
         # 尝试提取名称
@@ -521,6 +530,7 @@ def fetch_single_airport_info(item) -> dict:
                     info[k] = int(m.group(1))
                     
         proxies = parse_airport_response(res.text)
+        check_outbound_deadline(deadline)
         info["nodesCount"] = len(proxies)
             
     except Exception as e:
@@ -953,6 +963,7 @@ def update_airports(data: AirportsModel):
 @app.get("/api/airports/info", dependencies=[Depends(verify_api_token)])
 def get_airports_info(force_indices: str = ""):
     global _airport_info_sequence
+    deadline = time.monotonic() + AIRPORT_BATCH_TIMEOUT
     force_idx_list = []
     if force_indices:
         try:
@@ -976,7 +987,7 @@ def get_airports_info(force_indices: str = ""):
         # One fetch per URL, independent of aliases. No configuration/cache lock
         # is held during network I/O and workers never touch shared cache files.
         with ThreadPoolExecutor(max_workers=5) as executor:
-            fetched = dict(zip(pending, executor.map(fetch_single_airport_info, pending)))
+            fetched = dict(zip(pending, executor.map(lambda item: fetch_single_airport_info(item, deadline=deadline), pending)))
 
         with configuration_lock():
             if generation != _airport_info_generation or sources != load_airports():

@@ -201,7 +201,7 @@ class AirportBackgroundTest(unittest.IsolatedAsyncioTestCase):
         count_lock = threading.Lock()
         calls = []
 
-        def fetch(item, index):
+        def fetch(item, index, **kwargs):
             with count_lock:
                 calls.append(index)
                 if len(calls) == 5:

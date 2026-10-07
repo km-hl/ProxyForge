@@ -5,6 +5,7 @@ import socket
 import ssl
 import tempfile
 import threading
+import time
 import unittest
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -60,16 +61,26 @@ class OutboundTLSIntegrationTest(unittest.TestCase):
                 serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
 
     @contextmanager
-    def server(self, label="valid", server_names=None):
+    def server(self, label="valid", server_names=None, slow_body=False):
         received = []
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 received.append(dict(self.headers))
                 self.send_response(200)
-                self.send_header("Content-Length", "11")
+                self.send_header("Content-Length", "10000" if slow_body else "11")
+                self.send_header("Connection", "close")
                 self.end_headers()
-                self.wfile.write(b"proxies: []")
+                if slow_body:
+                    try:
+                        for _ in range(200):
+                            self.wfile.write(b"a")
+                            self.wfile.flush()
+                            time.sleep(0.02)
+                    except OSError:
+                        pass
+                else:
+                    self.wfile.write(b"proxies: []")
 
             def log_message(self, *args):
                 pass
@@ -144,3 +155,15 @@ class OutboundTLSIntegrationTest(unittest.TestCase):
                     safe_get(url.replace("127.0.0.1", "subscription.example"), ca_bundle=str(self.ca_path), timeout=2)
             self.assertEqual(names, ["subscription.example"])
             self.assertEqual(received, [])
+
+    def test_total_deadline_interrupts_real_tls_body_after_connection_close_header(self):
+        from proxyforge.security.outbound_budget import OutboundTimeout
+
+        with self.server("domain", slow_body=True) as (url, received):
+            with patch("proxyforge.security.network_security._resolved_addresses", return_value=("127.0.0.1",)):
+                started = time.monotonic()
+                with self.assertRaises(OutboundTimeout):
+                    safe_get(url.replace("127.0.0.1", "subscription.example"), ca_bundle=str(self.ca_path),
+                             timeout=1, total_timeout=0.3)
+                self.assertLess(time.monotonic() - started, 2)
+                self.assertEqual(len(received), 1)

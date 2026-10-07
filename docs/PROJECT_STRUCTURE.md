@@ -57,7 +57,7 @@ ProxyForge/
 
 Controller 当前支持单进程、单副本运行，不启用多个 Uvicorn worker 或共享数据目录的多个 Controller。机场缓存的线程协调、来源失效与部署边界见[机场缓存并发说明](AIRPORT_CACHE_CONCURRENCY.md)及[后台刷新生命周期](AIRPORT_BACKGROUND.md)。
 
-机场请求的 Session 隔离、DNS pinning、显式 CA 配置及尚待实现的总耗时预算边界见[机场 HTTP 请求说明](OUTBOUND_HTTP.md)。
+机场请求的 Session 隔离、DNS pinning 与显式 CA 配置见[机场 HTTP 请求说明](OUTBOUND_HTTP.md)；`security/outbound_budget.py` 管理单次截止时间、socket 中断和有界 DNS 等待，批次准入与退出边界见[出站时间预算](OUTBOUND_BUDGETS.md)。
 
 ## 4. 鉴权与模块依赖
 
