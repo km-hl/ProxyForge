@@ -124,6 +124,13 @@ jobs:
           python -S -m agent.main --help
           python -S -m unittest discover -s tests -p test_runtime_engine.py -v
           python -S -m unittest discover -s tests -p test_agent_artifacts.py -v
+          python -S -m unittest discover -s tests -p test_agent_bootstrap.py -v
+          python -S -m unittest discover -s tests -p test_agent_install_command.py -v
+      - name: Verify pinned official source and root staging guards
+        if: matrix.python-version == '3.12'
+        run: |
+          python -I scripts/agent_bootstrap.py check
+          sudo "$(command -v python)" -S -m unittest discover -s tests -p test_agent_bootstrap.py -v
       - name: Build and verify fixed-commit Agent artifacts
         shell: bash
         run: |
