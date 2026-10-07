@@ -4,6 +4,7 @@
 仅用于独立 CI runner，不在开发机、已有 Agent 或生产服务器上运行。
 """
 import argparse
+from contextlib import contextmanager
 import datetime
 import json
 import os
@@ -39,6 +40,25 @@ from proxyforge.control.control_store import ControlStore
 HOST = 'proxyforge-install-ci.example'
 CA_PATH = Path('/usr/local/share/ca-certificates/proxyforge-install-ci.crt')
 CONFIG = Path('/etc/proxyforge-agent/config.json')
+
+
+@contextmanager
+def ci_opt_permissions():
+    # Observed GitHub Ubuntu image: /opt is root-owned but mode 0777 for
+    # tool setup. Adjust only this directory on the dedicated disposable VM,
+    # without recursion/ownership changes, and restore its mode afterwards.
+    path = Path('/opt')
+    current = path.lstat()
+    mode = stat.S_IMODE(current.st_mode)
+    assert os.environ.get('GITHUB_ACTIONS') == 'true' and os.geteuid() == 0
+    assert stat.S_ISDIR(current.st_mode) and current.st_uid == 0 and mode in (0o755, 0o777)
+    try:
+        if mode == 0o777:
+            path.chmod(0o755)
+        yield
+    finally:
+        if mode == 0o777:
+            path.chmod(mode)
 
 
 def command_pty(command, token=None):
@@ -131,7 +151,7 @@ def main():
     for name in ('/', '/var', '/var/lib', '/opt', '/etc', '/etc/systemd', '/etc/systemd/system', '/run'):
         current = Path(name).lstat()
         print('CI parent permissions:', name, current.st_uid, oct(stat.S_IMODE(current.st_mode)), flush=True)
-    with tempfile.TemporaryDirectory(prefix='proxyforge-install-ci-') as temporary:
+    with ci_opt_permissions(), tempfile.TemporaryDirectory(prefix='proxyforge-install-ci-') as temporary:
         root = Path(temporary)
         key, cert = certificate(root)
         store = ControlStore(root / 'control.db')
