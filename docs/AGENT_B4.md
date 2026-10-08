@@ -1,5 +1,7 @@
 # B4：VLESS Reality Deployment
 
+本文保留该历史阶段的协议、迁移与验收记录；版本号和“未实现内容”只限定当时范围，不代表当前仍未实现。当前为 schema 5、Agent 0.6.0；安装、完整升级与回滚见[发布验收](RELEASE_ACCEPTANCE.md)，后续计划见[开发计划](NEXT_STEPS.md)。
+
 本阶段支持每台 Agent 一个直连 VLESS Reality 部署。控制台生成 UUID、X25519 密钥对和 short ID，Agent 在独立 sing-box 实例中应用配置；最新部署成功后，订阅和自建节点列表自动包含客户端节点。无需复制密钥或分享链接。
 
 ## 1. 修改文件
@@ -104,7 +106,7 @@ SS2022 落地、链路编排、多入站、多用户、单独密钥轮换、托�
 
 Controller 首次打开控制面 DB 时，在单个 SQLite 事务内迁移 schema 2 → 3。部署前停止 Controller，私密备份完整 `data/`（包括 DB/WAL/SHM 和 deployment.key，如已存在）、环境配置和代码/镜像。不要运行时单独复制 SQLite 主文件作为一致性备份。恢复有部署的 DB 时必须恢复同一把 key；丢失或错误的 key 返回 503，不重新生成或覆盖。
 
-新 Agent 按 `agent/README.md` 安装，然后本地显式运行 `agent/install-runtime.sh`。已有 B3 Agent 不重跑 fresh installer：先等待任务结束并停止 Agent、runtime socket/helper，备份包、凭据、runtime 和三个 unit；从同一个已审查 B4 checkout 更新所有安装脚本列出的模块（特别是 `deployment_spec.py`），保持包及祖先 root-owned 且不可被普通用户写入。更新 `proxyforge-singbox.service`，执行 `systemctl daemon-reload`。确认这些步骤成功后，以 root 写入内容 `1` 的上述 capability 标记并设为 0644，再启动 socket 和 Agent，检查心跳能力后应用部署。运行中的 sing-box 可在下一次部署重启时使用新 unit 能力。
+新 Agent 按[Agent 中文说明](../agent/README.zh-CN.md)安装，然后本地显式运行 `agent/install-runtime.sh`。已有 B3 Agent 不重跑 fresh installer：先等待任务结束并停止 Agent、runtime socket/helper，备份包、凭据、runtime 和三个 unit；从同一个已审查 B4 checkout 更新所有安装脚本列出的模块（特别是 `deployment_spec.py`），保持包及祖先 root-owned 且不可被普通用户写入。更新 `proxyforge-singbox.service`，执行 `systemctl daemon-reload`。确认这些步骤成功后，以 root 写入内容 `1` 的上述 capability 标记并设为 0644，再启动 socket 和 Agent，检查心跳能力后应用部署。运行中的 sing-box 可在下一次部署重启时使用新 unit 能力。
 
 不要将标记单独复制到旧 helper 安装；标记不是自动升级机制。包升级时停用 helper，避免混用不同版本模块。
 

@@ -1,4 +1,4 @@
-# ProxyForge reference Agent (B5b)
+# ProxyForge reference Agent (0.6.0)
 
 [中文安装、升级与恢复说明](README.zh-CN.md) · [固定安装产物与校验](../docs/AGENT_ARTIFACTS.md)
 
@@ -184,3 +184,5 @@ upgrade paths. For a complete installation, follow the
 Controller-first upgrades, matching database/key backups, full Agent/helper module
 updates, and reconciliation of remote state before resuming a restored Controller.
 The managed-nodes UI itself does not require an Agent upgrade.
+
+For Chinese descriptions of installer arguments and terminal messages, see [安装命令帮助](../docs/AGENT_INSTALL_HELP.md).

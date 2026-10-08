@@ -1,207 +1,96 @@
-# B3: independent sing-box managed runtime
+# B3：独立 sing-box 托管运行环境（历史阶段）
 
-This phase implements pinned installation, start/stop/restart and rollback of one
-ProxyForge-owned sing-box instance. Initial configuration has no inbounds; it
-opens no public proxy port. VLESS Reality, SS2022 and node projection remain later
-phases. Existing `/etc/sing-box` and `sing-box.service` are never adopted or changed.
+本文记录 B3 的固定版本安装、启动/停止/重启及回滚。初始配置没有入站，不开放公网代理端口；Reality、SS2022 和节点投影属于后续 B4–B6。已有 `/etc/sing-box` 和 `sing-box.service` 不被接管或修改。本文的 schema 2、Agent 0.3.0 和无低端口能力均为历史阶段边界；当前安装/升级以[安装指南](AGENT_INSTALL.md)和[发布验收](RELEASE_ACCEPTANCE.md)为准。
 
-## 1. Files and components
+## 1. 文件与组件
 
-The standard-library Agent adds `runtime_spec`, `runtime_download`, `runtime_engine`,
-`runtime_client`, `runtime_helper` and `job_lease` modules. The reviewed release
-manifest is `agent/singbox-release.json`. A separate local opt-in installer and
-three systemd units provision the helper and isolated runtime. Controller schemas,
-queue logic and UI expose only the new allowlist. `scripts/check_singbox_runtime.py`
-tests the official binary against real systemd on a disposable host; unit tests
-exercise queue fencing, permissions, crash recovery and malformed downloads.
+标准库 Agent 增加 `runtime_spec`、`runtime_download`、`runtime_engine`、`runtime_client`、`runtime_helper` 和 `job_lease`。已审查的版本清单为 `agent/singbox-release.json`。独立的本地可选安装器与三个 systemd unit 配置 helper 和隔离运行环境。Controller 模型、队列和 UI 只开放新增允许列表动作。`scripts/check_singbox_runtime.py` 在一次性主机用官方二进制和真实 systemd 验证；单元测试覆盖旧租约隔离、权限、崩溃恢复和畸形下载。
 
-## 2. Storage and ownership
+## 2. 存储与所有权
 
-SQLite remains schema 2: existing immutable job type/payload/revision fields hold
-runtime requests. No new table or legacy YAML migration is needed. The Controller
-computes `deployment_revision` as SHA-256 of canonical JSON `[job_id, type, payload]`.
-Runtime requests with changed content under a previously used request ID conflict.
-This is an operation revision, not yet a node deployment/config revision.
+B3 维持 schema 2，使用既有不可变 job type/payload/revision 保存运行环境请求，无新增表或旧 YAML 迁移。Controller 对规范 JSON `[job_id, type, payload]` 计算 SHA256，作为 `deployment_revision`。同一 request ID 改变内容会冲突；该字段此时表示操作修订，而非节点部署/配置修订。
 
-The Agent continues to own only `/etc/proxyforge-agent` and its private journal.
-The root-owned helper stores immutable generations under
-`/var/lib/proxyforge-runtime/releases/{job_id}` with atomic `current` and `previous`
-symlinks. Each generation contains the binary, `config.json`, and release metadata.
-Config is root-owned, mode 0640, readable by the dedicated `proxyforge-singbox`
-group. Directories/binaries are traversable/executable but not writable by either
-Agent or runtime user. Intent/receipt files are root-only. After successful changes,
-only current/previous generations remain; at most 128 helper receipts are retained.
+Agent 仍只拥有 `/etc/proxyforge-agent` 和私密日志。root helper 将不可变代际保存在 `/var/lib/proxyforge-runtime/releases/{job_id}`，使用原子 `current`、`previous` 符号链接。每代包含二进制、`config.json` 和版本元数据。配置为 root 所有、0640，专用 `proxyforge-singbox` 组可读；目录/二进制可遍历/执行，但 Agent 和 runtime 用户均不可写。intent/receipt 仅 root 可访问。操作成功后仅保留 current/previous 两代和最多 128 条 helper receipt。
 
-The config path deliberately differs from the initial plan's Agent-owned `/etc`
-directory: a root helper must not write through Agent-controlled parent paths.
-`/opt/proxyforge-agent/bin/sing-box` is an installer-created symlink for the existing
-read-only inventory probe. No caller-supplied path reaches privileged code.
+配置没有放入早期计划的 Agent-owned `/etc` 目录：root helper 不能经由 Agent 可控父目录写文件。安装器创建 `/opt/proxyforge-agent/bin/sing-box` 符号链接供只读探测；调用者不能向特权代码传任意路径。
 
-## 3. APIs
+## 3. API
 
-Management `POST /api/agents/{id}/jobs` accepts the following actions. The client
-sends `deployment_revision: null`; the server assigns the immutable operation
-revision. Existing idempotent `request_id`, list/cancel APIs remain unchanged.
+管理接口 `POST /api/agents/{id}/jobs` 接受以下动作。客户端提交 `deployment_revision: null`，服务器生成不可变操作修订。既有幂等 request_id、列表和取消 API 不变。
 
-| Type | Payload | Resulting behavior |
+| type | payload | 行为 |
 | --- | --- | --- |
-| `singbox.status` | `{}` | Existing read-only inventory query |
-| `singbox.install` | `{"version":"1.14.2"}` | Install/update pinned version, validate and ensure running |
-| `singbox.start` | `{}` | Ensure installed instance is running |
-| `singbox.stop` | `{}` | Ensure installed instance is stopped |
-| `singbox.restart` | `{}` | Activate a new immutable generation of current binary/config |
-| `singbox.rollback` | `{}` | Copy previous generation and activate it, preserving current running/stopped state |
+| `singbox.status` | `{}` | 既有只读状态查询 |
+| `singbox.install` | `{"version":"1.14.2"}` | 安装/更新固定版本，校验并确保运行 |
+| `singbox.start` | `{}` | 确保已安装实例运行 |
+| `singbox.stop` | `{}` | 确保已安装实例停止 |
+| `singbox.restart` | `{}` | 为当前二进制/配置创建并激活新的不可变代际 |
+| `singbox.rollback` | `{}` | 复制上一代并激活，保留当前运行/停止状态 |
 
-An already healthy start or same-version install is a no-op. Explicit restart
-creates a new generation. Rollback requires an existing previous generation and
-may have the same binary version after a restart; the UI says “previous runtime
-version” rather than promising a different upstream release.
+已健康运行时 start、同版本且健康的 install 不产生变更。显式 restart 创建新代际。rollback 要求存在 previous；重启之后前后可能是同一上游二进制版本，因此 UI 的“上一运行环境版本”不承诺回到不同上游版本。
 
-`GET /api/agents/runtime/release` returns the pinned version. Machine
-`POST /api/agent/jobs/{id}/renew` accepts the current `lease_token` and returns its
-new expiry. Credentials, owner, capability, deadline and current lease are checked
-transactionally; renewal cannot revive expired, cancelled or completed attempts.
+`GET /api/agents/runtime/release` 返回固定版本。机器接口 `POST /api/agent/jobs/{id}/renew` 接收当前 `lease_token`，返回新到期时间。凭据、归属、能力、期限和当前租约在事务中校验；续租不能复活已过期、取消或完成的尝试。
 
-## 4. Privilege and authentication boundary
+## 4. 特权与鉴权边界
 
-Agent still runs as `proxyforge-agent`, with no new root or sudo permission.
-The optional helper is activated via `/run/proxyforge-runtime.sock` (root owner,
-Agent group, mode 0660). Linux SO_PEERCRED admits only the Agent UID; the client
-also verifies a root peer. There is no TCP helper listener. Messages are bounded
-to 8 KiB, and both sides validate action/revision/result shape. The helper accepts
-no URL, executable, configuration blob, user name, shell argument or service name.
+Agent 仍以 `proxyforge-agent` 运行，不新增 root/sudo 权限。可选 helper 经 `/run/proxyforge-runtime.sock` 激活：root 所有、Agent 组、0660。Linux SO_PEERCRED 仅接纳 Agent UID，客户端同时检查对端为 root。helper 不监听 TCP；消息上限 8 KiB，双向检查动作/revision/result 结构，不接受 URL、可执行路径、配置 blob、用户名、shell 参数或服务名。
 
-Root is confined operationally to the dedicated release tree and fixed systemd
-unit. Its code/package and all parent directories must be root-owned and not
-group/world writable. It runs Python in isolated mode. The helper's systemd
-filesystem sandbox allows writes only in its runtime directory; systemctl uses
-the system manager to act on the one fixed unit. This is an administrative trust
-boundary: a compromised authorized Agent can control this managed instance, but
-the interface does not provide a general root command or file-write primitive.
+root 操作限于专用 release 树和固定 systemd unit。代码、包及所有父目录须 root 所有且不可被组/其他用户写入，Python 以隔离模式运行。helper 的 systemd 文件系统沙箱仅允许写其 runtime 目录；systemctl 经系统管理器操作固定 unit。这是管理员授权的信任边界：被攻陷的已授权 Agent 能控制该专用实例，但接口不提供通用 root 命令或任意文件写入。
 
-The sing-box process has its own unprivileged account, empty capability set,
-NoNewPrivileges, ProtectSystem=strict, ProtectHome and PrivateTmp. This phase does
-not support low ports, TUN, routing changes or firewall changes.
+B3 的 sing-box 进程使用独立非特权账户、空 capability 集、NoNewPrivileges、ProtectSystem=strict、ProtectHome 和 PrivateTmp；当时不支持低端口、TUN、路由或防火墙变更。B4 后续单独增加低端口所需能力。
 
-## 5. Protocol and compatibility
+## 5. 协议与兼容性
 
-Agent 0.3.0 retains inventory/job protocol 1 and adds `runtime_protocol_version`.
-Default 0 keeps B1/B2 Agents inventory/read-only. A B3 Agent advertises runtime 1
-only when the root-owned helper socket exists. Management creation, claim and
-report additionally require runtime 1 and a supported platform. Socket presence
-indicates opt-in, not health; an unavailable helper produces a fixed failure.
+Agent 0.3.0 保留清单/任务协议 1，新增 `runtime_protocol_version`。缺省 0 让 B1/B2 仅具有清单/只读能力；B3 仅在 root-owned helper socket 存在时声明 runtime 1。管理创建、领取和上报还须 runtime 1 及受支持平台。socket 存在表示已选择启用，不代表健康；helper 不可用会产生固定失败。
 
-Upgrade Controller before Agent because old Controllers reject the new metadata
-field. Debian 12/13 and Ubuntu 22.04/24.04 on amd64/arm64 remain the target matrix;
-the helper independently checks OS/architecture. Full installation acceptance on
-all those combinations is not claimed. Unsupported Agents can report inventory.
+先升级 Controller，旧 Controller 会拒绝新增元数据字段。目标矩阵为 Debian 12/13、Ubuntu 22.04/24.04 × amd64/arm64；helper 独立检查系统/架构。不宣称全部组合都已完成安装验收，不支持的平台仍可上报清单。
 
-## 6. State, leases and interruption
+## 6. 状态、租约与中断
 
-Existing queue states/deadlines and three-attempt cap remain. The Agent renews
-every 10 seconds in a separate thread and also sends heartbeat while the helper
-works. Failure to renew, rejection/revocation, or 40 seconds without confirmation
-closes the helper connection. The helper checks connection liveness during download
-and immediately before activation. Downloads are bounded to five minutes; helper
-operations to ten minutes at guard checkpoints, with bounded subprocess timeouts.
+沿用既有队列状态、期限及最多三次尝试。helper 工作时，Agent 独立线程每 10 秒续租并发送心跳；续租失败、拒绝/撤销或 40 秒未获得确认会关闭 helper 连接。helper 在下载期间和激活前检查连接是否存活。下载预算 5 分钟，helper 操作在检查点执行 10 分钟预算限制；子进程另有超时。
 
-Cancellation is best effort before activation, not distributed transactional
-rollback. A cancellation arriving after the final guard can race with an already
-started systemd action, which may complete before the Controller rejects its
-result. Refresh runtime state before issuing another operation. Helper requests
-are serialized under a local process lock; there is no concurrent file activation.
+取消是在激活前尽力阻止执行，不是分布式事务回滚。最终检查之后到达的取消可能与已开始的 systemd 操作竞争：远端可能完成，Controller 却拒绝结果。发下一操作前刷新状态。helper 用本地进程锁串行处理，不并发激活文件。
 
-Before switching files, the helper durably records old/current/previous targets
-and running state. It checks the staged configuration, switches the symlink,
-starts the fixed service, and verifies both active status and `/proc/MainPID/exe`
-against the expected immutable binary path. A process crash after successful
-activation is recognized by that path on recovery and does not restart it again.
-Incomplete activation restores old pointers and prior running/stopped state.
-Failed rollback preserves its intent for local repair and blocks further mutation.
+切换前，helper 持久记录旧 current/previous 目标及运行状态；校验准备好的配置、切换链接、启动固定服务，并同时检查 active 状态与 `/proc/MainPID/exe` 是否对应预期不可变二进制。激活成功后进程崩溃，恢复可通过该路径识别已完成状态，不再次重启。未完成激活恢复旧指针和原运行/停止状态；回滚失败保留 intent 供本地修复，并阻止继续修改。
 
-After helper receipt persistence, the operation is committed even if delivery
-of its result is lost. Agent journals and helper receipts replay duplicate results.
-These bounded journals and recovery checks do not promise exactly-once execution
-after manual deletion, DB restore, receipt eviction or external service changes.
+receipt 持久化后即视为已提交，即使结果响应丢失。Agent 日志与 helper receipt 可重放重复结果；但人工删除、DB 恢复、receipt 淘汰或外部服务变更后，不承诺恰好执行一次。
 
-## 7. Schema and download trust
+## 7. 结构与下载信任
 
-Version 1.14.2 is pinned from the
-[official release](https://github.com/SagerNet/sing-box/releases/tag/v1.14.2).
-The manifest records GitHub's published SHA-256 digests for linux-amd64 and
-linux-arm64 archives. Updating it requires a reviewed code change; “latest”,
-custom versions, download URLs and hashes supplied by the Controller are rejected.
-HTTPS uses system CA verification and permits redirects only to GitHub's release
-asset host; environment proxies are ignored. Archive/download sizes are bounded.
+固定 sing-box 1.14.2，来源为[官方 Release](https://github.com/SagerNet/sing-box/releases/tag/v1.14.2)。清单记录 GitHub 公布的 linux-amd64、linux-arm64 归档 SHA256；更新须经代码审查，不接受 latest、自定义版本或 Controller 提供的下载 URL/hash。HTTPS 使用系统 CA，仅允许跳转到 GitHub release 资产主机，忽略代理环境，限制下载/归档大小。
 
-Hash verification happens before extraction. Only the exact expected regular
-binary member is copied, without general archive extraction. Symlink/hardlink
-binary entries and duplicate/missing members are rejected. `sing-box check` and
-exact version checks run as the isolated runtime user before activation; official
-CLI behavior is described in the [configuration documentation](https://sing-box.sagernet.org/configuration/).
-Download/check/activation failures do not publish partial releases.
+先验证 hash，再复制唯一预期的普通二进制成员，不做通用归档解包。拒绝二进制符号/硬链接、重复或缺失成员。激活前以隔离 runtime 用户运行 `sing-box check` 并检查精确版本；CLI 依据见[官方配置文档](https://sing-box.sagernet.org/configuration/)。下载、检查或激活失败不发布半成品。
 
-Results reuse the bounded status output and fixed error codes `runtime_unavailable`,
-`runtime_failed`, `runtime_cancelled`, `rollback_failed`; arbitrary stderr, download
-URLs, paths and config contents are not returned to the Controller or error logs.
+结果复用有界状态结构，错误只使用 `runtime_unavailable`、`runtime_failed`、`runtime_cancelled`、`rollback_failed`；任意 stderr、下载 URL、路径或配置内容不传回 Controller/错误日志。
 
-## 8. Validation
+## 8. 验证
 
-Tests cover immutable action revisions, changed idempotency payloads, capability
-gating, renewal ownership/revocation/deadline, helper peer identity, malformed
-archives, checksum mismatch, no-op installs/starts, duplicate delivery, interrupted
-staging/activation, failed health checks and failed rollback. Linux filesystem
-tests run on Linux and skip on Windows. A dedicated CI job downloads the pinned
-official amd64 binary, runs its real check and validates real systemd start,
-restart, stop, replay and rollback. It refuses existing runtime accounts/units and
-cleans up only its own disposable resources. The existing Mihomo CI remains.
+测试覆盖不可变动作修订、幂等键内容变化、能力门控、续租归属/撤销/期限、helper 对端身份、畸形归档、校验失败、无变更安装/启动、重复投递、中断准备/激活、健康检查及回滚失败。Linux 文件系统测试在 Linux 运行、Windows 跳过。
 
-## 9. Deployment and local opt-in
+专用 CI 下载固定官方 amd64 二进制，执行真实配置检查和 systemd 启动、重启、停止、重放、回滚；拒绝已有 runtime 账户/unit，只清理自身的一次性资源。既有 Mihomo CI 保留。
 
-Install/update Controller first, then Agent 0.3.0 from a reviewed checkout.
-Fresh `agent/install.sh` installs only the unprivileged Agent. To enable runtime
-management, inspect and run locally on the target machine:
+## 9. 部署与本地显式启用
+
+B3 当时的升级顺序为 Controller → Agent 0.3.0；当前请使用已审查的配套版本。首次 `agent/install.sh` 只安装非特权 Agent，欲启用 runtime 管理，在目标机器审查源码后本地运行：
 
 ```bash
 sudo bash agent/install-runtime.sh
 ```
 
-The script rejects existing runtime paths/units and never overwrites another
-service. It creates the isolated account, fixed units, runtime directories and
-socket, but does not download sing-box. In **Agent 服务器 → 任务**, choose the
-pinned installation once capability appears. Start/stop operations affect runtime
-state; the systemd unit remains enabled for recovery after reboot. A stop is not
-a permanent service-disable action. To keep it off across boots, disable the
-dedicated unit locally. Successful install starts it with zero inbounds.
+脚本拒绝已有 runtime 路径/unit，不覆盖其他服务。它创建隔离账户、固定 units、runtime 目录和 socket，尚不下载 sing-box。能力出现后，在“Agent 服务器 → 任务”选择固定版本安装。
 
-## 10. Deferred work
+start/stop 改变运行状态，unit 仍保持 enabled 以便重启恢复；stop 不等于永久禁用服务。要跨重启保持停止，应在本地禁用专用 unit。安装成功后以零入站配置启动。
 
-Node/deployment schema, secrets generation, VLESS Reality, SS2022, proxy listeners,
-custom JSON editing, automatic firewall changes, arbitrary version selection,
-upstream auto-upgrades, inbound Agent access and managed node projection. The
-runtime baseline deliberately does not generate any subscription nodes.
+## 10. B3 当时未包含的范围
 
-## 11. Backup / upgrade
+节点/部署模型、秘密生成、Reality、SS2022、代理监听、自定义 JSON 编辑、自动防火墙、任意版本选择、上游自动升级、Agent 入站访问和托管节点投影。B3 基础运行环境不生成订阅节点；后续部署能力见 B4–B6。
 
-Back up Controller SQLite consistently, Agent credentials/journal privately, and
-the entire root-owned runtime directory with symlinks/ownership preserved. Stop
-Agent and helper before a filesystem runtime backup so no activation is in flight.
-Existing runtime package upgrades require stopping both services and installing
-all files from a trusted matching release; do not replace a running root helper's
-code in place. No remote helper/Agent self-upgrade action is provided.
+## 11. 备份与升级
 
-## 12. Rollback / recovery
+一致备份 Controller SQLite，私密备份 Agent 凭据/日志及完整 root-owned runtime 目录，保留符号链接和所有权。文件系统备份前停止 Agent、helper，确保没有激活进行中。升级已安装包须停相关服务，并从同一可信版本安装全部文件；不要原地替换正在运行的 root helper 代码。不提供远程 helper/Agent 自升级。
 
-For an ordinary runtime rollback, use its structured job; old config/binary are
-checked before activation and health failure restores the previous active state.
-If `rollback_failed`, stop Agent/helper locally, preserve the directory and inspect
-the dedicated unit before restoring a consistent backup; do not delete the intent
-or symlinks to bypass recovery. There is no broad uninstall/delete API.
+## 12. 回滚与恢复
 
-Controller/Agent rollback to B2: stop Agents and helper/socket, cancel outstanding
-runtime jobs, back up current state, then restore compatible Controller and Agent
-packages. Schema 2 is unchanged, but B2 does not understand runtime actions or
-runtime journal entries. Privately archive the B3 Agent journal before running
-B2, and retain helper receipts/managed files for re-upgrade. Do not silently reset
-credentials, remove runtime generations or assume a DB restore preserves revocations.
-Rollback to B1 still needs the pre-schema-2 DB. MEMORY.md never enters Git or VPS.
+普通 runtime 回滚使用结构化任务，激活前检查旧配置/二进制；健康检查失败会恢复原活动状态。若 `rollback_failed`，本地停止 Agent/helper，保留目录并检查专用 unit，再恢复一致备份；不能删除 intent 或链接绕过恢复。不提供宽泛卸载/删除 API。
+
+Controller/Agent 回到 B2：停止 Agent、helper/socket，取消未完成 runtime 任务，备份现状，再恢复匹配的代码。schema 2 不变，但 B2 不认识 runtime 动作/日志；运行前私密归档 B3 Agent 日志，保留 helper receipt 和托管文件以备重新升级。不要静默重置凭据、删除 runtime 代际，或假定 DB 恢复能保留之后的撤销。回到 B1 仍需 schema 2 之前的 DB。MEMORY.md 不进入 Git 或 VPS。

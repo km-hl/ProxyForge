@@ -17,7 +17,7 @@ sudo bash agent/install.sh https://your-controller.example
 sudo systemctl status proxyforge-agent.service --no-pager
 ```
 
-这里的相对路径命令以已有可信 checkout 为前提；固定产物构建与校验见[安装产物说明](../docs/AGENT_ARTIFACTS.md)。完整 bootstrap 命令已提供，控制台复制入口仍在开发计划第 16 项。不能只下载依赖相邻文件的 `install.sh`。Controller 地址必须是可信的 HTTPS 根地址，不含用户名、密码、查询参数或片段。
+这里的相对路径命令以已有可信 checkout 为前提；固定产物构建与校验见[安装产物说明](../docs/AGENT_ARTIFACTS.md)。完整 bootstrap 命令和控制台复制入口均已提供；配置 `PROXYFORGE_PUBLIC_URL` 后可直接复制含 Controller 地址的命令。不能只下载依赖相邻文件的 `install.sh`。Controller 地址必须是可信的 HTTPS 根地址，不含用户名、密码、查询参数或片段。
 
 在 Controller **Agent 服务器 → 添加服务器**生成一次性注册 token，在安装器隐藏提示中粘贴。有效期 10 分钟，只能注册一个 Agent。不要将 token 放进命令参数、URL、shell 历史、日志、Git、截图或浏览器持久存储。
 
@@ -107,3 +107,5 @@ python3 -m agent.main --config /tmp/pf-agent/config.json run --once
 ```
 
 token 从 stdin 输入。HTTP 仅允许显式开发选项；HTTPS 始终校验证书，跨域、同域和降级重定向均拒绝。生产使用可信 HTTPS 根地址。
+
+安装入口、参数和英文终端提示的逐项中文说明见[安装命令帮助](../docs/AGENT_INSTALL_HELP.md)。

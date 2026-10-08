@@ -4,6 +4,8 @@
 
 命令入口体验参考 [Komari 官方快速安装](https://www.komari.wiki/install/quick-start)，凭据继续采用 ProxyForge 的隐藏 TTY 输入。没有采用将注册 token 放入参数的方式。
 
+安装参数、英文终端提示与中文处理建议见[安装命令帮助](AGENT_INSTALL_HELP.md)。
+
 ## 版本与前提
 
 - Agent 软件版本 **0.6.0**，固定来源为已合并 #39 的完整提交 `977b16b41e0d5332d933df007e7a683189c1fdc8`；不是 `master` 或 `latest`。
