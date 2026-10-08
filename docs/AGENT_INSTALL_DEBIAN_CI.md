@@ -49,3 +49,5 @@ CI 为四组合分别安装对应架构 QEMU、qemu-utils、cloud-image-utils �
 每个步骤有超时，SSH 就绪最多 480 秒，cloud-init/SSH 稳定等待 180 秒（只读等待允许重试连接重置，真实 cloud-init 错误立即失败），测试依赖准备 600 秒，安装/helper 900 秒，job 总预算 40 分钟。正常退出或异常时仅终止自己启动的 QEMU，等待退出后清理临时密钥、seed 和磁盘；强制取消由一次性 runner 销毁兜底。seed、私钥、磁盘和 guest 日志不上传为 artifact。
 
 新增任务的实际结果须按目标提交四项 job 核对；任务存在不等于验收成功。完整 VM 通过后，真实公网 HTTPS、Controller 队列/租约、各平台公网代理握手、裸机差异和生产升级仍分别待验收。
+
+四组合首次完整成功记录：PR #48 的 `7961f711609f6c6ccca2a25fdf56159a7a94cc1d`，PR workflow `37780642839` 四项 VM job 均成功；Debian 12 内核为 `6.1.0-53` 的对应架构，Debian 13 内核以日志实际值为准。该轮使用同架构 TCG，保留真实平台、系统 Python、安装、HTTPS 心跳和 helper 生命周期日志。同期 push 的 Debian 12 arm64 在 cloud-init 初始 SSH 重置时失败，其余三项成功；后续修复只读等待的有界重试并添加回归，最新提交完整 CI 须再次核对。本记录不将单次成功当作所有云厂商或公网验收。

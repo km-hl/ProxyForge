@@ -158,14 +158,14 @@ PROXYFORGE_BOOTSTRAP
 | --- | --- | --- |
 | Ubuntu 24.04 | CI 安装与 HTTPS 心跳 | CI 安装与 HTTPS 心跳 |
 | Ubuntu 22.04 | CI 安装与 HTTPS 心跳 | CI 安装与 HTTPS 心跳 |
-| Debian 12 | 原生 systemd 容器 CI | 原生 systemd 容器 CI |
-| Debian 13 | 原生 systemd 容器 CI | 原生 systemd 容器 CI |
+| Debian 12 | 原生 systemd 容器 + 完整 VM CI | 原生 systemd 容器 + 完整 VM CI |
+| Debian 13 | 原生 systemd 容器 + 完整 VM CI | 原生 systemd 容器 + 完整 VM CI |
 
 每次安装前校验真实 `/etc/os-release`、机器架构和 `/usr/bin/python3`，与矩阵参数不符即失败且不修改主机。Ubuntu 的 Controller 测试进程使用 setup-python 的 3.12，Debian 的测试 venv 使用发行版 Python；Agent 安装器与服务仍使用系统 Python（Ubuntu 22.04 为 3.10，24.04 为 3.12），不能用 Controller Python 代替该兼容性验证。收到心跳后再核对 Agent 上报的 OS、版本、架构、软件版本和 supported 标志；实际平台和系统 Python 版本写入 CI 日志，不上传凭据或运行数据。
 
 Debian 四项在同架构 GitHub VM 内运行官方 Debian 用户空间/systemd PID 1 的一次性容器，系统 Python 为 3.11/3.13；共享宿主机内核，不代表完整 Debian VM/裸机验收。固定镜像、参数、特权范围与验证见[Debian CI 说明](AGENT_INSTALL_DEBIAN_CI.md)。
 
-表中 CI 项表示持续执行的测试入口，是否通过以目标提交八项 job 的结果为准。该 CI 使用隔离 runner 的测试域名、回环 HTTPS Controller 和专用测试 CA（保持证书/主机名校验），不是公网可达性验收；不在开发机或生产运行此特权脚本。CI 结果应随 PR/发布记录核对，不能把平台允许列表、进程快照或单元测试当作全部主机/整个安装期间的完整证明。本次新增完整 Debian VM 四组合任务，目标提交结果须另核对；真实公网 HTTPS、裸机差异、生产升级仍待分别验收。helper 安装 CI 的新结果也须按目标提交八项 job 核对，不代表公网链路已验收。GitHub 镜像预装了测试工具，不等同于所有云厂商的最小系统镜像。
+表中 CI 项表示持续执行的测试入口，是否通过以目标提交十二项 job（Ubuntu VM 四项、Debian 容器四项、Debian 完整 VM 四项）的结果为准。该 CI 使用隔离 runner 的测试域名、回环 HTTPS Controller 和专用测试 CA（保持证书/主机名校验），不是公网可达性验收；不在开发机或生产运行此特权脚本。CI 结果应随 PR/发布记录核对，不能把平台允许列表、进程快照或单元测试当作全部主机/整个安装期间的完整证明。完整 Debian VM 四组合在 #48 已实测通过，最新目标提交结果仍须另核对；真实公网 HTTPS、裸机差异、生产升级仍待分别验收。helper 安装 CI 的结果也须按目标提交十二项 job 核对，不代表公网链路已验收。GitHub 镜像预装了测试工具，不等同于所有云厂商的最小系统镜像。
 
 维护者可用 `python -m scripts.agent_install_command --bootstrap-commit <完整提交> --bootstrap-sha256 <可信SHA256> --server https://your-controller.example` 重新生成命令；可选 `--action runtime` 或 `--action check`，这两种操作不传 `--server`。修改 bootstrap 后须同步固定提交、hash 与文档，不能只改下载 URL。
 
@@ -175,7 +175,7 @@ Debian 四项在同架构 GitHub VM 内运行官方 Debian 用户空间/systemd 
 
 随后使用已安装 Agent 模块和系统 Python，切换到真实 `proxyforge-agent` UID，通过 Unix socket 执行固定版本 sing-box 的安装、重启、回滚、停止与启动，实际下载对应架构二进制并运行 systemd 服务。核对 sing-box 进程属于专用非 root 用户、默认配置没有入站监听、重复 helper 安装被拒绝；等待 Controller 收到能力和运行状态心跳。额外用 root 调用同一 socket，确认不属于 Agent UID 的调用被拒绝且没有创建 runtime。
 
-本测试覆盖显式安装、本机授权、真实进程和 HTTPS 能力心跳；生命周期动作由本机测试客户端发给 helper，**不代替 Controller 队列/租约的端到端验收**。普通安装仍默认不启用 helper，现有单架构 Reality/SS2022 链路 CI 单独保留；这八项不宣称完成各平台公网代理握手。脚本停止自己在本次测试中启用的服务，容器由外层驱动清理，Ubuntu VM 随 CI 销毁，不清理生产安装。
+本测试覆盖显式安装、本机授权、真实进程和 HTTPS 能力心跳；生命周期动作由本机测试客户端发给 helper，**不代替 Controller 队列/租约的端到端验收**。普通安装仍默认不启用 helper，现有单架构 Reality/SS2022 链路 CI 单独保留；这些安装任务不宣称完成各平台公网代理握手。脚本停止自己在本次测试中启用的服务，Debian 容器/VM 由各自外层驱动清理，Ubuntu VM 随 CI 销毁，不清理生产安装。
 
 ### systemd 降权检查修复与已安装 helper
 
