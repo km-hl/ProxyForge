@@ -1,4 +1,4 @@
-"""一次性 GitHub Ubuntu 主机：执行控制台命令，验证真实 HTTPS 注册和 systemd 心跳。
+"""一次性 GitHub Linux 环境：执行控制台命令，验证真实 HTTPS 注册和 systemd 心跳。
 
 必须显式传 --disposable-system-test；会安装 Agent、测试 CA 并添加测试 hosts。
 仅用于独立 CI runner，不在开发机、已有 Agent 或生产服务器上运行。
@@ -43,11 +43,11 @@ CA_PATH = Path('/usr/local/share/ca-certificates/proxyforge-install-ci.crt')
 CONFIG = Path('/etc/proxyforge-agent/config.json')
 
 
-def verify_platform(expected_ubuntu, expected_arch):
+def verify_platform(expected_version, expected_arch, expected_os='ubuntu'):
     """Fail before host writes if the matrix label does not match the real VM."""
     release = platform.freedesktop_os_release()
     arch = {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(platform.machine().lower())
-    if (release.get('ID'), release.get('VERSION_ID'), arch) != ('ubuntu', expected_ubuntu, expected_arch):
+    if (release.get('ID'), release.get('VERSION_ID'), arch) != (expected_os, expected_version, expected_arch):
         raise SystemExit('Runner OS/architecture does not match the installation matrix')
     # setup-python hosts the test Controller; the installer/service must keep
     # using Ubuntu's separate system interpreter, including 3.10 on 22.04.
@@ -55,10 +55,11 @@ def verify_platform(expected_ubuntu, expected_arch):
         '/usr/bin/python3', '-I', '-c',
         'import json,platform,sys; print(json.dumps([list(sys.version_info[:3]),platform.machine()]))',
     ], text=True, timeout=10))
-    if (system_python[0][:2] != {'22.04': [3, 10], '24.04': [3, 12]}[expected_ubuntu]
+    if (system_python[0][:2] != {('ubuntu', '22.04'): [3, 10], ('ubuntu', '24.04'): [3, 12],
+                                    ('debian', '12'): [3, 11], ('debian', '13'): [3, 13]}[(expected_os, expected_version)]
             or system_python[1].lower() != platform.machine().lower()):
         raise SystemExit('Unexpected system Python version or architecture')
-    print('Verified installation platform:', release['ID'], expected_ubuntu, arch,
+    print('Verified installation platform:', release['ID'], expected_version, arch,
           'system Python', '.'.join(map(str, system_python[0])), flush=True)
 
 
@@ -154,12 +155,16 @@ def certificate(root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--disposable-system-test', action='store_true', required=True)
-    parser.add_argument('--expected-ubuntu', choices=('22.04', '24.04'), required=True)
+    distribution = parser.add_mutually_exclusive_group(required=True)
+    distribution.add_argument('--expected-ubuntu', choices=('22.04', '24.04'))
+    distribution.add_argument('--expected-debian', choices=('12', '13'))
     parser.add_argument('--expected-arch', choices=('amd64', 'arm64'), required=True)
     args = parser.parse_args()
     if os.geteuid() != 0 or os.environ.get('GITHUB_ACTIONS') != 'true' or not Path('/run/systemd/system').is_dir():
         raise SystemExit('Only a dedicated disposable GitHub Linux root runner is supported')
-    verify_platform(args.expected_ubuntu, args.expected_arch)
+    expected_os = 'debian' if args.expected_debian else 'ubuntu'
+    expected_version = args.expected_debian or args.expected_ubuntu
+    verify_platform(expected_version, args.expected_arch, expected_os)
     for path in ('/opt/proxyforge-agent', '/etc/proxyforge-agent',
                  '/etc/systemd/system/proxyforge-agent.service', '/var/lib/proxyforge-runtime',
                  '/etc/systemd/system/proxyforge-runtime.service', '/run/proxyforge-runtime.sock', str(CA_PATH)):
@@ -229,7 +234,7 @@ def main():
                     assert len(agents) == 1 and agents[0]['status'] == 'online'
                     metadata = agents[0]['metadata']
                     assert (metadata['os'], metadata['os_version'], metadata['arch']) == (
-                        'ubuntu', args.expected_ubuntu, args.expected_arch), 'Installed Agent reported a different platform'
+                        expected_os, expected_version, args.expected_arch), 'Installed Agent reported a different platform'
                     assert metadata['supported'] and metadata['agent_version'] == info['agent_version']
                     saved = json.loads(CONFIG.read_text())
                     assert saved['controller'] == info['controller_url'] and saved['agent_id'] == agents[0]['id']

@@ -158,11 +158,13 @@ PROXYFORGE_BOOTSTRAP
 | --- | --- | --- |
 | Ubuntu 24.04 | CI 安装与 HTTPS 心跳 | CI 安装与 HTTPS 心跳 |
 | Ubuntu 22.04 | CI 安装与 HTTPS 心跳 | CI 安装与 HTTPS 心跳 |
-| Debian 12 | 待实测 | 待实测 |
-| Debian 13 | 待实测 | 待实测 |
+| Debian 12 | 原生 systemd 容器 CI | 原生 systemd 容器 CI |
+| Debian 13 | 原生 systemd 容器 CI | 原生 systemd 容器 CI |
 
-每次安装前校验真实 `/etc/os-release`、机器架构和 `/usr/bin/python3`，与矩阵参数不符即失败且不修改主机。Controller 测试进程使用 setup-python 的 3.12；Agent 安装器与服务仍使用系统 Python（Ubuntu 22.04 为 3.10，24.04 为 3.12），不能用 Controller Python 代替该兼容性验证。收到心跳后再核对 Agent 上报的 OS、版本、架构、软件版本和 supported 标志；实际平台和系统 Python 版本写入 CI 日志，不上传凭据或运行数据。
+每次安装前校验真实 `/etc/os-release`、机器架构和 `/usr/bin/python3`，与矩阵参数不符即失败且不修改主机。Ubuntu 的 Controller 测试进程使用 setup-python 的 3.12，Debian 的测试 venv 使用发行版 Python；Agent 安装器与服务仍使用系统 Python（Ubuntu 22.04 为 3.10，24.04 为 3.12），不能用 Controller Python 代替该兼容性验证。收到心跳后再核对 Agent 上报的 OS、版本、架构、软件版本和 supported 标志；实际平台和系统 Python 版本写入 CI 日志，不上传凭据或运行数据。
 
-表中 CI 项表示持续执行的测试入口，是否通过以目标提交四项 job 的结果为准。该 CI 使用隔离 runner 的测试域名、回环 HTTPS Controller 和专用测试 CA（保持证书/主机名校验），不是公网可达性验收；不在开发机或生产运行此特权脚本。CI 结果应随 PR/发布记录核对，不能把平台允许列表、进程快照或单元测试当作全部主机/整个安装期间的完整证明。真实公网 HTTPS、Debian 12/13 × amd64/arm64 四种组合、可选 helper 的完整平台矩阵及生产升级仍待分别验收。GitHub 镜像预装了测试工具，不等同于所有云厂商的最小系统镜像。
+Debian 四项在同架构 GitHub VM 内运行官方 Debian 用户空间/systemd PID 1 的一次性容器，系统 Python 为 3.11/3.13；共享宿主机内核，不代表完整 Debian VM/裸机验收。固定镜像、参数、特权范围与验证见[Debian CI 说明](AGENT_INSTALL_DEBIAN_CI.md)。
+
+表中 CI 项表示持续执行的测试入口，是否通过以目标提交八项 job 的结果为准。该 CI 使用隔离 runner 的测试域名、回环 HTTPS Controller 和专用测试 CA（保持证书/主机名校验），不是公网可达性验收；不在开发机或生产运行此特权脚本。CI 结果应随 PR/发布记录核对，不能把平台允许列表、进程快照或单元测试当作全部主机/整个安装期间的完整证明。真实公网 HTTPS、完整 Debian VM/裸机四组合、可选 helper 的完整平台矩阵及生产升级仍待分别验收。GitHub 镜像预装了测试工具，不等同于所有云厂商的最小系统镜像。
 
 维护者可用 `python -m scripts.agent_install_command --bootstrap-commit <完整提交> --bootstrap-sha256 <可信SHA256> --server https://your-controller.example` 重新生成命令；可选 `--action runtime` 或 `--action check`，这两种操作不传 `--server`。修改 bootstrap 后须同步固定提交、hash 与文档，不能只改下载 URL。
