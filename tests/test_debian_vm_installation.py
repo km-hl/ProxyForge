@@ -5,7 +5,7 @@ import io
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 SPEC = importlib.util.spec_from_file_location(
     'debian_vm_installation', Path(__file__).resolve().parents[1] / 'scripts/check_debian_vm_installation.py')
@@ -59,6 +59,34 @@ class DebianVMInstallationTests(unittest.TestCase):
             with self.assertRaises(TimeoutError):
                 VM.download_image('https://cloud.debian.org/example', '0' * 128, target)
             self.assertFalse(target.exists())
+
+    def test_cloud_init_retries_only_transport_reset(self):
+        vm = Mock()
+        vm.poll.return_value = None
+        with patch.object(VM.subprocess, 'run', side_effect=[Mock(returncode=255, stderr=b'Connection reset by peer'), Mock(returncode=0)]) as wait, \
+                patch.object(VM.time, 'sleep'):
+            VM.wait_cloud_init(['ssh'], vm)
+            self.assertEqual(wait.call_count, 2)
+        for error in (1, 2):
+            with self.subTest(status=error), patch.object(VM.subprocess, 'run', return_value=Mock(returncode=error)) as wait:
+                with self.assertRaisesRegex(RuntimeError, 'cloud-init failed'):
+                    VM.wait_cloud_init(['ssh'], vm)
+                self.assertEqual(wait.call_count, 1)
+
+    def test_cloud_init_does_not_retry_host_key_failure(self):
+        vm = Mock()
+        vm.poll.return_value = None
+        with patch.object(VM.subprocess, 'run', return_value=Mock(returncode=255, stderr=b'Host key verification failed.')) as wait:
+            with self.assertRaisesRegex(RuntimeError, 'host key checks'):
+                VM.wait_cloud_init(['ssh'], vm)
+            self.assertEqual(wait.call_count, 1)
+
+    def test_cloud_init_wait_has_deadline(self):
+        with patch.object(VM.time, 'monotonic', side_effect=[0, 181]), \
+                patch.object(VM.subprocess, 'run') as operation:
+            with self.assertRaises(TimeoutError):
+                VM.wait_cloud_init(['ssh'], Mock())
+            operation.assert_not_called()
 
     def test_guest_rejects_shared_kernel_container_and_unowned_vm(self):
         evidence = {'os': {'ID': 'debian', 'VERSION_ID': '12'}, 'machine': 'aarch64',

@@ -127,6 +127,32 @@ def verify_guest(evidence, version, arch, identity, host_kernel):
           evidence['virtualization'], flush=True)
 
 
+def wait_cloud_init(ssh, vm):
+    """Retry only the read-only wait when initial SSH service setup resets transport."""
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline:
+        if vm.poll() is not None:
+            raise RuntimeError('QEMU exited while waiting for cloud-init')
+        try:
+            result = subprocess.run([*ssh, 'sudo cloud-init status --wait'],
+                                    capture_output=True, timeout=min(30, max(0.1, deadline - time.monotonic())))
+        except subprocess.TimeoutExpired:
+            # The remote status command only observes cloud-init; no host mutation.
+            pass
+        else:
+            if result.returncode == 0:
+                print('Guest cloud-init completed', flush=True)
+                return
+            if result.returncode != 255:
+                raise RuntimeError('Guest cloud-init failed with status ' + str(result.returncode))
+            transient = (b'Connection reset', b'Connection closed', b'Connection refused',
+                         b'Connection timed out', b'closed by remote host')
+            if not any(message in result.stderr for message in transient):
+                raise RuntimeError('Guest SSH wait failed; authentication and host key checks remain mandatory')
+        time.sleep(min(5, max(0, deadline - time.monotonic())))
+    raise TimeoutError('Guest cloud-init/SSH stabilization exceeded its budget')
+
+
 PROBE = """import json,platform,subprocess
 from pathlib import Path
 print(json.dumps({'os': platform.freedesktop_os_release(), 'machine': platform.machine(),
@@ -179,7 +205,7 @@ def main():
                     time.sleep(5)
                 else:
                     raise TimeoutError('Full Debian VM SSH readiness exceeded its budget')
-                subprocess.run([*ssh, 'sudo cloud-init status --wait'], check=True, timeout=180)
+                wait_cloud_init(ssh, vm)
                 result = subprocess.check_output([*ssh, 'sudo /usr/bin/python3 -I -c ' + shlex.quote(PROBE)],
                                                  text=True, timeout=30)
                 verify_guest(json.loads(result), args.expected_debian, args.expected_arch, identity, platform.release())
@@ -201,6 +227,13 @@ def main():
             except BaseException:
                 log.flush()
                 print((work / 'qemu.log').read_text(errors='replace')[-4096:], flush=True)
+                serial = (work / 'serial.log').read_text(errors='replace') if (work / 'serial.log').exists() else ''
+                # Only fixed booleans; never dump seed/user-data or guest journals.
+                print('Guest boot markers:', json.dumps({
+                    'kernel': 'Linux version' in serial, 'systemd': 'systemd' in serial,
+                    'cloud_init': 'Cloud-init' in serial or 'cloud-init' in serial,
+                    'emergency': 'emergency mode' in serial, 'kernel_panic': 'Kernel panic' in serial,
+                }), flush=True)
                 raise
             finally:
                 # Reap only our own VM before deleting its private seed/keys/disks.

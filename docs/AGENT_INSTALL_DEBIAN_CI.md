@@ -46,6 +46,6 @@ python3 scripts/check_debian_vm_installation.py --disposable-system-test --expec
 
 CI 为四组合分别安装对应架构 QEMU、qemu-utils、cloud-image-utils 和 openssh-client；入口始终启用 `--check-helper`。guest 复用前述真实控制台命令、固定远端下载、隐藏 TTY 注册、可信回环 HTTPS、普通 Agent 默认无 helper、0600 凭据/重复安装拒绝，然后显式启用 helper，验收本机授权、实际 sing-box 生命周期与能力心跳。
 
-每个步骤有超时，SSH 就绪最多 480 秒，cloud-init 180 秒，测试依赖准备 600 秒，安装/helper 900 秒，job 总预算 40 分钟。正常退出或异常时仅终止自己启动的 QEMU，等待退出后清理临时密钥、seed 和磁盘；强制取消由一次性 runner 销毁兜底。seed、私钥、磁盘和 guest 日志不上传为 artifact。
+每个步骤有超时，SSH 就绪最多 480 秒，cloud-init/SSH 稳定等待 180 秒（只读等待允许重试连接重置，真实 cloud-init 错误立即失败），测试依赖准备 600 秒，安装/helper 900 秒，job 总预算 40 分钟。正常退出或异常时仅终止自己启动的 QEMU，等待退出后清理临时密钥、seed 和磁盘；强制取消由一次性 runner 销毁兜底。seed、私钥、磁盘和 guest 日志不上传为 artifact。
 
 新增任务的实际结果须按目标提交四项 job 核对；任务存在不等于验收成功。完整 VM 通过后，真实公网 HTTPS、Controller 队列/租约、各平台公网代理握手、裸机差异和生产升级仍分别待验收。
