@@ -166,25 +166,6 @@ def check_helper(command, client, headers, agent_id):
     assert stat.S_ISSOCK(info.st_mode) and info.st_uid == 0
     assert info.st_gid == account.pw_gid and stat.S_IMODE(info.st_mode) == 0o660
     subprocess.run(['systemctl', 'is-active', '--quiet', 'proxyforge-runtime.socket'], check=True)
-    # Temporary disposable-CI diagnostic: report exception type and frame line
-    # only, never exception text, locals or job/config contents.
-    helper_path = Path('/opt/proxyforge-agent/agent/runtime_helper.py')
-    helper_source = helper_path.read_text()
-    helper_path.write_text(helper_source.replace(
-        '    except Exception:\n',
-        '    except Exception as diagnostic_error:\n'
-        '        import traceback, subprocess\n'
-        '        print("CI helper target/caps", engine.backend.uid, engine.backend.gid, Path("/proc/self/uid_map").read_text().strip(), [line for line in Path("/proc/self/status").read_text().splitlines() if line.startswith(("Cap", "Uid:", "Seccomp:", "NoNewPrivs:"))], flush=True)\n'
-        '        print("CI helper uid/groups", os.getuid(), os.getgroups(), Path("/proc/self/setgroups").read_text().strip(), flush=True)\n'
-        '        for options in ({"extra_groups": []}, {"user": engine.backend.uid}, {"group": engine.backend.gid}):\n'
-        '            try:\n'
-        '                subprocess.run(["/usr/bin/true"], check=True, **options)\n'
-        '                print("CI identity check", list(options), "PASS", flush=True)\n'
-        '            except OSError as failure:\n'
-        '                print("CI identity check", list(options), failure.errno, flush=True)\n'
-        '        print("CI helper mounts", [(line.split()[4], line.split()[5]) for line in Path("/proc/self/mountinfo").read_text().splitlines() if line.split()[4] in ("/var/lib/proxyforge-runtime", "/opt", "/tmp")], flush=True)\n'
-        '        print("CI helper exception", type(diagnostic_error).__name__, getattr(diagnostic_error, "errno", None), Path(getattr(diagnostic_error, "filename", None) or "none").name, '
-        '[(Path(frame.filename).name, frame.lineno) for frame in traceback.extract_tb(diagnostic_error.__traceback__)], flush=True)\n'))
     current = Path('/var/lib/proxyforge-runtime/current')
     assert not current.exists(), 'Opt-in unexpectedly installed sing-box'
     # Installed Agent + distro Python under its service UID. stdin carries a

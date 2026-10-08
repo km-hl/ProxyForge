@@ -6,6 +6,9 @@ After=network-online.target
 [Service]
 Type=simple
 User=root
+# systemd seccomp setup may drop CAP_SETUID unless explicitly retained.
+# Needed only to check the pinned binary as the isolated runtime account.
+AmbientCapabilities=CAP_SETUID
 WorkingDirectory=/opt/proxyforge-agent
 ExecStart=/usr/bin/python3 -I -c "import sys; sys.path.insert(0, '/opt/proxyforge-agent'); from agent.runtime_helper import main; main()"
 Restart=on-failure

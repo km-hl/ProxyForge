@@ -176,3 +176,9 @@ Debian 四项在同架构 GitHub VM 内运行官方 Debian 用户空间/systemd 
 随后使用已安装 Agent 模块和系统 Python，切换到真实 `proxyforge-agent` UID，通过 Unix socket 执行固定版本 sing-box 的安装、重启、回滚、停止与启动，实际下载对应架构二进制并运行 systemd 服务。核对 sing-box 进程属于专用非 root 用户、默认配置没有入站监听、重复 helper 安装被拒绝；等待 Controller 收到能力和运行状态心跳。额外用 root 调用同一 socket，确认不属于 Agent UID 的调用被拒绝且没有创建 runtime。
 
 本测试覆盖显式安装、本机授权、真实进程和 HTTPS 能力心跳；生命周期动作由本机测试客户端发给 helper，**不代替 Controller 队列/租约的端到端验收**。普通安装仍默认不启用 helper，现有单架构 Reality/SS2022 链路 CI 单独保留；这八项不宣称完成各平台公网代理握手。脚本停止自己在本次测试中启用的服务，容器由外层驱动清理，Ubuntu VM 随 CI 销毁，不清理生产安装。
+
+### systemd 降权检查修复与已安装 helper
+
+八组合验收发现，systemd 255/257 的 seccomp 初始化可能移除未显式保留的 `CAP_SETUID`，使 root helper 无法将配置检查子进程切换到专用 runtime 用户。helper unit 显式设置 `AmbientCapabilities=CAP_SETUID`，保留已有设计要求的降权能力；`NoNewPrivileges=true`、目录保护、socket 调用方校验和非 root sing-box 服务保持有效。依据见[systemd 255 初始化源码](https://github.com/systemd/systemd/blob/v255/src/core/exec-invoke.c#L4484-L4490)。
+
+普通 Agent 的 Python 模块、0.6.0 版本、身份凭据和协议均未改变。已安装旧 helper 的主机须由管理员先私密备份 Agent 配置、runtime 数据及旧 unit，停止 `proxyforge-runtime.socket` 与 `proxyforge-runtime.service`，核对新版固定来源中的 unit 后替换 `/etc/systemd/system/proxyforge-runtime.service`，执行 `sudo systemctl daemon-reload` 和 `sudo systemctl start proxyforge-runtime.socket`，再验证实际 runtime 操作与心跳；无需删除配置或重新注册。回退时停止 helper、恢复备份 unit 并重新加载/启动 socket。旧环境如果缺少该能力，恢复旧 unit 会恢复原安装失败限制。本 CI 不在生产主机执行升级。
