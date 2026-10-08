@@ -166,6 +166,16 @@ def check_helper(command, client, headers, agent_id):
     assert stat.S_ISSOCK(info.st_mode) and info.st_uid == 0
     assert info.st_gid == account.pw_gid and stat.S_IMODE(info.st_mode) == 0o660
     subprocess.run(['systemctl', 'is-active', '--quiet', 'proxyforge-runtime.socket'], check=True)
+    # Temporary disposable-CI diagnostic: report exception type and frame line
+    # only, never exception text, locals or job/config contents.
+    helper_path = Path('/opt/proxyforge-agent/agent/runtime_helper.py')
+    helper_source = helper_path.read_text()
+    helper_path.write_text(helper_source.replace(
+        '    except Exception:\n',
+        '    except Exception as diagnostic_error:\n'
+        '        import traceback\n'
+        '        print("CI helper exception", type(diagnostic_error).__name__, '
+        '[(Path(frame.filename).name, frame.lineno) for frame in traceback.extract_tb(diagnostic_error.__traceback__)], flush=True)\n'))
     current = Path('/var/lib/proxyforge-runtime/current')
     assert not current.exists(), 'Opt-in unexpectedly installed sing-box'
     # Installed Agent + distro Python under its service UID. stdin carries a
@@ -193,7 +203,9 @@ def check_helper(command, client, headers, agent_id):
     assert not current.exists(), 'Unauthorized peer changed runtime'
     for action in ('singbox.install', 'singbox.restart', 'singbox.rollback', 'singbox.stop', 'singbox.start'):
         result = request(action)
-        assert result['status'] == 'success' and result['error'] is None, 'Real helper action failed: ' + action
+        if result['status'] != 'success' or result['error'] is not None:
+            print(subprocess.check_output(['journalctl', '-u', 'proxyforge-runtime', '--no-pager'], text=True)[-4096:], flush=True)
+            raise AssertionError('Real helper action failed: ' + action)
         state = result['output']
         assert state['installed'] and state['running'] == (action != 'singbox.stop')
         assert state['version'] == RELEASE['version']
