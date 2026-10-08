@@ -36,6 +36,7 @@ let modalConfirmAction = null;
 // Form Elements
 const subLink = document.getElementById('sub-link');
 const copyBtn = document.getElementById('copy-btn');
+const subscriptionFormat = document.getElementById('sub-format');
 const secretToken = document.getElementById('secret-token');
 const saveConfigBtn = document.getElementById('save-config-btn');
 const newAdminToken = document.getElementById('new-admin-token');
@@ -271,17 +272,25 @@ sidebarItems.forEach(item => {
 });
 
 // === Data Loading & Rendering ===
+function updateSubLink() {
+    subLink.value = ProxyForgeSubscription.buildUrl(window.location.origin,
+        state.config.SUBSCRIPTION_TOKEN, document.getElementById('sub-name').value, subscriptionFormat.value);
+    document.getElementById('sub-format-hint').textContent = subscriptionFormat.value === 'egern'
+        ? 'Egern 原生配置：保留节点、代理组和分流。跳过不兼容节点并在预览中提示；空组使用 REJECT。DNS/TUN 请在 Egern 中设置。'
+        : '请将此链接复制并添加到您的 Clash / Mihomo 客户端中。修改名称后链接会自动更新。';
+}
+document.getElementById('sub-name').addEventListener('input', updateSubLink);
+subscriptionFormat.addEventListener('change', () => {
+    updateSubLink();
+    if (document.getElementById('panel-preview').classList.contains('active')) loadFinalPreview();
+});
+
 async function loadData() {
     try {
         const configRes = await fetchAuth('/config');
         state.config = await configRes.json();
         secretToken.value = state.config.SUBSCRIPTION_TOKEN;
-        const updateSubLink = () => {
-            const name = encodeURIComponent(document.getElementById('sub-name').value.trim() || 'ProxyForge');
-            subLink.value = `${window.location.origin}/sub?token=${state.config.SUBSCRIPTION_TOKEN}&name=${name}`;
-        };
         updateSubLink();
-        document.getElementById('sub-name').addEventListener('input', updateSubLink);
 
         const airportsRes = await fetchAuth('/airports');
         let rawAirports = (await airportsRes.json()).urls || [];
@@ -1651,8 +1660,7 @@ saveConfigBtn.addEventListener('click', async () => {
         });
         state.config.SUBSCRIPTION_TOKEN = newToken;
         showToast('订阅密钥已保存');
-        const name = encodeURIComponent(document.getElementById('sub-name').value.trim() || 'ProxyForge');
-        subLink.value = `${window.location.origin}/sub?token=${payload.SUBSCRIPTION_TOKEN}&name=${name}`;
+        updateSubLink();
     } catch (e) { showToast(`保存密钥失败：${e.message}`, 'error'); }
 });
 
@@ -1915,18 +1923,22 @@ window.handleRuleDragEnd = (e) => {
 // === Final Preview ===
 const previewEditor = document.getElementById('preview-editor');
 const refreshPreviewBtn = document.getElementById('refresh-preview-btn');
+let previewRequest = 0;
 
 async function loadFinalPreview() {
+    const requestId = ++previewRequest;
     previewEditor.value = '正在从后端生成最终订阅配置...\n如果数据量大可能会需要几秒钟，请稍候...';
     try {
-        let res = await fetch(`/sub?token=${encodeURIComponent(state.config.SUBSCRIPTION_TOKEN)}`);
+        let res = await fetch(ProxyForgeSubscription.buildUrl(window.location.origin,
+            state.config.SUBSCRIPTION_TOKEN, document.getElementById('sub-name').value, subscriptionFormat.value));
         if (!res.ok) {
             let errText = await res.text();
             throw new Error(`HTTP ${res.status}: ${errText}`);
         }
         let text = await res.text();
-        previewEditor.value = text;
+        if (requestId === previewRequest) previewEditor.value = text;
     } catch(e) {
+        if (requestId !== previewRequest) return;
         previewEditor.value = `获取最终订阅失败:\n\n${e.message}`;
         showToast('获取最终订阅失败', 'error');
     }

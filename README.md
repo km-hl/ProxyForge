@@ -4,6 +4,8 @@ ProxyForge 是一个**全可视化**的专属节点订阅聚合与配置下发�
 
 中文文档入口与覆盖范围见[说明索引](docs/DOCUMENTATION.md)。
 
+订阅支持 Clash/Mihomo 与 [Egern 原生格式](docs/EGERN_EXPORT.md)。在概览选择格式后复制链接，最终预览同步切换；Egern 转换节点、代理组和分流，不兼容节点会明确提示，DNS/TUN 在客户端设置。
+
 ## ✨ 核心亮点
 
 1. **🎨 全可视化 Web 仪表盘 (Web UI)**
