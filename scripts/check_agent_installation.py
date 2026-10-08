@@ -156,7 +156,10 @@ def check_helper(command, client, headers, agent_id):
     """Opt in with the console command, then cross the real Unix peer boundary."""
     before = CONFIG.read_bytes()
     status, output, sent = command_pty(command)
-    assert status == 0 and not sent, 'Explicit helper bootstrap failed'
+    if status != 0 or sent:
+        diagnostic = output.decode('utf-8', errors='replace').replace(json.loads(before)['token'], '[redacted]')
+        print(re.sub(r'pf(?:reg|agt)_[A-Za-z0-9_-]+', '[redacted]', diagnostic)[-4096:], flush=True)
+        raise AssertionError('Explicit helper bootstrap failed')
     assert CONFIG.read_bytes() == before, 'Helper changed Agent identity/credentials'
     account = pwd.getpwnam('proxyforge-agent')
     info = Path('/run/proxyforge-runtime.sock').stat()
@@ -320,10 +323,10 @@ def main():
                         assert secret not in output and secret not in journals, 'Credential leaked in logs'
                         for path in Path('/proc').glob('[0-9]*/cmdline'):
                             try:
-                                args = path.read_bytes()
+                                process_args = path.read_bytes()
                             except (FileNotFoundError, ProcessLookupError):
                                 continue
-                            assert secret not in args, 'Credential leaked in process arguments'
+                            assert secret not in process_args, 'Credential leaked in process arguments'
                         history = Path('/root/.bash_history')
                         assert not history.exists() or secret not in history.read_bytes(), 'Credential leaked in history'
                     before = CONFIG.read_bytes()
