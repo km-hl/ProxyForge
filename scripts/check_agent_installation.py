@@ -174,7 +174,8 @@ def check_helper(command, client, headers, agent_id):
         '    except Exception:\n',
         '    except Exception as diagnostic_error:\n'
         '        import traceback\n'
-        '        print("CI helper exception", type(diagnostic_error).__name__, '
+        '        print("CI helper mounts", [(line.split()[4], line.split()[5]) for line in Path("/proc/self/mountinfo").read_text().splitlines() if line.split()[4] in ("/var/lib/proxyforge-runtime", "/opt", "/tmp")], flush=True)\n'
+        '        print("CI helper exception", type(diagnostic_error).__name__, getattr(diagnostic_error, "errno", None), Path(getattr(diagnostic_error, "filename", None) or "none").name, '
         '[(Path(frame.filename).name, frame.lineno) for frame in traceback.extract_tb(diagnostic_error.__traceback__)], flush=True)\n'))
     current = Path('/var/lib/proxyforge-runtime/current')
     assert not current.exists(), 'Opt-in unexpectedly installed sing-box'
