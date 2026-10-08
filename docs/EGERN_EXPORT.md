@@ -11,6 +11,7 @@ Egern 原生 YAML 使用 `proxies`、`policy_groups`、`rules`。转换基于当
 - 节点：Shadowsocks、Snell、Trojan、VMess、VLESS、Hysteria2、TUIC、AnyTLS、SOCKS5、HTTP、WireGuard 的可表达配置。
 - VLESS/VMess：TCP、TLS/Reality、WS/WSS、TLS gRPC。Reality 公钥/short ID、Vision flow、SNI 和证书验证选择保留。VMess 使用 AEAD（alterId=0）。
 - Shadowsocks 支持普通配置和 obfs HTTP/TLS；Trojan 支持普通 TLS 与 WebSocket；AnyTLS 显式保留证书验证，不采用 Egern 未配置时跳过验证的默认值。
+- Hysteria2 仅配置 `ports` 时，从跳跃集合首段补齐 Egern 必需的 `port`；保留完整跳跃集合与间隔并校验 1–65535 范围。
 - 代理组：select → select、url-test → auto_test、fallback → fallback、load-balance → load_balance；测速地址/间隔与容差保留，timeout 从毫秒换成秒。consistent-hashing/round-robin 映射为 hash/round_robin。
 - 规则：域名、域名后缀/关键词/正则/通配、IP CIDR、国家 GEOIP、ASN、目的端口、NETWORK、AND/OR/NOT、MATCH。GEOSITE、非国家 GEOIP 及 RULE-SET 使用原生远端规则集，保持原规则位置和策略。`no-resolve` 继续生效。
 

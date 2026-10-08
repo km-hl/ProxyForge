@@ -65,6 +65,21 @@ class EgernExportTests(unittest.TestCase):
             'private-key': 'private-placeholder', 'public-key': 'public-placeholder'}))['wireguard']
         self.assertEqual(wireguard['local_ipv4'], '10.0.0.2/32')
 
+    def test_hysteria2_hopping_without_port_exports_required_start_port(self):
+        proxy = node('hysteria2', ports='20000-30000,443', **{'hop-interval': 30})
+        proxy.pop('port')
+        before = copy.deepcopy(proxy)
+        result, skipped = build_egern_config(self.config([proxy]), {}, 'https://example.com', 'test-token')
+        native = result['proxies'][0]['hysteria2']
+        self.assertEqual(native['port'], 20000)
+        self.assertEqual(native['port_hopping'], '20000-30000,443')
+        self.assertEqual(native['port_hopping_interval'], 30)
+        self.assertEqual(proxy, before)
+        self.assertEqual(skipped, 0)
+        proxy['ports'] = '70000-80000'
+        with self.assertRaises(UnsupportedNode):
+            convert_proxy(proxy)
+
     def test_unsupported_transport_is_withheld_and_references_blocked(self):
         bad = node(network='xhttp')
         good = node('hysteria2', name='Fallback')
