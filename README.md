@@ -117,7 +117,7 @@ docker compose exec proxyforge python -c "import json; print(json.load(open('/ap
 
 Agent 提供服务器注册、心跳、在线状态、角色标签与凭据撤销，主动连接 HTTPS 主控，无入站监听。受控任务支持领取、回报、重试和取消；本地可选启用独立 sing-box 运行环境，并从控制台部署直连 VLESS Reality、自动生成客户端节点。参见 [Agent 安装与恢复](agent/README.zh-CN.md)、[B1 注册协议](docs/AGENT_B1.md)、[B2 任务协议](docs/AGENT_B2.md)、[B3 托管运行环境](docs/AGENT_B3.md) 和 [B4 Reality 部署](docs/AGENT_B4.md)。
 
-新主机可直接复制[Agent 完整下载安装命令](docs/AGENT_INSTALL.md)，从固定源码校验到安装，并在隐藏提示输入一次性凭据。另有[中文升级与恢复](agent/README.zh-CN.md)和维护者的[固定安装产物](docs/AGENT_ARTIFACTS.md)说明。部署环境设置 `PROXYFORGE_PUBLIC_URL` 后，可在「添加服务器」复制完整命令；一次性凭据在终端隐藏输入。Ubuntu 24.04 amd64 的安装/HTTPS 心跳纳入独立 CI，其余平台和公网验收状态见安装指南；正式 Release 仍按开发计划推进。
+新主机可直接复制[Agent 完整下载安装命令](docs/AGENT_INSTALL.md)，从固定源码校验到安装，并在隐藏提示输入一次性凭据。另有[中文升级与恢复](agent/README.zh-CN.md)和维护者的[固定安装产物](docs/AGENT_ARTIFACTS.md)说明。部署环境设置 `PROXYFORGE_PUBLIC_URL` 后，可在「添加服务器」复制完整命令；一次性凭据在终端隐藏输入。Ubuntu 22.04/24.04 × amd64/arm64 的安装/HTTPS 心跳纳入独立 CI，各提交结果、Debian 与公网验收状态见安装指南；正式 Release 仍按开发计划推进。
 
 模板编辑现已使用内容版本进行并发保护：保存冲突时保留草稿，并可在底层配置页查看、比较和恢复历史。旧页面升级后需要刷新；API 保存请求须携带 `expected_revision`。全局导入通过统一接口提交节点、机场和模板。接口、存储恢复与回滚说明见 [模板版本与历史](docs/TEMPLATE_REVISIONS.md)。
 

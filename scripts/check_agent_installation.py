@@ -9,6 +9,7 @@ import datetime
 import json
 import os
 from pathlib import Path
+import platform
 import pty
 import pwd
 import re
@@ -40,6 +41,25 @@ from proxyforge.control.control_store import ControlStore
 HOST = 'proxyforge-install-ci.example'
 CA_PATH = Path('/usr/local/share/ca-certificates/proxyforge-install-ci.crt')
 CONFIG = Path('/etc/proxyforge-agent/config.json')
+
+
+def verify_platform(expected_ubuntu, expected_arch):
+    """Fail before host writes if the matrix label does not match the real VM."""
+    release = platform.freedesktop_os_release()
+    arch = {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(platform.machine().lower())
+    if (release.get('ID'), release.get('VERSION_ID'), arch) != ('ubuntu', expected_ubuntu, expected_arch):
+        raise SystemExit('Runner OS/architecture does not match the installation matrix')
+    # setup-python hosts the test Controller; the installer/service must keep
+    # using Ubuntu's separate system interpreter, including 3.10 on 22.04.
+    system_python = json.loads(subprocess.check_output([
+        '/usr/bin/python3', '-I', '-c',
+        'import json,platform,sys; print(json.dumps([list(sys.version_info[:3]),platform.machine()]))',
+    ], text=True, timeout=10))
+    if (system_python[0][:2] != {'22.04': [3, 10], '24.04': [3, 12]}[expected_ubuntu]
+            or system_python[1].lower() != platform.machine().lower()):
+        raise SystemExit('Unexpected system Python version or architecture')
+    print('Verified installation platform:', release['ID'], expected_ubuntu, arch,
+          'system Python', '.'.join(map(str, system_python[0])), flush=True)
 
 
 @contextmanager
@@ -134,9 +154,12 @@ def certificate(root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--disposable-system-test', action='store_true', required=True)
-    parser.parse_args()
+    parser.add_argument('--expected-ubuntu', choices=('22.04', '24.04'), required=True)
+    parser.add_argument('--expected-arch', choices=('amd64', 'arm64'), required=True)
+    args = parser.parse_args()
     if os.geteuid() != 0 or os.environ.get('GITHUB_ACTIONS') != 'true' or not Path('/run/systemd/system').is_dir():
         raise SystemExit('Only a dedicated disposable GitHub Linux root runner is supported')
+    verify_platform(args.expected_ubuntu, args.expected_arch)
     for path in ('/opt/proxyforge-agent', '/etc/proxyforge-agent',
                  '/etc/systemd/system/proxyforge-agent.service', '/var/lib/proxyforge-runtime',
                  '/etc/systemd/system/proxyforge-runtime.service', '/run/proxyforge-runtime.sock', str(CA_PATH)):
@@ -204,6 +227,10 @@ def main():
                     assert heartbeat.wait(45), 'Service started but HTTPS heartbeat was not received'
                     agents = client.get('/api/agents', headers=headers).json()['agents']
                     assert len(agents) == 1 and agents[0]['status'] == 'online'
+                    metadata = agents[0]['metadata']
+                    assert (metadata['os'], metadata['os_version'], metadata['arch']) == (
+                        'ubuntu', args.expected_ubuntu, args.expected_arch), 'Installed Agent reported a different platform'
+                    assert metadata['supported'] and metadata['agent_version'] == info['agent_version']
                     saved = json.loads(CONFIG.read_text())
                     assert saved['controller'] == info['controller_url'] and saved['agent_id'] == agents[0]['id']
                     assert not saved['allow_insecure'] and saved['ca_file'] is None

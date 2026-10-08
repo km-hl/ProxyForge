@@ -1,6 +1,6 @@
 # ProxyForge 下一阶段开发计划（审查修订版）
 
-更新：2026-10-08。原计划于 2026-09-28 审查，基线为 `f963e04c1b749ec9405f47602eaae24d9891a41b`；当前合并进度核对至 PR #41（`1be5a0f`）。下表区分已合并、文档收尾与未验收内容；代码合并不等于生产部署。
+更新：2026-10-08。原计划于 2026-09-28 审查，基线为 `f963e04c1b749ec9405f47602eaae24d9891a41b`；当前合并进度核对至 PR #42（`5e72639`）。下表区分已合并、文档收尾与未验收内容；代码合并不等于生产部署。
 
 目标：优先提高 Controller、Airport、Agent 和部署系统的稳定性、安全性与可维护性，再扩展功能。
 现有数据库 schema 5、Agent 0.6.0，以及 HTTP/API/运行文件兼容边界继续有效。
@@ -13,12 +13,12 @@
 | 5：Session 隔离、DNS pinning、网络预算 | 已合并 #33、#37、#38 |
 | 17、7、6：Python 升级、依赖锁、非 root 容器 | 已合并 #34、#35、#36 |
 | 14：固定安装产物前置 | 已合并 #39；正式 tag/Release 与发布自动化未完成 |
-| 16：固定 bootstrap、文档命令、控制台复制入口 | 已合并 #40、#41；Ubuntu 24.04 amd64 的真实隔离安装/HTTPS 心跳 CI 通过，其余七个平台组合及公网验收待完成 |
-| 15：中文说明 | 本次补齐 5 份英文正文、安装参数/提示对照，修正旧 README；逐文件范围及维护约定见[中文说明覆盖表](DOCUMENTATION.md)，本次文档变更待合并 |
+| 16：固定 bootstrap、文档命令、控制台复制入口 | 已合并 #40、#41；Ubuntu 24.04 amd64 的真实隔离安装/HTTPS 心跳 CI 已通过；本次扩为 Ubuntu 四组合持续 CI，按目标提交核验结果；Debian 四组合及公网验收待完成 |
+| 15：中文说明 | 已合并 #42，补齐 5 份英文正文、安装参数/提示对照并修正旧 README；后续按[中文说明覆盖表](DOCUMENTATION.md)持续维护 |
 | 8、10、9、11：结构、来源模型、路由、错误处理 | 待开发；按该顺序推进，异常处理按问题穿插 |
 | 12、13、14 后续：许可证、仓库信息、正式发布 | 待完成；许可证及首个正式 tag 需所有者决定 |
 
-下一步先完成本次文档审查合并，再补安装平台矩阵；真实公网验收与生产部署需目标环境和独立验收记录。P1 收尾后进入第 8 项 AirportService 提取。以下设计和验收条款继续有效；历史问题表描述的是最初审查基线。
+本次先扩展 Ubuntu 安装矩阵，随后补 Debian 安装平台矩阵；真实公网验收与生产部署需目标环境和独立验收记录。P1 收尾后进入第 8 项 AirportService 提取。以下设计和验收条款继续有效；历史问题表描述的是最初审查基线。
 
 ## 审查结论与修正
 
@@ -228,7 +228,7 @@ Controller 支持范围与使用系统 Python 的 Agent 支持范围分别决定
 区分 Controller 发布版本、Agent 软件版本、数据库 schema 和各能力协议版本；安装 manifest 记录兼容关系、完整 commit、产物与 SHA256。
 先提供第 16 项需要的可验证固定产物，再逐步完善发布自动化；不要让安装命令依赖可变 master/latest。
 
-安装产物准备已实现：`scripts/agent_artifacts.py` 从完整 Git 提交和固定文件清单构建可重复 tar + manifest，记录 Agent 版本、配套 Controller 提交、schema 基线及各能力协议；独立预期 manifest SHA256 固定整包与成员校验。见[产物契约、命令和验证边界](AGENT_ARTIFACTS.md)。此工具不创建正式 tag/Release、不解包或安装；第 16 项第一阶段另已提供[固定官方源码 bootstrap、root 目录检查与完整命令](AGENT_INSTALL.md)，控制台入口和 Ubuntu 24.04 amd64 隔离安装 CI 已接入，其余平台与公网验收仍待补齐。Agent 已补[中文安装、升级与恢复说明](../agent/README.zh-CN.md)，第 15 项的全量中文覆盖与本次审查范围见[说明索引](DOCUMENTATION.md)。
+安装产物准备已实现：`scripts/agent_artifacts.py` 从完整 Git 提交和固定文件清单构建可重复 tar + manifest，记录 Agent 版本、配套 Controller 提交、schema 基线及各能力协议；独立预期 manifest SHA256 固定整包与成员校验。见[产物契约、命令和验证边界](AGENT_ARTIFACTS.md)。此工具不创建正式 tag/Release、不解包或安装；第 16 项第一阶段另已提供[固定官方源码 bootstrap、root 目录检查与完整命令](AGENT_INSTALL.md)，控制台入口已合并，隔离安装 CI 本次扩为 Ubuntu 四组合；Debian 与公网验收仍待补齐。Agent 已补[中文安装、升级与恢复说明](../agent/README.zh-CN.md)，第 15 项的全量中文覆盖与本次审查范围见[说明索引](DOCUMENTATION.md)。
 
 每次发布提供中文的新增功能、修复、安全变更、数据格式变化、升级步骤、Agent/helper 是否需升级、已测矩阵/已知限制和回滚方式。
 发布门禁采用 [发布验收与恢复流程](RELEASE_ACCEPTANCE.md)；Controller 先升级，DB/key 一致备份；版本化发布不等于已完成真实公网 Reality/SS2022 验收。
