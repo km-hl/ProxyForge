@@ -29,6 +29,7 @@ def main():
     parser.add_argument('--disposable-system-test', action='store_true', required=True)
     parser.add_argument('--expected-debian', choices=tuple(BASE_IMAGES), required=True)
     parser.add_argument('--expected-arch', choices=('amd64', 'arm64'), required=True)
+    parser.add_argument('--check-helper', action='store_true', help='普通安装后验收显式 helper 启用')
     args = parser.parse_args()
     verify_host(args.expected_arch)
     identity = 'proxyforge-debian-test-' + uuid.uuid4().hex
@@ -57,8 +58,9 @@ def main():
         print('Native Debian systemd container ready:', args.expected_debian, machine, flush=True)
         subprocess.run(['docker', 'exec', identity, '/opt/controller-test/bin/python',
                         'scripts/check_agent_installation.py', '--disposable-system-test',
-                        '--expected-debian', args.expected_debian, '--expected-arch', args.expected_arch],
-                       check=True, timeout=240)
+                        '--expected-debian', args.expected_debian, '--expected-arch', args.expected_arch,
+                        *(['--check-helper'] if args.check_helper else [])],
+                       check=True, timeout=900)
         print('PASS: native Debian userland/system Python/systemd/HTTPS; host kernel shared', flush=True)
     finally:
         subprocess.run(['docker', 'rm', '-f', identity], check=False, timeout=30, stdout=subprocess.DEVNULL)

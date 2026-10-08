@@ -152,7 +152,7 @@ PROXYFORGE_BOOTSTRAP
 
 单元测试覆盖 hash 失败不执行、路径/链接/设备/大小限制、URL/命令注入、无 token 参数、环境隔离、已有路径拒绝、版本不一致及失败清理。CI 在 Python 3.9–3.13 执行，Ubuntu 24.04 的额外步骤下载真实固定归档，使用 disposable runner 的 root 权限测试目录/软硬链接/所有者检查；不在此测试中执行实际安装器。
 
-独立 CI 任务 `Agent installation / Ubuntu <版本> <架构> HTTPS` 覆盖 Ubuntu 22.04/24.04 × amd64/arm64 四种原生主机组合（[GitHub 官方运行器列表](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)），每项独立运行，失败不取消其他组合。任务运行 `scripts/check_agent_installation.py --disposable-system-test --expected-ubuntu <22.04或24.04> --expected-arch <amd64或arm64>`：从真实管理 API 获取与 UI 相同的命令，下载固定远端代码，通过真实控制 TTY 隐藏输入注册凭据，启动 systemd 服务并等待 Controller 收到 HTTPS 心跳。检查 0600 凭据、服务用户、默认未启用 helper、重复安装不覆盖、凭据重复消费被拒绝，以及终端输出/服务日志/进程参数快照/非交互 shell history 未含凭据。浏览器复制、关闭/迟到响应、重复点击、剪贴板失败和登录失效另由前端行为测试覆盖。
+独立 CI 任务 `Agent + helper / Ubuntu <版本> <架构> HTTPS` 覆盖 Ubuntu 22.04/24.04 × amd64/arm64 四种原生主机组合（[GitHub 官方运行器列表](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)），每项独立运行，失败不取消其他组合。任务运行 `scripts/check_agent_installation.py --disposable-system-test --expected-ubuntu <22.04或24.04> --expected-arch <amd64或arm64> --check-helper`：从真实管理 API 获取与 UI 相同的命令，下载固定远端代码，通过真实控制 TTY 隐藏输入注册凭据，启动 systemd 服务并等待 Controller 收到 HTTPS 心跳。检查 0600 凭据、服务用户、默认未启用 helper、重复安装不覆盖、凭据重复消费被拒绝，以及终端输出/服务日志/进程参数快照/非交互 shell history 未含凭据。浏览器复制、关闭/迟到响应、重复点击、剪贴板失败和登录失效另由前端行为测试覆盖。
 
 | 平台 | amd64 | arm64 |
 | --- | --- | --- |
@@ -165,6 +165,14 @@ PROXYFORGE_BOOTSTRAP
 
 Debian 四项在同架构 GitHub VM 内运行官方 Debian 用户空间/systemd PID 1 的一次性容器，系统 Python 为 3.11/3.13；共享宿主机内核，不代表完整 Debian VM/裸机验收。固定镜像、参数、特权范围与验证见[Debian CI 说明](AGENT_INSTALL_DEBIAN_CI.md)。
 
-表中 CI 项表示持续执行的测试入口，是否通过以目标提交八项 job 的结果为准。该 CI 使用隔离 runner 的测试域名、回环 HTTPS Controller 和专用测试 CA（保持证书/主机名校验），不是公网可达性验收；不在开发机或生产运行此特权脚本。CI 结果应随 PR/发布记录核对，不能把平台允许列表、进程快照或单元测试当作全部主机/整个安装期间的完整证明。真实公网 HTTPS、完整 Debian VM/裸机四组合、可选 helper 的完整平台矩阵及生产升级仍待分别验收。GitHub 镜像预装了测试工具，不等同于所有云厂商的最小系统镜像。
+表中 CI 项表示持续执行的测试入口，是否通过以目标提交八项 job 的结果为准。该 CI 使用隔离 runner 的测试域名、回环 HTTPS Controller 和专用测试 CA（保持证书/主机名校验），不是公网可达性验收；不在开发机或生产运行此特权脚本。CI 结果应随 PR/发布记录核对，不能把平台允许列表、进程快照或单元测试当作全部主机/整个安装期间的完整证明。真实公网 HTTPS、完整 Debian VM/裸机四组合、生产升级仍待分别验收。helper 安装 CI 的新结果也须按目标提交八项 job 核对，不代表公网链路已验收。GitHub 镜像预装了测试工具，不等同于所有云厂商的最小系统镜像。
 
 维护者可用 `python -m scripts.agent_install_command --bootstrap-commit <完整提交> --bootstrap-sha256 <可信SHA256> --server https://your-controller.example` 重新生成命令；可选 `--action runtime` 或 `--action check`，这两种操作不传 `--server`。修改 bootstrap 后须同步固定提交、hash 与文档，不能只改下载 URL。
+
+## 显式 helper 安装验收
+
+八项安装 CI 均在普通 Agent 验收后显式传入 `--check-helper`，执行同一管理 API 返回的 `commands.runtime` 命令。先确认普通安装没有 helper，再核验 socket 为 root:proxyforge-agent、0660，普通 Agent 的配置/身份没有改变；启用 helper 本身不下载 sing-box。
+
+随后使用已安装 Agent 模块和系统 Python，切换到真实 `proxyforge-agent` UID，通过 Unix socket 执行固定版本 sing-box 的安装、重启、回滚、停止与启动，实际下载对应架构二进制并运行 systemd 服务。核对 sing-box 进程属于专用非 root 用户、默认配置没有入站监听、重复 helper 安装被拒绝；等待 Controller 收到能力和运行状态心跳。额外用 root 调用同一 socket，确认不属于 Agent UID 的调用被拒绝且没有创建 runtime。
+
+本测试覆盖显式安装、本机授权、真实进程和 HTTPS 能力心跳；生命周期动作由本机测试客户端发给 helper，**不代替 Controller 队列/租约的端到端验收**。普通安装仍默认不启用 helper，现有单架构 Reality/SS2022 链路 CI 单独保留；这八项不宣称完成各平台公网代理握手。脚本停止自己在本次测试中启用的服务，容器由外层驱动清理，Ubuntu VM 随 CI 销毁，不清理生产安装。

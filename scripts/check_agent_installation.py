@@ -152,6 +152,74 @@ def certificate(root):
     return key_path, cert_path
 
 
+def check_helper(command, client, headers, agent_id):
+    """Opt in with the console command, then cross the real Unix peer boundary."""
+    before = CONFIG.read_bytes()
+    status, output, sent = command_pty(command)
+    assert status == 0 and not sent, 'Explicit helper bootstrap failed'
+    assert CONFIG.read_bytes() == before, 'Helper changed Agent identity/credentials'
+    account = pwd.getpwnam('proxyforge-agent')
+    info = Path('/run/proxyforge-runtime.sock').stat()
+    assert stat.S_ISSOCK(info.st_mode) and info.st_uid == 0
+    assert info.st_gid == account.pw_gid and stat.S_IMODE(info.st_mode) == 0o660
+    subprocess.run(['systemctl', 'is-active', '--quiet', 'proxyforge-runtime.socket'], check=True)
+    current = Path('/var/lib/proxyforge-runtime/current')
+    assert not current.exists(), 'Opt-in unexpectedly installed sing-box'
+    # Installed Agent + distro Python under its service UID. stdin carries a
+    # public job schema only, never an enrollment or Agent credential.
+    code = ("import json,sys; sys.path.insert(0, '/opt/proxyforge-agent'); "
+            "from agent.runtime_client import execute; "
+            "print(json.dumps(execute(json.load(sys.stdin), lambda: None)))")
+    from agent.runtime_spec import RELEASE, revision
+    import uuid
+
+    def request(action, *, authorized=True):
+        identifier = uuid.uuid4().hex
+        payload = {'version': RELEASE['version']} if action == 'singbox.install' else {}
+        job = {'id': identifier, 'type': action, 'payload': payload,
+               'deployment_revision': revision(identifier, action, payload)}
+        invocation = ['/usr/bin/python3', '-I', '-c', code]
+        if authorized:
+            invocation = ['runuser', '-u', 'proxyforge-agent', '--', *invocation]
+        result = subprocess.run(invocation, input=json.dumps(job), capture_output=True,
+                                text=True, check=True, timeout=660)
+        return json.loads(result.stdout)
+
+    denied = request('singbox.install', authorized=False)
+    assert denied == {'status': 'failed', 'output': None, 'error': 'runtime_failed'}
+    assert not current.exists(), 'Unauthorized peer changed runtime'
+    for action in ('singbox.install', 'singbox.restart', 'singbox.rollback', 'singbox.stop', 'singbox.start'):
+        result = request(action)
+        assert result['status'] == 'success' and result['error'] is None, 'Real helper action failed: ' + action
+        state = result['output']
+        assert state['installed'] and state['running'] == (action != 'singbox.stop')
+        assert state['version'] == RELEASE['version']
+    pid = subprocess.check_output(['systemctl', 'show', '--property=MainPID', '--value',
+                                   'proxyforge-singbox.service'], text=True, timeout=10).strip()
+    actual_uid = Path('/proc/' + pid).stat().st_uid
+    assert actual_uid == pwd.getpwnam('proxyforge-singbox').pw_uid and actual_uid != 0
+    assert json.loads((current / 'config.json').read_text())['inbounds'] == [], 'Unsolicited listener'
+    assert CONFIG.read_bytes() == before
+    status, _, sent = command_pty(command)
+    assert status != 0 and not sent, 'Repeated helper installation was accepted'
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline:
+        metadata = client.get('/api/agents', headers=headers).json()['agents'][0]['metadata']
+        if metadata.get('runtime_protocol_version') == 1 and metadata['singbox']['running']:
+            break
+        time.sleep(0.25)
+    else:
+        raise AssertionError('No helper capability/runtime heartbeat received')
+    assert all(metadata[name] == 1 for name in ('deployment_protocol_version', 'landing_protocol_version',
+                                               'chain_protocol_version'))
+    assert client.get('/api/agents', headers=headers).json()['agents'][0]['id'] == agent_id
+    journals = subprocess.check_output(['journalctl', '-u', 'proxyforge-runtime', '-u', 'proxyforge-singbox',
+                                       '--no-pager'])
+    assert json.loads(before)['token'].encode() not in output + journals, 'Helper leaked Agent credentials'
+    print('PASS: explicit helper bootstrap, real UID/socket authorization, native sing-box lifecycle, capability heartbeat',
+          flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--disposable-system-test', action='store_true', required=True)
@@ -159,6 +227,7 @@ def main():
     distribution.add_argument('--expected-ubuntu', choices=('22.04', '24.04'))
     distribution.add_argument('--expected-debian', choices=('12', '13'))
     parser.add_argument('--expected-arch', choices=('amd64', 'arm64'), required=True)
+    parser.add_argument('--check-helper', action='store_true', help='普通安装后显式启用并验证 helper')
     args = parser.parse_args()
     if os.geteuid() != 0 or os.environ.get('GITHUB_ACTIONS') != 'true' or not Path('/run/systemd/system').is_dir():
         raise SystemExit('Only a dedicated disposable GitHub Linux root runner is supported')
@@ -266,7 +335,12 @@ def main():
                         **collect(saved['instance_id']), 'registration_token': token})
                     assert response.status_code == 401
                     print('PASS: installation, trusted HTTPS heartbeat, private credentials, no helper, repeat refusal', flush=True)
+                    if args.check_helper:
+                        check_helper(info['commands']['runtime'], client, headers, agents[0]['id'])
             finally:
+                if args.check_helper:
+                    subprocess.run(['systemctl', 'stop', 'proxyforge-runtime.socket', 'proxyforge-runtime.service',
+                                    'proxyforge-singbox.service'], check=False, stdout=subprocess.DEVNULL)
                 subprocess.run(['systemctl', 'stop', 'proxyforge-agent'], check=False, stdout=subprocess.DEVNULL)
                 server.should_exit = True
                 worker.join(timeout=10)

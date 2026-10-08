@@ -1,6 +1,6 @@
 # Debian 安装 CI 验收
 
-本任务验证 Debian 12/13 × amd64/arm64 的普通 Agent 安装。每项运行在相同架构的独立 GitHub Ubuntu VM 上，启动官方 Debian 用户空间和 systemd PID 1 的一次性容器；不使用 QEMU 或更改平台声明。容器共享宿主机内核，**不能将结果称为完整 Debian VM、裸机或公网验收**。
+本任务验证 Debian 12/13 × amd64/arm64 的普通 Agent 安装及随后显式启用的 helper。每项运行在相同架构的独立 GitHub Ubuntu VM 上，启动官方 Debian 用户空间和 systemd PID 1 的一次性容器；不使用 QEMU 或更改平台声明。容器共享宿主机内核，**不能将结果称为完整 Debian VM、裸机或公网验收**。
 
 ## 固定来源和执行边界
 
@@ -21,4 +21,9 @@
 
 HTTPS Controller 在容器回环地址运行，使用专用测试 CA 并保留证书/主机名校验；测试 Controller 的 venv 与 Agent 使用的系统解释器分开。测试不修改 Agent 0.6.0、固定 bootstrap/source/hash、API、schema 或生产镜像。
 
-对应 CI 四项 job 全部成功后，可记为 **同架构 Debian 用户空间/systemd 容器安装实测**。目标提交结果仍须逐次核对。完整 Debian VM/裸机差异、真实公网 HTTPS、可选 helper 的全平台安装以及生产 Agent 升级继续单列验收，不能用容器结果代替。
+对应 CI 四项 job 全部成功后，可记为 **同架构 Debian 用户空间/systemd 容器安装实测**。目标提交结果仍须逐次核对。完整 Debian VM/裸机差异、真实公网 HTTPS、生产 Agent 升级继续单列验收，不能用容器结果代替。
+
+
+## helper 阶段
+
+驱动传入 `--check-helper` 后，容器内的同一安装脚本继续执行控制台返回的固定 helper 命令，并以真实 Agent UID 经 Unix socket 验证对应架构 sing-box 的安装、重启、回滚、停止、启动与能力心跳。未经授权的本机 UID、socket 权限、独立服务用户、默认无入站监听与重复安装拒绝也列入检查，详见[完整验收边界](AGENT_INSTALL.md#显式-helper-安装验收)。完整 Debian 内核/VM、公网握手和 Controller 队列/租约仍不能由此替代。容器内执行预算为 900 秒、外层 job 为 20 分钟；下载失败或动作失败使对应 job 失败。

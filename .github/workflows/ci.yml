@@ -156,9 +156,9 @@ jobs:
             --manifest-sha256 "$manifest_sha256" --manifest "$manifest" --archive "$archive"
 
   agent-installation:
-    name: Agent installation / Ubuntu ${{ matrix.ubuntu }} ${{ matrix.arch }} HTTPS
+    name: Agent + helper / Ubuntu ${{ matrix.ubuntu }} ${{ matrix.arch }} HTTPS
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 10
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -179,12 +179,12 @@ jobs:
         # Dedicated disposable VM; never run this on a deployed Agent host.
         run: >-
           sudo env GITHUB_ACTIONS=true "$(command -v python)" scripts/check_agent_installation.py
-          --disposable-system-test --expected-ubuntu "${{ matrix.ubuntu }}" --expected-arch "${{ matrix.arch }}"
+          --disposable-system-test --expected-ubuntu "${{ matrix.ubuntu }}" --expected-arch "${{ matrix.arch }}" --check-helper
 
   agent-install-debian:
-    name: Debian ${{ matrix.debian }} ${{ matrix.arch }} / native systemd container
+    name: Agent + helper / Debian ${{ matrix.debian }} ${{ matrix.arch }} / native systemd container
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -202,7 +202,7 @@ jobs:
         # Dedicated disposable VM; no host business mounts or production execution.
         run: >-
           sudo env GITHUB_ACTIONS=true "$(command -v python)" scripts/check_debian_installation.py
-          --disposable-system-test --expected-debian "${{ matrix.debian }}" --expected-arch "${{ matrix.arch }}"
+          --disposable-system-test --expected-debian "${{ matrix.debian }}" --expected-arch "${{ matrix.arch }}" --check-helper
 
   controller-image:
     name: Controller image / non-root and recovery
