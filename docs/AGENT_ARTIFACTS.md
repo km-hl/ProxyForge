@@ -61,4 +61,4 @@ python3 -S -m unittest discover -s tests -p test_agent_artifacts.py -v
 
 这些证据不代替 Debian 12/13、Ubuntu 22.04/24.04 × amd64/arm64 的空白主机特权安装矩阵、实际公网 HTTPS 注册与心跳、helper 安装或生产升级。每项实际验证状态应随正式发布记录维护，参见 [发布验收与恢复](RELEASE_ACCEPTANCE.md)。
 
-中文文档补齐后，最小包新增 `docs/AGENT_INSTALL_HELP.md`，共 24 个 Agent 文件、13 份配套说明。构建和校验必须使用与目标提交匹配的工具清单；旧提交缺少新增文档时，新工具会拒绝构建，旧包仍用原提交的工具验证。固定 bootstrap 的源码提交及 hash 未因此改变。最小包不包含整个仓库：开发计划/完整文档索引请在官方仓库对应提交中阅读。
+中文文档补齐后，最小包包含 `docs/AGENT_INSTALL_HELP.md`，本次另加入 `docs/AGENT_INSTALL_DEBIAN_CI.md` 避免安装指南链接缺失，共 24 个 Agent 文件、14 份配套说明。构建和校验必须使用与目标提交匹配的工具清单；旧提交缺少新增文档时，新工具会拒绝构建，旧包仍用原提交的工具验证。固定 bootstrap 的源码提交及 hash 未因此改变。最小包不包含整个仓库：开发计划/完整文档索引请在官方仓库对应提交中阅读。
