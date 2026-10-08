@@ -11,6 +11,7 @@ Egern 原生 YAML 使用 `proxies`、`policy_groups`、`rules`。转换基于当
 - 节点：Shadowsocks、Snell、Trojan、VMess、VLESS、Hysteria2、TUIC、AnyTLS、SOCKS5、HTTP、WireGuard 的可表达配置。
 - VLESS/VMess：TCP、TLS/Reality、WS/WSS、TLS gRPC。Reality 公钥/short ID、Vision flow、SNI 和证书验证选择保留。VMess 使用 AEAD（alterId=0）。
 - Shadowsocks 支持普通配置和 obfs HTTP/TLS；Trojan 支持普通 TLS 与 WebSocket；AnyTLS 显式保留证书验证，不采用 Egern 未配置时跳过验证的默认值。
+- Hysteria2 仅配置 `ports` 时，从跳跃集合首段补齐 Egern 必需的 `port`；保留完整跳跃集合与间隔并校验 1–65535 范围。
 - 代理组：select → select、url-test → auto_test、fallback → fallback、load-balance → load_balance；测速地址/间隔与容差保留，timeout 从毫秒换成秒。consistent-hashing/round-robin 映射为 hash/round_robin。
 - 规则：域名、域名后缀/关键词/正则/通配、IP CIDR、国家 GEOIP、ASN、目的端口、NETWORK、AND/OR/NOT、MATCH。GEOSITE、非国家 GEOIP 及 RULE-SET 使用原生远端规则集，保持原规则位置和策略。`no-resolve` 继续生效。
 
@@ -26,7 +27,7 @@ GEOSITE/非国家 GEOIP 从 [MetaCubeX 官方规则数据](https://github.com/Me
 
 旧 `GEOIP,lan` 使用 private 地址集合，国家代码规范为大写。provider 使用保存的 `rule-providers` 定义，URL 中携带定义 SHA256 revision；定义变化时拒绝旧链接并要求更新配置。支持 HTTP 来源的 YAML/text、domain/ipcidr/classical 条件，不支持 MRS、本地文件或未支持条件。规则集内容失败不会以空集返回成功。
 
-新下载复用现有安全出站：每跳 DNS 校验并固定连接 IP、系统 CA、忽略环境代理、总预算 30 秒、最大 8 MiB。规则资源最多 4 个同时下载，成功结果在进程内缓存 4 小时，总缓存上限 32 MiB；失败不缓存。展开额外 proxy-provider 时也使用安全出站与 60 秒共享预算。正常 YAML 响应使用 no-store，错误只返回位置/固定说明，不回显 URL 或规则/节点秘密。
+新下载复用现有安全出站：每跳 DNS 校验并固定连接 IP、系统 CA、忽略环境代理、总预算 30 秒、最大 8 MiB、最多 25 万条条件（覆盖官方 CN 集合的 11 万余条）。规则资源最多 4 个同时下载，成功结果在进程内缓存 4 小时，总缓存上限 32 MiB；失败不缓存。展开额外 proxy-provider 时也使用安全出站与 60 秒共享预算。正常 YAML 响应使用 no-store，错误只返回位置/固定说明，不回显 URL 或规则/节点秘密。
 
 ## 验证、部署与恢复
 

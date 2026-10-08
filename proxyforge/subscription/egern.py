@@ -38,6 +38,18 @@ def convert_proxy(proxy):
         raise UnsupportedNode('transport options')
     output = _mapped(proxy, {'name': 'name', 'server': 'server', 'port': 'port',
                             'tfo': 'tfo', 'dialer-proxy': 'prev_hop'})
+    if kind == 'hysteria2' and proxy.get('ports'):
+        hopping = str(proxy['ports'])
+        if not re.fullmatch(r'\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*', hopping):
+            raise UnsupportedNode('port hopping')
+        ranges = [list(map(int, item.split('-'))) for item in hopping.split(',')]
+        if any(not 1 <= values[0] <= values[-1] <= 65535 for values in ranges):
+            raise UnsupportedNode('port hopping range')
+        # Mihomo permits ports without port; Egern requires a concrete port too.
+        output.setdefault('port', ranges[0][0])
+        if not output['port']:
+            output['port'] = ranges[0][0]
+        output['port_hopping'] = hopping
     output['port'] = int(output['port'])
     if kind != 'http':
         output['udp_relay'] = proxy.get('udp', True)
@@ -104,7 +116,7 @@ def convert_proxy(proxy):
     elif kind == 'hysteria2':
         output.update(auth=proxy['password'], **tls)
         output.update(_mapped(proxy, {'obfs': 'obfs', 'obfs-password': 'obfs_password',
-                                     'ports': 'port_hopping', 'hop-interval': 'port_hopping_interval'}))
+                                     'hop-interval': 'port_hopping_interval'}))
         if proxy.get('up'):
             match = re.fullmatch(r'(\d+(?:\.\d+)?)\s*(?:Mbps|mbps)?', str(proxy['up']))
             if not match:
@@ -317,7 +329,7 @@ def convert_rule_set(content, behavior='classical', file_format='yaml'):
     else:
         entries = [line.strip() for line in content.splitlines()
                    if line.strip() and not line.lstrip().startswith('#')]
-    if not isinstance(entries, list) or not entries or len(entries) > 100000:
+    if not isinstance(entries, list) or not entries or len(entries) > 250000:
         raise ConfigValidationError(['Egern 规则集内容为空、过大或格式无效'])
     result = {}
     for index, entry in enumerate(entries, 1):
