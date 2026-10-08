@@ -11,6 +11,25 @@ from scripts.agent_install_command import render
 class AgentInstallCommandTests(unittest.TestCase):
     commit = "a" * 40
 
+    def test_console_pins_and_validation_match_standalone_bootstrap(self):
+        from proxyforge.control.agent_installation import installation_info, controller_url
+        from scripts.agent_bootstrap import controller_url as bootstrap_url
+        document = Path('docs/AGENT_INSTALL.md').read_text(encoding='utf-8')
+        info = installation_info('https://your-controller.example')
+        for command in info['commands'].values():
+            self.assertIn(command, document)
+        for value in ('https://example.com/', 'https://example.com:8443', 'https://[2606:4700:4700::1111]',
+                      None, '', 'http://example.com', 'https://localhost', 'https://a.example:0',
+                      'https://a.example/path', 'https://a.example/#', 'https://a.example/?',
+                      'https://a.example\\evil', 'https://a.example\n', 'https://10.0.0.1'):
+            try:
+                expected = bootstrap_url(value)
+            except ValueError:
+                with self.subTest(value=value), self.assertRaises(ValueError):
+                    controller_url(value)
+            else:
+                self.assertEqual(controller_url(value), expected)
+
     def command(self, code, **kwargs):
         return render(self.commit, hashlib.sha256(code).hexdigest(), **kwargs)
 

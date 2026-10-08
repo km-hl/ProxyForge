@@ -2,7 +2,7 @@
 
 [中文安装、升级与恢复说明](README.zh-CN.md) · [固定安装产物与校验](../docs/AGENT_ARTIFACTS.md)
 
-For a fresh host, use the [complete pinned download and installation commands (中文)](../docs/AGENT_INSTALL.md). The source-checkout commands below remain available for administrators with an inspected checkout.
+For a fresh host, use the [complete pinned download and installation commands (中文)](../docs/AGENT_INSTALL.md). Set `PROXYFORGE_PUBLIC_URL` in the Controller deployment to copy these commands from Add Server; enter the one-use credential only at the hidden terminal prompt. The source-checkout commands below remain available for administrators with an inspected checkout.
 
 Controller uses Python 3.12 in its image and tests source compatibility on 3.12/3.13.
 The Agent keeps its independent system Python 3.9+ requirement and standard-library-only runtime.

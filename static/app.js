@@ -135,6 +135,8 @@ function showToast(msg, type = 'success') {
 
 // === Modal Logic ===
 function openModal(title, htmlContent, onConfirm) {
+    if (typeof clearRegistrationToken === 'function') clearRegistrationToken();
+    modalConfirm.disabled = false;
     modalConfirm.textContent = '确认';
     modalReturnFocus = document.activeElement;
     modalTitle.textContent = title;
@@ -144,6 +146,7 @@ function openModal(title, htmlContent, onConfirm) {
     setTimeout(() => (modalBody.querySelector('input, select, textarea, button') || modalConfirm).focus(), 0);
 }
 function closeModal() {
+    if (typeof clearRegistrationToken === 'function') clearRegistrationToken();
     modalOverlay.classList.remove('active');
     modalConfirmAction = null;
     if (modalReturnFocus?.isConnected) modalReturnFocus.focus();
@@ -224,6 +227,7 @@ async function login() {
 }
 
 function showLogin() {
+    closeModal();
     dashboard.style.display = 'none';
     loginOverlay.classList.add('active');
     tokenInput.value = '';

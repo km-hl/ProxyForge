@@ -6,7 +6,7 @@ Agent 主动通过 HTTPS 上报清单、发送心跳、领取允许列表内的�
 
 ## 首次安装与平台边界
 
-新主机请直接使用[完整下载、校验和安装命令](../docs/AGENT_INSTALL.md)，只需填写真实 Controller 地址；下方源码目录命令用于已有可信 checkout 的管理员。
+新主机请直接使用[完整下载、校验和安装命令](../docs/AGENT_INSTALL.md)，也可在配置 `PROXYFORGE_PUBLIC_URL` 后通过控制台「添加服务器」复制已填好地址的命令；下方源码目录命令用于已有可信 checkout 的管理员。
 
 安装器允许 Debian 12/13、Ubuntu 22.04/24.04，amd64/arm64、systemd、Python 3.9+，拒绝其他组合。该允许列表不表示所有组合都完成了空白主机安装实测。当前是源码 Agent，没有签名二进制发行包或自动升级功能。
 

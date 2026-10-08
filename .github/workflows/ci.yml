@@ -154,6 +154,22 @@ jobs:
           python -S scripts/agent_artifacts.py verify --commit "$commit" \
             --manifest-sha256 "$manifest_sha256" --manifest "$manifest" --archive "$archive"
 
+  agent-installation:
+    name: Agent installation / Ubuntu 24.04 amd64 HTTPS
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install locked Controller test dependencies
+        run: |
+          python -m pip --isolated install --index-url https://pypi.org/simple --require-hashes --only-binary=:all: -r requirements-dev.txt
+      - name: Install from console command and verify real HTTPS heartbeat
+        # Dedicated disposable VM; never run this on a deployed Agent host.
+        run: sudo env GITHUB_ACTIONS=true "$(command -v python)" scripts/check_agent_installation.py --disposable-system-test
+
   controller-image:
     name: Controller image / non-root and recovery
     runs-on: ubuntu-24.04

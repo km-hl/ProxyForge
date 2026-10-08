@@ -77,7 +77,7 @@ Agent 保持独立目录和 `python -m agent.main` 入口。安装脚本的文�
 
 `scripts/agent_artifacts.py` 只从完整提交的 Git 对象构建固定 Agent 包并校验，不安装服务；`agent/install-compatibility.json` 描述安装兼容基线，具体清单与信任边界见[安装产物契约](AGENT_ARTIFACTS.md)。中文操作入口为 `agent/README.zh-CN.md`。
 
-`scripts/agent_bootstrap.py` 提供独立的固定源码下载、校验和 root 目录安装准备；`scripts/agent_install_command.py` 生成固定 bootstrap 提交/hash 的命令，见[完整安装指南](AGENT_INSTALL.md)。两者不在 Controller 请求中执行；当前没有新增安装 API 或远程 shell 动作。
+`scripts/agent_bootstrap.py` 提供独立的固定源码下载、校验和 root 目录安装准备；`proxyforge/control/agent_installation.py` 提供无副作用的 URL 校验、固定版本元信息和命令生成，`scripts/agent_install_command.py` 作为文档 CLI 共用同一实现，见[完整安装指南](AGENT_INSTALL.md)。管理只读接口 `/api/agents/install-command` 读取部署配置并生成文本，不下载/执行代码；独立 `scripts/check_agent_installation.py` 只在专用一次性 CI runner 验收真实安装、TLS 与心跳。
 
 ## 6. 状态机
 

@@ -44,6 +44,8 @@ Controller 当前 schema 5；模板历史仍在文件中，不在 SQLite。完�
 
 首次安装可用[完整下载、双层 SHA256 校验与安装命令](AGENT_INSTALL.md)，已有安装仍走以下升级/恢复流程。该引导命令固定 Agent 0.6.0 源码；不要因为 Controller 代码已更新就自动改动 Agent pin。
 
+控制台复制入口需要部署配置 `PROXYFORGE_PUBLIC_URL`。独立 Ubuntu 24.04 amd64 安装 CI 验证真实下载、TTY、systemd 及测试 CA 下的 HTTPS 心跳；其余平台与公网验证仍按安装指南矩阵记录。此改动不迁移 DB、不要求升级已有 Agent；回滚 Controller/static 并移除该环境变量即可回到文档命令入口，已注册 Agent 不受影响。
+
 先升级 Controller，再按需要逐台升级 Agent。B6 沿用 Agent 0.6.0；旧 Agent 可以继续清单/已支持动作，新动作受各自 capability 门控。
 
 已有机器不能重跑首次安装脚本。升级前停止 Agent 以及 runtime socket/helper，确认执行中的事务已结束或先用原版本恢复；私密备份已安装包、systemd units、`/etc/proxyforge-agent/`、`/var/lib/proxyforge-runtime/`。后者包含配置秘密、current/previous 和事务/receipt，不能只备份一个 JSON。

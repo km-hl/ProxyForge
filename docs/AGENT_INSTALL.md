@@ -1,6 +1,6 @@
 # Agent 完整下载安装命令
 
-这份指南提供开发计划第 16 项第一阶段的完整入口：固定 bootstrap → 校验其 SHA256 → 下载固定官方源码归档 → 校验归档 → 在 root 控制的目录中准备 Agent → 执行首次安装。控制台复制按钮和真实空白主机安装矩阵仍是下一阶段。
+这份指南提供开发计划第 16 项的完整入口：固定 bootstrap → 校验其 SHA256 → 下载固定官方源码归档 → 校验归档 → 在 root 控制的目录中准备 Agent → 执行首次安装。控制台「添加服务器」提供相同的固定安装命令；平台实测范围见文末。
 
 命令入口体验参考 [Komari 官方快速安装](https://www.komari.wiki/install/quick-start)，凭据继续采用 ProxyForge 的隐藏 TTY 输入。没有采用将注册 token 放入参数的方式。
 
@@ -15,6 +15,18 @@
 - 目标主机需能直连 `raw.githubusercontent.com` 和 `codeload.github.com`。下载不读取代理环境变量、不跟随重定向、保持系统 CA/TLS 验证。私有 CA Controller 使用[原手动注册流程](../agent/README.zh-CN.md)，不要关闭 TLS 验证。
 
 当前使用现有官方源码归档，未发布新的二进制/最小包 Release，也未选择正式版本 tag 或许可证。维护者的最小包构建与 manifest 契约见[安装产物说明](AGENT_ARTIFACTS.md)。
+
+## 控制台复制入口
+
+部署管理员在 `.env` 设置 `PROXYFORGE_PUBLIC_URL="https://your-controller.example"`，换成目标 Agent 可访问的真实 HTTPS 根地址。Compose 部署修改后执行 `docker compose up -d --force-recreate` 使环境生效；直接运行则在服务环境中配置并重启 Controller。不要填浏览器临时地址或含密钥的链接。
+
+进入「服务器 → 添加服务器」，核对显示的 Controller、Agent 版本、固定提交和 SHA256，复制普通 Agent 安装命令到目标终端。等终端出现隐藏输入提示后，填写服务器名称并点击「生成注册凭据」，将一次性凭据粘贴到终端。完成后关闭窗口、刷新服务器列表，确认收到心跳并显示在线。安装命令不含凭据；关闭窗口、退出登录或会话失效会清除页面中的凭据，重新打开不会取回原凭据。
+
+「只读下载校验」和「启用托管 runtime」位于可展开区域。后者是明确的可选 root 辅助服务操作，必须先完成普通 Agent 安装；复制或生成命令本身不会在远端执行任何操作。
+
+缺少或错误的配置只显示配置说明及中文指南，不生成猜测地址的命令；仍保留手动安装的一次性凭据入口。剪贴板不可用时会选中命令，按系统复制快捷键手动复制。
+
+管理接口 `GET /api/agents/install-command` 仅接受管理鉴权，返回 `available`；可用时包含 `controller_url`、`agent_version`、`source_commit`、`bootstrap_commit`、`bootstrap_sha256` 与 `commands.install/runtime/check`。不可用时只有固定的 `message`，不回显非法配置。接口不创建凭据、不下载或执行代码，不信任请求的 Host/转发头，并返回 `Cache-Control: no-store`。原注册接口及 10 分钟单次消费规则不变。
 
 ## 1. 普通 Agent 首次安装
 
@@ -138,6 +150,15 @@ PROXYFORGE_BOOTSTRAP
 
 单元测试覆盖 hash 失败不执行、路径/链接/设备/大小限制、URL/命令注入、无 token 参数、环境隔离、已有路径拒绝、版本不一致及失败清理。CI 在 Python 3.9–3.13 执行，Ubuntu 24.04 的额外步骤下载真实固定归档，使用 disposable runner 的 root 权限测试目录/软硬链接/所有者检查；不在此测试中执行实际安装器。
 
-Debian 12/13、Ubuntu 22.04/24.04 × amd64/arm64 的**特权首次安装与 HTTPS 注册/心跳矩阵仍待完成**；当前不把允许列表、模拟安装器或目录保护测试写成完整实测。后续控制台入口需配置可信 Controller HTTPS 地址，复用上述固定下载与 hash，完成 UI 复制命令的空白主机验收后再交付。
+独立 CI 任务 `Agent installation / Ubuntu 24.04 amd64 HTTPS` 在一次性主机运行 `scripts/check_agent_installation.py --disposable-system-test`：从真实管理 API 获取与 UI 相同的命令，下载固定远端代码，通过真实控制 TTY 隐藏输入注册凭据，启动 systemd 服务并等待 Controller 收到 HTTPS 心跳。检查 0600 凭据、服务用户、默认未启用 helper、重复安装不覆盖、凭据重复消费被拒绝，以及终端输出/服务日志/进程参数快照/非交互 shell history 未含凭据。浏览器复制、关闭/迟到响应、重复点击、剪贴板失败和登录失效另由前端行为测试覆盖。
+
+| 平台 | amd64 | arm64 |
+| --- | --- | --- |
+| Ubuntu 24.04 | 独立 CI 安装与 HTTPS 心跳任务 | 待实测 |
+| Ubuntu 22.04 | 待实测 | 待实测 |
+| Debian 12 | 待实测 | 待实测 |
+| Debian 13 | 待实测 | 待实测 |
+
+该 CI 使用隔离 runner 的测试域名、回环 HTTPS Controller 和专用测试 CA（保持证书/主机名校验），不是公网可达性验收；不在开发机或生产运行此特权脚本。CI 结果应随 PR/发布记录核对，不能把平台允许列表、进程快照或单元测试当作全部主机/整个安装期间的完整证明。真实公网 HTTPS、其余七个平台组合及生产升级仍待分别验收。
 
 维护者可用 `python -m scripts.agent_install_command --bootstrap-commit <完整提交> --bootstrap-sha256 <可信SHA256> --server https://your-controller.example` 重新生成命令；可选 `--action runtime` 或 `--action check`，这两种操作不传 `--server`。修改 bootstrap 后须同步固定提交、hash 与文档，不能只改下载 URL。
