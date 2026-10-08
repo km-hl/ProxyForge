@@ -45,7 +45,7 @@
 | [tests/mihomo/README.md](../tests/mihomo/README.md) | 本次补齐中文正文 | 下载/生成/解析命令、网络隔离、静态差异与未覆盖范围 |
 | [DOCUMENTATION.md](DOCUMENTATION.md) | 本文 | 完整索引与后续维护要求 |
 | [EGERN_EXPORT.md](EGERN_EXPORT.md) | 中文正文 | Egern 原生订阅、规则资源、兼容边界、鉴权、验证与恢复 |
-| [AGENT_INSTALL_DEBIAN_CI.md](AGENT_INSTALL_DEBIAN_CI.md) | 中文正文 | Debian 同架构 systemd 容器、固定镜像、特权 CI 范围及 VM/公网边界 |
+| [AGENT_INSTALL_DEBIAN_CI.md](AGENT_INSTALL_DEBIAN_CI.md) | 中文正文 | Debian systemd 容器/完整 VM、固定镜像与 CI 边界；隔离 KVM 的公网 operator 命令、备份、清理及实测范围 |
 
 ## 核验方式与持续维护
 
