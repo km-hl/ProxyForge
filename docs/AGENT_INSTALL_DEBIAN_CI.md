@@ -19,7 +19,7 @@
 
 执行管理 API 返回的控制台命令，真实下载固定 bootstrap/source、隐藏 TTY 输入、systemd 服务启动、可信 HTTPS 注册与心跳。继续检查凭据 0600、默认不安装 helper、已有安装拒绝、注册凭据单次消费，以及凭据未进入输出、日志、进程参数快照或非交互 shell history。
 
-HTTPS Controller 在容器回环地址运行，使用专用测试 CA 并保留证书/主机名校验；测试 Controller 的 venv 与 Agent 使用的系统解释器分开。测试不修改 Agent 0.6.0、固定 bootstrap/source/hash、API、schema 或生产镜像。
+HTTPS Controller 在容器回环地址运行，使用专用测试 CA 并保留证书/主机名校验；测试 Controller 的 venv 与 Agent 使用的系统解释器分开。Agent 0.6.0 的 Python 模块与协议保持兼容；本次推进 bootstrap/source/hash 固定锚点以包含 helper unit 降权修复，API 结构、schema 与生产镜像运行状态不变。
 
 对应 CI 四项 job 全部成功后，可记为 **同架构 Debian 用户空间/systemd 容器安装实测**。目标提交结果仍须逐次核对。完整 Debian VM/裸机差异、真实公网 HTTPS、生产 Agent 升级继续单列验收，不能用容器结果代替。
 

@@ -8,9 +8,9 @@
 
 ## 版本与前提
 
-- Agent 软件版本 **0.6.0**，固定来源为已合并 #39 的完整提交 `977b16b41e0d5332d933df007e7a683189c1fdc8`；不是 `master` 或 `latest`。
-- 官方源码地址：`https://codeload.github.com/km-hl/ProxyForge/tar.gz/977b16b41e0d5332d933df007e7a683189c1fdc8`。
-- 源码归档 SHA256：`408460fa77682ea8fed5eb3591cf7f737f38072970d91c2ea006238029805361`。已下载并逐一比对其中 24 个 Agent 文件与该提交 Git blob 一致。
+- Agent 软件版本 **0.6.0**，固定来源为包含 helper 降权修复的完整提交 `da2550a923f3a64a7d1e932a56090a34966f6ab7`；不是 `master` 或 `latest`。
+- 官方源码地址：`https://codeload.github.com/km-hl/ProxyForge/tar.gz/da2550a923f3a64a7d1e932a56090a34966f6ab7`。
+- 源码归档 SHA256：`3a95a0edac4ee87445feaffb10b053e6c4cee78e4b988dd5b1675768ac7b9a1c`。已下载并逐一比对其中 24 个 Agent 文件与该提交 Git blob 一致。
 - bootstrap 自身使用下列命令中的另一固定提交与 SHA256。请从经过审查的可信仓库版本取得本页；命令内的 hash 是预期值，不能改成下载后现场计算的值。源归档若被 GitHub 重新打包导致 hash 变化，将停止，需要维护者重新核验，不自动接受新包。
 - 目标是 Debian 12/13、Ubuntu 22.04/24.04 × amd64/arm64，已运行 systemd、系统 Python 3.9+、系统 CA、可用的 `sudo` 和交互终端。若系统缺少 Python/CA，可先由管理员执行 `sudo apt-get update && sudo apt-get install --no-install-recommends python3 ca-certificates`。
 - 使用已升级 Controller 的可信公网 HTTPS 根地址；域名须为 ASCII 完整域名（国际化域名用 punycode），或公网 IP，允许显式端口。不要附加路径、凭据、query 或 fragment。域名的 DNS 与对外可达性需自行确认；安装器不会把一次地址格式检查当作公网验收。
@@ -42,7 +42,7 @@ import urllib.request
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         raise SystemExit("Bootstrap redirect rejected")
-url = "https://raw.githubusercontent.com/km-hl/ProxyForge/6e2e7ee39b85b3c3c6535a96ea7ac09ac1f86cbf/scripts/agent_bootstrap.py"
+url = "https://raw.githubusercontent.com/km-hl/ProxyForge/00d5a604499e5b22081bc280d4e1e3f0a69b650c/scripts/agent_bootstrap.py"
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 try:
     with opener.open(url, timeout=20) as response:
@@ -51,7 +51,7 @@ try:
         code = response.read(65537)
 except OSError:
     raise SystemExit("Bootstrap download failed") from None
-if len(code) > 65536 or hashlib.sha256(code).hexdigest() != "0b0aea74ff770090bb35866327ed0af5af35372d0c8da0193c14e33a7aca23c5":
+if len(code) > 65536 or hashlib.sha256(code).hexdigest() != "28fa9a875ef5c5513960cfbe8be269fe4a7bd688bb119a62bf461a3625df91c2":
     raise SystemExit("Bootstrap SHA256 mismatch; nothing executed")
 sys.argv = ["verified-agent-bootstrap"] + sys.argv[1:]
 exec(compile(code, "<verified-agent-bootstrap>", "exec"), {"__name__": "__main__"})
@@ -79,7 +79,7 @@ import urllib.request
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         raise SystemExit("Bootstrap redirect rejected")
-url = "https://raw.githubusercontent.com/km-hl/ProxyForge/6e2e7ee39b85b3c3c6535a96ea7ac09ac1f86cbf/scripts/agent_bootstrap.py"
+url = "https://raw.githubusercontent.com/km-hl/ProxyForge/00d5a604499e5b22081bc280d4e1e3f0a69b650c/scripts/agent_bootstrap.py"
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 try:
     with opener.open(url, timeout=20) as response:
@@ -88,7 +88,7 @@ try:
         code = response.read(65537)
 except OSError:
     raise SystemExit("Bootstrap download failed") from None
-if len(code) > 65536 or hashlib.sha256(code).hexdigest() != "0b0aea74ff770090bb35866327ed0af5af35372d0c8da0193c14e33a7aca23c5":
+if len(code) > 65536 or hashlib.sha256(code).hexdigest() != "28fa9a875ef5c5513960cfbe8be269fe4a7bd688bb119a62bf461a3625df91c2":
     raise SystemExit("Bootstrap SHA256 mismatch; nothing executed")
 sys.argv = ["verified-agent-bootstrap"] + sys.argv[1:]
 exec(compile(code, "<verified-agent-bootstrap>", "exec"), {"__name__": "__main__"})
@@ -113,7 +113,7 @@ import urllib.request
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         raise SystemExit("Bootstrap redirect rejected")
-url = "https://raw.githubusercontent.com/km-hl/ProxyForge/6e2e7ee39b85b3c3c6535a96ea7ac09ac1f86cbf/scripts/agent_bootstrap.py"
+url = "https://raw.githubusercontent.com/km-hl/ProxyForge/00d5a604499e5b22081bc280d4e1e3f0a69b650c/scripts/agent_bootstrap.py"
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 try:
     with opener.open(url, timeout=20) as response:
@@ -122,7 +122,7 @@ try:
         code = response.read(65537)
 except OSError:
     raise SystemExit("Bootstrap download failed") from None
-if len(code) > 65536 or hashlib.sha256(code).hexdigest() != "0b0aea74ff770090bb35866327ed0af5af35372d0c8da0193c14e33a7aca23c5":
+if len(code) > 65536 or hashlib.sha256(code).hexdigest() != "28fa9a875ef5c5513960cfbe8be269fe4a7bd688bb119a62bf461a3625df91c2":
     raise SystemExit("Bootstrap SHA256 mismatch; nothing executed")
 sys.argv = ["verified-agent-bootstrap"] + sys.argv[1:]
 exec(compile(code, "<verified-agent-bootstrap>", "exec"), {"__name__": "__main__"})
