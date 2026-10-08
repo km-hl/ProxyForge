@@ -10,6 +10,8 @@ from proxyforge.subscription.builder import (
     build_airport_providers, build_airport_provider_document,
     cleanup_proxy_group_references, build_subscription_config,
 )
+from proxyforge.subscription.egern import build_egern_config
+from proxyforge.subscription.egern_resources import load_rule_resource, resolve_provider_nodes
 import os
 import shutil
 import yaml
@@ -664,6 +666,21 @@ def subscription_airports():
 
 # ================= 订阅下发接口 (对外公开) =================
 
+@app.get("/egern/ruleset/{kind}", response_class=PlainTextResponse)
+def get_egern_rule_set(kind: str, token: str = Query(...), value: str = Query(..., max_length=128),
+                       revision: str = Query(None, max_length=64), no_resolve: bool = Query(False)):
+    if token != SUBSCRIPTION_TOKEN:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    try:
+        template = yaml.safe_load(load_template_content()) or {}
+        content = load_rule_resource(kind, value, template.get('rule-providers') or {}, revision, no_resolve)
+        return PlainTextResponse(content, headers={"Cache-Control": "no-store"})
+    except ConfigValidationError as exc:
+        return PlainTextResponse("规则集转换失败:\n- " + "\n- ".join(exc.errors), status_code=422)
+    except Exception as exc:
+        logger.warning("Egern 规则集请求失败（%s）", type(exc).__name__)
+        return PlainTextResponse("规则集暂时不可用，请稍后重试", status_code=502)
+
 @app.get("/provider/{airport_index}", response_class=PlainTextResponse)
 def get_airport_provider(
     airport_index: int,
@@ -702,10 +719,13 @@ def get_airport_provider(
 def get_subscription(
     request: Request,
     token: str = Query(..., description="安全验证 Token"),
-    name: str = Query("ProxyForge", description="自定义订阅名称")
+    name: str = Query("ProxyForge", description="自定义订阅名称"),
+    format: str = Query("clash", description="订阅格式：clash 或 egern")
 ):
     if token != SUBSCRIPTION_TOKEN:
         raise HTTPException(status_code=401, detail="Unauthorized")
+    if format not in {"clash", "egern"}:
+        raise HTTPException(status_code=400, detail="不支持的订阅格式")
 
     try:
         cleanup_runtime_template_references()
@@ -740,12 +760,29 @@ def get_subscription(
             token,
             managed_references=managed_node_names(),
         )
+        skipped = 0
+        if format == "egern":
+            try:
+                provider_nodes = resolve_provider_nodes(
+                    final_config, airports, airport_proxies, str(request.base_url).rstrip('/'), token,
+                    template_providers=template_config.get('proxy-providers'), ca_bundle=AIRPORT_CA_BUNDLE)
+            except ConfigValidationError:
+                raise
+            except Exception as exc:
+                logger.warning("Egern provider 请求失败（%s）", type(exc).__name__)
+                raise HTTPException(status_code=502, detail="Egern 节点来源暂时不可用，请稍后重试") from None
+            final_config, skipped = build_egern_config(final_config, provider_nodes, str(request.base_url), token)
         yaml_content = yaml.safe_dump(final_config, allow_unicode=True, sort_keys=False)
+        if format == "egern":
+            yaml_content = (f"# ProxyForge Egern：跳过 {skipped} 个不兼容节点；空代理组使用 REJECT。\n"
+                            "# 节点、代理组和分流已转换；DNS/TUN 请在 Egern 中配置。\n" + yaml_content)
         
         encoded_name = urllib.parse.quote(name)
         headers = {
             "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}",
-            "Profile-Title": encoded_name
+            "Profile-Title": encoded_name,
+            "Cache-Control": "no-store",
+            "ProxyForge-Skipped-Nodes": str(skipped),
         }
         
         return PlainTextResponse(content=yaml_content, headers=headers)

@@ -44,6 +44,7 @@
 | [NEXT_STEPS.md](NEXT_STEPS.md) | 中文正文，更新合并状态 | 原始历史依据与当前完成/待验收清单分开 |
 | [tests/mihomo/README.md](../tests/mihomo/README.md) | 本次补齐中文正文 | 下载/生成/解析命令、网络隔离、静态差异与未覆盖范围 |
 | [DOCUMENTATION.md](DOCUMENTATION.md) | 本文 | 完整索引与后续维护要求 |
+| [EGERN_EXPORT.md](EGERN_EXPORT.md) | 中文正文 | Egern 原生订阅、规则资源、兼容边界、鉴权、验证与恢复 |
 
 ## 核验方式与持续维护
 
