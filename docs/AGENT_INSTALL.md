@@ -8,9 +8,9 @@
 
 ## 版本与前提
 
-- Agent 软件版本 **0.6.0**，固定来源为已合并 #39 的完整提交 `977b16b41e0d5332d933df007e7a683189c1fdc8`；不是 `master` 或 `latest`。
-- 官方源码地址：`https://codeload.github.com/km-hl/ProxyForge/tar.gz/977b16b41e0d5332d933df007e7a683189c1fdc8`。
-- 源码归档 SHA256：`408460fa77682ea8fed5eb3591cf7f737f38072970d91c2ea006238029805361`。已下载并逐一比对其中 24 个 Agent 文件与该提交 Git blob 一致。
+- Agent 软件版本 **0.6.0**，固定来源为包含 helper 降权修复的完整提交 `da2550a923f3a64a7d1e932a56090a34966f6ab7`；不是 `master` 或 `latest`。
+- 官方源码地址：`https://codeload.github.com/km-hl/ProxyForge/tar.gz/da2550a923f3a64a7d1e932a56090a34966f6ab7`。
+- 源码归档 SHA256：`3a95a0edac4ee87445feaffb10b053e6c4cee78e4b988dd5b1675768ac7b9a1c`。已下载并逐一比对其中 24 个 Agent 文件与该提交 Git blob 一致。
 - bootstrap 自身使用下列命令中的另一固定提交与 SHA256。请从经过审查的可信仓库版本取得本页；命令内的 hash 是预期值，不能改成下载后现场计算的值。源归档若被 GitHub 重新打包导致 hash 变化，将停止，需要维护者重新核验，不自动接受新包。
 - 目标是 Debian 12/13、Ubuntu 22.04/24.04 × amd64/arm64，已运行 systemd、系统 Python 3.9+、系统 CA、可用的 `sudo` 和交互终端。若系统缺少 Python/CA，可先由管理员执行 `sudo apt-get update && sudo apt-get install --no-install-recommends python3 ca-certificates`。
 - 使用已升级 Controller 的可信公网 HTTPS 根地址；域名须为 ASCII 完整域名（国际化域名用 punycode），或公网 IP，允许显式端口。不要附加路径、凭据、query 或 fragment。域名的 DNS 与对外可达性需自行确认；安装器不会把一次地址格式检查当作公网验收。
@@ -42,7 +42,7 @@ import urllib.request
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         raise SystemExit("Bootstrap redirect rejected")
-url = "https://raw.githubusercontent.com/km-hl/ProxyForge/6e2e7ee39b85b3c3c6535a96ea7ac09ac1f86cbf/scripts/agent_bootstrap.py"
+url = "https://raw.githubusercontent.com/km-hl/ProxyForge/00d5a604499e5b22081bc280d4e1e3f0a69b650c/scripts/agent_bootstrap.py"
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 try:
     with opener.open(url, timeout=20) as response:
@@ -51,7 +51,7 @@ try:
         code = response.read(65537)
 except OSError:
     raise SystemExit("Bootstrap download failed") from None
-if len(code) > 65536 or hashlib.sha256(code).hexdigest() != "0b0aea74ff770090bb35866327ed0af5af35372d0c8da0193c14e33a7aca23c5":
+if len(code) > 65536 or hashlib.sha256(code).hexdigest() != "28fa9a875ef5c5513960cfbe8be269fe4a7bd688bb119a62bf461a3625df91c2":
     raise SystemExit("Bootstrap SHA256 mismatch; nothing executed")
 sys.argv = ["verified-agent-bootstrap"] + sys.argv[1:]
 exec(compile(code, "<verified-agent-bootstrap>", "exec"), {"__name__": "__main__"})
@@ -79,7 +79,7 @@ import urllib.request
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         raise SystemExit("Bootstrap redirect rejected")
-url = "https://raw.githubusercontent.com/km-hl/ProxyForge/6e2e7ee39b85b3c3c6535a96ea7ac09ac1f86cbf/scripts/agent_bootstrap.py"
+url = "https://raw.githubusercontent.com/km-hl/ProxyForge/00d5a604499e5b22081bc280d4e1e3f0a69b650c/scripts/agent_bootstrap.py"
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 try:
     with opener.open(url, timeout=20) as response:
@@ -88,7 +88,7 @@ try:
         code = response.read(65537)
 except OSError:
     raise SystemExit("Bootstrap download failed") from None
-if len(code) > 65536 or hashlib.sha256(code).hexdigest() != "0b0aea74ff770090bb35866327ed0af5af35372d0c8da0193c14e33a7aca23c5":
+if len(code) > 65536 or hashlib.sha256(code).hexdigest() != "28fa9a875ef5c5513960cfbe8be269fe4a7bd688bb119a62bf461a3625df91c2":
     raise SystemExit("Bootstrap SHA256 mismatch; nothing executed")
 sys.argv = ["verified-agent-bootstrap"] + sys.argv[1:]
 exec(compile(code, "<verified-agent-bootstrap>", "exec"), {"__name__": "__main__"})
@@ -113,7 +113,7 @@ import urllib.request
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         raise SystemExit("Bootstrap redirect rejected")
-url = "https://raw.githubusercontent.com/km-hl/ProxyForge/6e2e7ee39b85b3c3c6535a96ea7ac09ac1f86cbf/scripts/agent_bootstrap.py"
+url = "https://raw.githubusercontent.com/km-hl/ProxyForge/00d5a604499e5b22081bc280d4e1e3f0a69b650c/scripts/agent_bootstrap.py"
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 try:
     with opener.open(url, timeout=20) as response:
@@ -122,7 +122,7 @@ try:
         code = response.read(65537)
 except OSError:
     raise SystemExit("Bootstrap download failed") from None
-if len(code) > 65536 or hashlib.sha256(code).hexdigest() != "0b0aea74ff770090bb35866327ed0af5af35372d0c8da0193c14e33a7aca23c5":
+if len(code) > 65536 or hashlib.sha256(code).hexdigest() != "28fa9a875ef5c5513960cfbe8be269fe4a7bd688bb119a62bf461a3625df91c2":
     raise SystemExit("Bootstrap SHA256 mismatch; nothing executed")
 sys.argv = ["verified-agent-bootstrap"] + sys.argv[1:]
 exec(compile(code, "<verified-agent-bootstrap>", "exec"), {"__name__": "__main__"})
@@ -152,7 +152,7 @@ PROXYFORGE_BOOTSTRAP
 
 单元测试覆盖 hash 失败不执行、路径/链接/设备/大小限制、URL/命令注入、无 token 参数、环境隔离、已有路径拒绝、版本不一致及失败清理。CI 在 Python 3.9–3.13 执行，Ubuntu 24.04 的额外步骤下载真实固定归档，使用 disposable runner 的 root 权限测试目录/软硬链接/所有者检查；不在此测试中执行实际安装器。
 
-独立 CI 任务 `Agent installation / Ubuntu <版本> <架构> HTTPS` 覆盖 Ubuntu 22.04/24.04 × amd64/arm64 四种原生主机组合（[GitHub 官方运行器列表](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)），每项独立运行，失败不取消其他组合。任务运行 `scripts/check_agent_installation.py --disposable-system-test --expected-ubuntu <22.04或24.04> --expected-arch <amd64或arm64>`：从真实管理 API 获取与 UI 相同的命令，下载固定远端代码，通过真实控制 TTY 隐藏输入注册凭据，启动 systemd 服务并等待 Controller 收到 HTTPS 心跳。检查 0600 凭据、服务用户、默认未启用 helper、重复安装不覆盖、凭据重复消费被拒绝，以及终端输出/服务日志/进程参数快照/非交互 shell history 未含凭据。浏览器复制、关闭/迟到响应、重复点击、剪贴板失败和登录失效另由前端行为测试覆盖。
+独立 CI 任务 `Agent + helper / Ubuntu <版本> <架构> HTTPS` 覆盖 Ubuntu 22.04/24.04 × amd64/arm64 四种原生主机组合（[GitHub 官方运行器列表](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)），每项独立运行，失败不取消其他组合。任务运行 `scripts/check_agent_installation.py --disposable-system-test --expected-ubuntu <22.04或24.04> --expected-arch <amd64或arm64> --check-helper`：从真实管理 API 获取与 UI 相同的命令，下载固定远端代码，通过真实控制 TTY 隐藏输入注册凭据，启动 systemd 服务并等待 Controller 收到 HTTPS 心跳。检查 0600 凭据、服务用户、默认未启用 helper、重复安装不覆盖、凭据重复消费被拒绝，以及终端输出/服务日志/进程参数快照/非交互 shell history 未含凭据。浏览器复制、关闭/迟到响应、重复点击、剪贴板失败和登录失效另由前端行为测试覆盖。
 
 | 平台 | amd64 | arm64 |
 | --- | --- | --- |
@@ -165,6 +165,20 @@ PROXYFORGE_BOOTSTRAP
 
 Debian 四项在同架构 GitHub VM 内运行官方 Debian 用户空间/systemd PID 1 的一次性容器，系统 Python 为 3.11/3.13；共享宿主机内核，不代表完整 Debian VM/裸机验收。固定镜像、参数、特权范围与验证见[Debian CI 说明](AGENT_INSTALL_DEBIAN_CI.md)。
 
-表中 CI 项表示持续执行的测试入口，是否通过以目标提交八项 job 的结果为准。该 CI 使用隔离 runner 的测试域名、回环 HTTPS Controller 和专用测试 CA（保持证书/主机名校验），不是公网可达性验收；不在开发机或生产运行此特权脚本。CI 结果应随 PR/发布记录核对，不能把平台允许列表、进程快照或单元测试当作全部主机/整个安装期间的完整证明。真实公网 HTTPS、完整 Debian VM/裸机四组合、可选 helper 的完整平台矩阵及生产升级仍待分别验收。GitHub 镜像预装了测试工具，不等同于所有云厂商的最小系统镜像。
+表中 CI 项表示持续执行的测试入口，是否通过以目标提交八项 job 的结果为准。该 CI 使用隔离 runner 的测试域名、回环 HTTPS Controller 和专用测试 CA（保持证书/主机名校验），不是公网可达性验收；不在开发机或生产运行此特权脚本。CI 结果应随 PR/发布记录核对，不能把平台允许列表、进程快照或单元测试当作全部主机/整个安装期间的完整证明。真实公网 HTTPS、完整 Debian VM/裸机四组合、生产升级仍待分别验收。helper 安装 CI 的新结果也须按目标提交八项 job 核对，不代表公网链路已验收。GitHub 镜像预装了测试工具，不等同于所有云厂商的最小系统镜像。
 
 维护者可用 `python -m scripts.agent_install_command --bootstrap-commit <完整提交> --bootstrap-sha256 <可信SHA256> --server https://your-controller.example` 重新生成命令；可选 `--action runtime` 或 `--action check`，这两种操作不传 `--server`。修改 bootstrap 后须同步固定提交、hash 与文档，不能只改下载 URL。
+
+## 显式 helper 安装验收
+
+八项安装 CI 均在普通 Agent 验收后显式传入 `--check-helper`，执行同一管理 API 返回的 `commands.runtime` 命令。先确认普通安装没有 helper，再核验 socket 为 root:proxyforge-agent、0660，普通 Agent 的配置/身份没有改变；启用 helper 本身不下载 sing-box。
+
+随后使用已安装 Agent 模块和系统 Python，切换到真实 `proxyforge-agent` UID，通过 Unix socket 执行固定版本 sing-box 的安装、重启、回滚、停止与启动，实际下载对应架构二进制并运行 systemd 服务。核对 sing-box 进程属于专用非 root 用户、默认配置没有入站监听、重复 helper 安装被拒绝；等待 Controller 收到能力和运行状态心跳。额外用 root 调用同一 socket，确认不属于 Agent UID 的调用被拒绝且没有创建 runtime。
+
+本测试覆盖显式安装、本机授权、真实进程和 HTTPS 能力心跳；生命周期动作由本机测试客户端发给 helper，**不代替 Controller 队列/租约的端到端验收**。普通安装仍默认不启用 helper，现有单架构 Reality/SS2022 链路 CI 单独保留；这八项不宣称完成各平台公网代理握手。脚本停止自己在本次测试中启用的服务，容器由外层驱动清理，Ubuntu VM 随 CI 销毁，不清理生产安装。
+
+### systemd 降权检查修复与已安装 helper
+
+八组合验收发现，systemd 255/257 的 seccomp 初始化可能移除未显式保留的 `CAP_SETUID`，使 root helper 无法将配置检查子进程切换到专用 runtime 用户。helper unit 显式设置 `AmbientCapabilities=CAP_SETUID`，保留已有设计要求的降权能力；`NoNewPrivileges=true`、目录保护、socket 调用方校验和非 root sing-box 服务保持有效。依据见[systemd 255 初始化源码](https://github.com/systemd/systemd/blob/v255/src/core/exec-invoke.c#L4484-L4490)。
+
+普通 Agent 的 Python 模块、0.6.0 版本、身份凭据和协议均未改变。已安装旧 helper 的主机须由管理员先私密备份 Agent 配置、runtime 数据及旧 unit，停止 `proxyforge-runtime.socket` 与 `proxyforge-runtime.service`，核对新版固定来源中的 unit 后替换 `/etc/systemd/system/proxyforge-runtime.service`，执行 `sudo systemctl daemon-reload` 和 `sudo systemctl start proxyforge-runtime.socket`，再验证实际 runtime 操作与心跳；无需删除配置或重新注册。回退时停止 helper、恢复备份 unit 并重新加载/启动 socket。旧环境如果缺少该能力，恢复旧 unit 会恢复原安装失败限制。本 CI 不在生产主机执行升级。

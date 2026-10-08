@@ -20,9 +20,9 @@ import urllib.parse
 import urllib.request
 
 
-# Reviewed #39 source, not a mutable branch or an invented release URL.
-SOURCE_COMMIT = "977b16b41e0d5332d933df007e7a683189c1fdc8"
-SOURCE_SHA256 = "408460fa77682ea8fed5eb3591cf7f737f38072970d91c2ea006238029805361"
+# Fixed source including the helper UID capability fix; never a mutable branch.
+SOURCE_COMMIT = "da2550a923f3a64a7d1e932a56090a34966f6ab7"
+SOURCE_SHA256 = "3a95a0edac4ee87445feaffb10b053e6c4cee78e4b988dd5b1675768ac7b9a1c"
 SOURCE_URL = "https://codeload.github.com/km-hl/ProxyForge/tar.gz/" + SOURCE_COMMIT
 PREFIX = "ProxyForge-" + SOURCE_COMMIT
 MAX_DOWNLOAD = 8 * 1024 * 1024
