@@ -181,6 +181,29 @@ jobs:
           sudo env GITHUB_ACTIONS=true "$(command -v python)" scripts/check_agent_installation.py
           --disposable-system-test --expected-ubuntu "${{ matrix.ubuntu }}" --expected-arch "${{ matrix.arch }}"
 
+  agent-install-debian:
+    name: Debian ${{ matrix.debian }} ${{ matrix.arch }} / native systemd container
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: ubuntu-24.04, debian: "12", arch: amd64}
+          - {runner: ubuntu-24.04-arm, debian: "12", arch: arm64}
+          - {runner: ubuntu-24.04, debian: "13", arch: amd64}
+          - {runner: ubuntu-24.04-arm, debian: "13", arch: arm64}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify installation in a native Debian systemd container
+        # Dedicated disposable VM; no host business mounts or production execution.
+        run: >-
+          sudo env GITHUB_ACTIONS=true "$(command -v python)" scripts/check_debian_installation.py
+          --disposable-system-test --expected-debian "${{ matrix.debian }}" --expected-arch "${{ matrix.arch }}"
+
   controller-image:
     name: Controller image / non-root and recovery
     runs-on: ubuntu-24.04
