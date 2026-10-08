@@ -2,6 +2,8 @@
 
 ProxyForge 是一个**全可视化**的专属节点订阅聚合与配置下发中心。它可以作为你个人的后端服务，拉取购买的多个机场节点，无缝混入自建节点，并将它们与自定义的策略组和分流规则智能合并，最终通过 HTTP API 输出完整的 Clash/Mihomo YAML 配置文件。
 
+中文文档入口与覆盖范围见[说明索引](docs/DOCUMENTATION.md)。
+
 ## ✨ 核心亮点
 
 1. **🎨 全可视化 Web 仪表盘 (Web UI)**
@@ -26,9 +28,9 @@ ProxyForge 是一个**全可视化**的专属节点订阅聚合与配置下发�
    - 保存模板和生成最终订阅前会执行静态可用性检查，包括节点必填字段、代理组/provider 引用、规则目标、`RULE-SET` 引用和代理组循环，并在错误时返回具体位置。
    - 删除或重命名自建节点、机场时，会自动清理代理组中对应的 `proxies` / `use` 悬空引用；旧配置在启动时也会自动迁移清理。
 
-5. **⚡ 零延迟热更新与后台守护 (Daemon)**
-   - **全自动缓存刷新**：内置后台守护协程，每 4 小时静默拉取并更新所有机场数据。
-   - **0 延迟体验**：当您的代理客户端发起拉取请求时，服务器会直接下发热腾腾的缓存数据，不再有转圈等待。
+5. **⚡ 缓存与后台刷新**
+   - **全自动缓存刷新**：启动等待 300 秒后开始刷新，每轮结束后等待 4 小时；网络和磁盘处理在线程中执行，每批最多 5 个机场并发。
+   - **缓存复用**：命中有效缓存时减少重复拉取；首次请求、缓存失效或强制刷新仍可能等待网络，失败时按已有缓存规则回退。
 
 6. **🔒 持久化备份与故障回退**
    - 所有配置更改都会持久化到 `data/`。机场服务器暂时不可用时，服务会按机场回退到最近一次成功缓存；如果该机场从未成功缓存，则明确返回错误而不是下发空配置。
@@ -37,7 +39,7 @@ ProxyForge 是一个**全可视化**的专属节点订阅聚合与配置下发�
 
 ## 🚀 部署教程 (VPS 推荐)
 
-> 推荐使用 Docker Compose 方式进行部署。一键拉起，简单无忧。
+> 推荐使用 Docker Compose。首次部署先准备数据权限，已有安装先按发布流程备份、验证再升级。
 
 Controller 镜像使用 Python 3.12 / Debian Bookworm，源码 CI 覆盖 Python 3.12、3.13；Agent 仍使用独立的系统 Python 3.9+。版本矩阵、升级回滚和隔离恢复命令见 [Python 运行时说明](docs/PYTHON_RUNTIME.md)，锁文件安装与更新见[依赖锁说明](docs/DEPENDENCIES.md)。
 
@@ -73,7 +75,7 @@ docker compose exec proxyforge cat /app/data/admin_token.txt
 ```bash
 docker compose exec proxyforge python -c "import json; print(json.load(open('/app/data/config.json'))['subscription_token'])"
 ```
-您的服务现在已经可以在后台安全运行了，并且会在 VPS 崩溃或重启时自动恢复！
+启动后请检查服务状态、日志、管理登录和订阅响应。Compose 重启策略可恢复进程，但不替代数据备份、故障排查或恢复演练。
 
 ---
 
@@ -109,27 +111,19 @@ docker compose exec proxyforge python -c "import json; print(json.load(open('/ap
 
 这些配置用于降低 DNS 泄露风险，实际结果仍受操作系统、浏览器、客户端覆盖配置及网络环境影响。预设 Bootstrap 包含明文 DNS；配置 DoH 不等于所有查询均加密或经代理。关闭 IPv6 DNS 不等于关闭系统 IPv6。Strict Route 依赖 auto-route，可能影响部分应用；服务器不会修改客户端的路由、防火墙或 TUN 权限。
 
-概览显示的是已保存模板的静态配置状态，最终订阅预览仍来自真实 `/sub` 输出。此功能不进行真实 DNS 泄露检测。多浏览器同时修改模板尚无版本冲突保护，全局导入仍可能部分成功。
+概览显示的是已保存模板的静态配置状态，最终订阅预览仍来自真实 `/sub` 输出。此功能不进行真实 DNS 泄露检测。模板保存使用 `expected_revision` 检测冲突；全局导入在统一锁和持久事务日志下提交，故障后先完成恢复再读取，见[模板修订与历史](docs/TEMPLATE_REVISIONS.md)。
 
 ## 🔄 日常更新代码指南
 
-Agent 提供服务器注册、心跳、在线状态、角色标签与凭据撤销，主动连接 HTTPS 主控，无入站监听。受控任务支持领取、回报、重试和取消；本地可选启用独立 sing-box 运行环境，并从控制台部署直连 VLESS Reality、自动生成客户端节点。参见 [Agent 安装与恢复](agent/README.md)、[B1 注册协议](docs/AGENT_B1.md)、[B2 任务协议](docs/AGENT_B2.md)、[B3 托管运行环境](docs/AGENT_B3.md) 和 [B4 Reality 部署](docs/AGENT_B4.md)。
+Agent 提供服务器注册、心跳、在线状态、角色标签与凭据撤销，主动连接 HTTPS 主控，无入站监听。受控任务支持领取、回报、重试和取消；本地可选启用独立 sing-box 运行环境，并从控制台部署直连 VLESS Reality、自动生成客户端节点。参见 [Agent 安装与恢复](agent/README.zh-CN.md)、[B1 注册协议](docs/AGENT_B1.md)、[B2 任务协议](docs/AGENT_B2.md)、[B3 托管运行环境](docs/AGENT_B3.md) 和 [B4 Reality 部署](docs/AGENT_B4.md)。
 
 新主机可直接复制[Agent 完整下载安装命令](docs/AGENT_INSTALL.md)，从固定源码校验到安装，并在隐藏提示输入一次性凭据。另有[中文升级与恢复](agent/README.zh-CN.md)和维护者的[固定安装产物](docs/AGENT_ARTIFACTS.md)说明。部署环境设置 `PROXYFORGE_PUBLIC_URL` 后，可在「添加服务器」复制完整命令；一次性凭据在终端隐藏输入。Ubuntu 24.04 amd64 的安装/HTTPS 心跳纳入独立 CI，其余平台和公网验收状态见安装指南；正式 Release 仍按开发计划推进。
 
 模板编辑现已使用内容版本进行并发保护：保存冲突时保留草稿，并可在底层配置页查看、比较和恢复历史。旧页面升级后需要刷新；API 保存请求须携带 `expected_revision`。全局导入通过统一接口提交节点、机场和模板。接口、存储恢复与回滚说明见 [模板版本与历史](docs/TEMPLATE_REVISIONS.md)。
 
-当有新功能推送到 GitHub 后，在 VPS 上更新代码非常简单，且**绝对不会**覆盖或影响您的私有配置：
+更新采用固定已验收提交，具体命令见[发布验收与恢复流程第 9 节](docs/RELEASE_ACCEPTANCE.md)。先保存旧提交、镜像和配置，停止写入者、私密备份完整数据并校验，再在副本上验证迁移和恢复；通过后切换目标版本。跨版本升级可能迁移数据库、凭据或清理失效引用，不能承诺“更新绝不影响配置”。
 
-```bash
-set -e
-cd ProxyForge
-git pull --ff-only
-docker compose up -d --build
-```
-
-`template.example.yaml` 只是仓库默认模板。Web UI 修改的真实配置保存在
-`data/template.yaml`，因此日常 `git pull` 不会再与用户配置冲突。
+`template.example.yaml` 只是仓库默认模板，Web UI 写入 `data/template.yaml`。Git 忽略运行数据可避免普通拉取直接覆盖这些文件，但应用迁移仍需备份。旧 root-owned 数据还必须按[非 root 容器说明](docs/CONTAINER_PERMISSIONS.md)迁移权限；不要直接用 root 绕过启动检查。
 
 升级到凭据分离版本时，原有 `secret_token` 会原样迁移为客户端订阅密钥，因此现有客户端链接不会变化。系统会另行生成管理密钥，其 PBKDF2 哈希保存在 `data/config.json`，首次明文写入 `data/admin_token.txt`；请用部署章节中的命令读取并登录，然后在 WebUI 中更换。公开示例订阅密钥 `my_secret_token` 仍会自动轮换。
 
@@ -196,21 +190,12 @@ proxies:
 
 ### 从旧版 `template.yaml` 一次性升级
 
-旧版服务器首次升级到新存储结构时，需要先保留根目录中的运行配置：
+此节仅针对还把 `template.yaml`、`custom_nodes.yaml` 放在仓库根目录的旧部署；已有 `data/` 的实例不要执行重复覆盖迁移。
 
-```bash
-set -e
-cd /root/ProxyForge
-cp template.yaml /root/ProxyForge-template.backup.yaml
-git restore template.yaml
-git pull --ff-only
-mkdir -p data
-cp /root/ProxyForge-template.backup.yaml data/template.yaml
-if [ -f custom_nodes.yaml ]; then cp custom_nodes.yaml data/custom_nodes.yaml; fi
-docker compose up -d --build
-```
-
-确认 Web UI 中的代理组和规则正常后，可以删除仓库外的备份文件。此后使用上面的日常更新命令即可。
+1. 停止旧服务及其他写入者，记录旧代码/镜像；将根目录配置、`.env` 和已有运行数据成套私密备份到仓库外，核验备份内容与 SHA256。
+2. 在独立副本准备已验收的新代码；若代码库仍跟踪旧 `template.yaml`，不要在唯一现场副本上直接 `git restore`。只从已核验备份复制配置到新目录的 `data/template.yaml`、`data/custom_nodes.yaml`；目标存在时先核对来源，不能覆盖合并。
+3. 按[容器权限迁移](docs/CONTAINER_PERMISSIONS.md)准备 10001:10001 的数据权限，再按[发布验收](docs/RELEASE_ACCEPTANCE.md)在隔离副本启动并检查模板、规则和订阅。
+4. 验收后切换服务；保留旧数据与回滚镜像到验收窗口结束，不在刚启动成功时删除备份。
 
 ---
 
@@ -230,14 +215,9 @@ Agent 已支持直连 VLESS Reality 的配置生成、失败回滚和自动客�
 开发与维护请先阅读[项目目录、模块职责及依赖边界](docs/PROJECT_STRUCTURE.md)。升级到完整控制面前，请按[发布验收与恢复流程](docs/RELEASE_ACCEPTANCE.md)完成冷备、隔离恢复演练和分阶段上线；代码验收与生产部署分别记录。
 
 **迁移步骤：**
-1. 在新 VPS 上克隆项目并进入目录：
-   ```bash
-   git clone https://github.com/km-hl/ProxyForge.git
-   cd ProxyForge
-   ```
-2. 将旧 VPS 上 ProxyForge 目录下的 `.env` 以及整个 `data` 文件夹复制到新服务器。旧版备份中的根目录 `template.yaml` 和 `custom_nodes.yaml` 请分别复制为 `data/template.yaml` 和 `data/custom_nodes.yaml`。
-3. 在新 VPS 上启动容器：
-   ```bash
-   docker compose up -d
-   ```
-   大功告成！您之前所有的节点、配置、筛选规则都会瞬间满血复活，并且客户端的订阅链接完全不需要改变（只需把域名解析或 IP 换成新的即可）。
+
+1. 按[发布验收与恢复](docs/RELEASE_ACCEPTANCE.md)停止旧服务写入，记录固定提交、镜像、Compose/覆盖配置；制作完整一致冷备并校验。不能让新旧 Controller 同时向同一批 Agent 下发任务。
+2. 在新 VPS 准备同版本代码/镜像，将核验后的 `.env` 和完整 `data/` 恢复到独立目标目录，避免覆盖现有数据；旧根目录格式先按上一节做副本迁移。私密备份、数据库与 deployment.key 必须配套。
+3. 按[容器权限说明](docs/CONTAINER_PERMISSIONS.md)核对实际挂载路径、10001:10001 所有权与私有权限；Windows/Docker Desktop 等未验证平台不能直接套用 Linux 权限保证。
+4. 先隔离验证恢复、登录、模板历史、订阅和数据库，再切换域名/反向代理及可信 `PROXYFORGE_PUBLIC_URL`。核对 TLS、端口、Agent 心跳、任务和撤销状态后才恢复同步。
+5. 订阅地址是否保持不变取决于原域名、路径和凭据是否保留；使用 IP 或改变地址的客户端需要更新。保留旧环境用于回滚，恢复成功不等于公网节点链路已验收。

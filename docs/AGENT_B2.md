@@ -1,167 +1,78 @@
-# B2: leased Agent job protocol
+# B2：带租约的 Agent 任务协议（历史阶段）
 
-This phase adds a usable structured queue, demonstrated by a read-only
-`singbox.status` action. Installation, restart, deployment and arbitrary commands
-are not accepted actions. No production deployment is part of this change.
+本文记录 B2 通过只读 `singbox.status` 建立结构化队列时的设计。B2 不接受安装、重启、部署或任意命令；后续可写操作见 [B3](AGENT_B3.md) 至 B5。当前安装与升级请使用[发布验收流程](RELEASE_ACCEPTANCE.md)，不能把本文的 schema 2、Agent 0.2.0 当作当前版本；代码交付不等于生产部署。
 
-## 1. Files
+## 1. 文件
 
-`proxyforge/control/job_store.py` implements the transactional queue; `proxyforge/control/control_store.py` migrates
-SQLite and cancels active jobs on revocation. `proxyforge/control/job_api.py` defines strict schemas
-and routes, attached by `proxyforge/control/agent_api.py`. `agent/jobs.py` implements the allowlist,
-local process lock and result journal. Agent transport, loop and installer include
-the new protocol. `static/agents.js` provides task creation, status and cancellation.
-Tests and CI cover the protocol alongside existing configuration/Mihomo checks.
+`proxyforge/control/job_store.py` 实现事务队列；`control_store.py` 负责 SQLite 迁移及撤销时取消活动任务；`job_api.py` 定义严格结构和路由，由 `agent_api.py` 接入。`agent/jobs.py` 实现允许列表、本地进程锁与结果日志。传输、主循环和安装器加入任务协议；`static/agents.js` 提供创建、状态和取消界面。测试与 CI 同时保留既有配置/Mihomo 检查。
 
-## 2. Data model
+## 2. 数据模型
 
-SQLite schema 2 adds `jobs`, indexed by Agent/status/time. Each job records its
-UUID, target Agent, administrator request UUID, action, immutable payload and
-deployment revision, state, creation/deadline/assignment/start/finish timestamps,
-attempt count, hashed lease credential/expiry, structured result and fixed error
-code. `(agent_id, request_id)` is unique. Agent deletion cascades jobs; revocation
-retains history and cancels unfinished jobs. Existing YAML files stay unchanged.
+schema 2 新增 `jobs`，按 Agent/状态/时间建立索引。每条任务包含 UUID、目标 Agent、管理员请求 UUID、动作、不可变 payload 与 deployment revision、状态、创建/期限/分配/开始/结束时间、尝试次数、租约凭据哈希/到期时间、结构化结果和固定错误码。`(agent_id, request_id)` 唯一；删除 Agent 级联删除任务，撤销保留历史并取消未完成任务。既有 YAML 不变。
 
-Maximum 20 unfinished jobs per Agent, 10,000 retained jobs globally. Creation
-prunes terminal records older than seven days and otherwise returns 429 at capacity.
-Administrative lists return the newest 100 jobs; lease credentials/hashes are
-never exposed there. Idempotent create keys survive for the record's retention
-period. Reusing a removed/expired key can create another read-only query.
+每台 Agent 最多 20 个未完成任务，全局最多保留 10000 条。创建时清理超过 7 天的终态记录，否则达到容量上限返回 429。管理列表返回最新 100 条，不暴露租约凭据/哈希。创建幂等键只在记录保留期内有效；复用已删除/过期记录的键可能创建另一次只读查询。
 
 ## 3. API
 
-All request bodies retain the Agent API's 16 KiB limit and generic 422 errors.
+正文沿用 16 KiB 上限和通用 422 错误。
 
-| Method and path | Body / response |
+| 方法与路径 | 请求／响应 |
 | --- | --- |
-| POST `/api/agents/{agent_id}/jobs` | `request_id` (32 lowercase hex), `type: "singbox.status"`, `payload: {}`, `deployment_revision: null`; returns job |
+| POST `/api/agents/{agent_id}/jobs` | `request_id` 为 32 位小写十六进制，`type: "singbox.status"`、`payload: {}`、`deployment_revision: null`；返回任务 |
 | GET `/api/agents/{agent_id}/jobs` | `{jobs: [...]}` |
-| POST `/api/agents/{agent_id}/jobs/{job_id}/cancel` | Returns cancelled job; already cancelled is idempotent |
-| POST `/api/agent/jobs/claim` | `instance_id`; returns `{job: null}` or `{job: {..., lease_token, job_protocol_version: 1}}` |
-| POST `/api/agent/jobs/{job_id}/start` | `lease_token`; returns running state |
-| POST `/api/agent/jobs/{job_id}/result` | `lease_token`, `result`; returns terminal state |
+| POST `/api/agents/{agent_id}/jobs/{job_id}/cancel` | 返回取消后的任务；重复取消幂等 |
+| POST `/api/agent/jobs/claim` | `instance_id`；返回 `{job: null}` 或 `{job: {..., lease_token, job_protocol_version: 1}}` |
+| POST `/api/agent/jobs/{job_id}/start` | `lease_token`；返回 running 状态 |
+| POST `/api/agent/jobs/{job_id}/result` | `lease_token`、`result`；返回终态 |
 
-Claim uses POST because it mutates queue state; the original plan's GET-next is
-not implemented. No-job uses a JSON envelope rather than 204, matching the
-reference Agent's bounded JSON transport. There is no WebSocket or inbound Agent
-socket. 401 rejects credentials, 404 hides jobs owned by another Agent, and 409
-rejects a stale lease, incompatible capability or invalid state transition.
+领取会改变队列状态，因此使用 POST，不采用早期计划的 GET-next。无任务时返回 JSON 对象而非 204，以适配有界 JSON 传输。无 WebSocket 或 Agent 入站 socket。401 拒绝凭据，404 隐藏其他 Agent 的任务，409 拒绝旧租约、不兼容能力或非法状态转换。
 
-## 4. Authentication
+## 4. 鉴权
 
-Administrative routes use existing management authentication. Machine routes
-require the target Agent's independent bearer credential on every call, including
-replayed results. Admin cookies/tokens and registration/subscription tokens do
-not authorize machine calls. Claim binds the credential to its registered instance.
-Start/result require Agent ownership plus the random 256-bit per-attempt lease.
-Only its SHA-256 digest is stored by the Controller. Revocation and job transitions
-share SQLite write transactions, so an in-flight result cannot bypass revocation.
+管理接口沿用管理鉴权。机器接口每次调用（包括结果重放）均须目标 Agent 独立 Bearer 凭据；管理 Cookie/token、注册/订阅 token 均无效。claim 将凭据绑定已注册实例；start/result 同时要求任务归属及本次尝试的随机 256 位租约，Controller 只保存 SHA256 摘要。撤销与任务状态转换共享 SQLite 写事务，进行中的结果不能绕过撤销。
 
-## 5. Protocol negotiation
+## 5. 协议协商
 
-Inventory protocol remains 1. Metadata adds `job_protocol_version` (default 0 for
-B1 Agents). B2 Agent 0.2.0 advertises 1; the Controller heartbeat advertises its
-job version. Both versions must match before creating/claiming/completing jobs.
-The UI disables creation for Agents without capability. A downgraded Agent's
-pending jobs wait until capability returns or their deadline expires.
+清单协议仍为 1，新增 `job_protocol_version`，B1 Agent 缺省为 0。B2 Agent 0.2.0 上报 1，Controller 心跳响应也声明任务版本。双方版本匹配后才能创建、领取和提交任务；UI 对缺少能力的 Agent 禁用创建。降级 Agent 的待执行任务等待能力恢复或期限到达。
 
-Upgrade Controller first: B1 Controllers reject the new metadata field. B1 Agents
-continue heartbeat/inventory on B2 Controllers and receive no executable jobs.
-Unsupported Linux distributions remain visible as inventory; this read-only
-probe does not install software on them. Platform gates for runtime installation
-belong to the subsequent managed-runtime phase.
+先升级 Controller：B1 Controller 拒绝新增元数据字段。B1 Agent 可继续向 B2 Controller 发清单/心跳，但不接收可执行任务。不支持的 Linux 发行版仍可显示清单；只读探测不安装软件，运行环境安装的平台限制由后续阶段处理。
 
-## 6. State machine
+## 6. 状态机
 
-`pending → assigned → running → success | failed`. Pending/assigned/running can
-become cancelled. A job has a one-hour deadline and a 60-second lease. One Agent
-has at most one leased job at a time. Atomic claim increments attempts and issues
-a fresh lease. Expiry returns assigned/running work to pending, up to three
-attempts; then it fails with `lease_expired`. Deadline exhaustion fails with
-`deadline_exceeded`. Reconciliation happens on claim, create or list; this uses
-server time and needs no scheduler. A reported `probe_failed` is terminal.
+`pending → assigned → running → success | failed`；pending/assigned/running 都可转为 cancelled。任务期限 1 小时、租约 60 秒，每台 Agent 同时最多一个租约任务。原子领取增加尝试次数并签发新租约。租约过期将 assigned/running 放回 pending，最多 3 次尝试，之后以 `lease_expired` 失败；总期限到达以 `deadline_exceeded` 失败。claim/create/list 使用服务器时间处理过期，不依赖调度器。上报 `probe_failed` 为终态。
 
-Start is idempotent for the current live lease. Completion requires running
-state. Repeating an identical completion with the same lease after a lost
-acknowledgment returns the existing result, including after its original expiry.
-A different result, old attempt or cancelled/revoked target is rejected.
-Cancellation does not interrupt a probe already executing on the machine.
+对当前有效租约重复 start 幂等，完成要求 running。完成确认丢失后，以同一租约重复相同结果会返回已有结果，即使原租约已过期；不同结果、旧尝试、已取消或已撤销目标被拒绝。取消不会强制中断机器上已开始的探测。
 
-The reference Agent executes fixed read-only probes, with two subprocess timeouts
-of three seconds each; no long-running actions or lease renewal are implemented.
-Adding mutating actions requires separate desired-state reconciliation and renewal
-design, not just adding another action name to the allowlist.
+B2 使用两次各 3 秒超时的固定只读子进程探测，不实现长任务或续租。新增可写动作必须另设计期望状态收敛与续租，不能仅向允许列表追加动作名。
 
-## 7. Job and result schemas / replay
+## 7. 任务、结果结构与重放
 
-Only `singbox.status` with an empty payload and null deployment revision is valid.
-The revision field is reserved explicitly; deployment actions will require their
-own immutable revision schema in a later phase. Success has `status: "success"`,
-`error: null` and a structured output (`installed`, `running`, bounded `version`,
-status enum). Failure has `status: "failed"`, `output: null`, `error: "probe_failed"`.
-Arbitrary error messages, stderr, commands, paths and URLs are forbidden.
+B2 只接受空 payload、空 deployment revision 的 `singbox.status`。revision 明确保留给后续独立的不可变部署结构。成功为 `status: "success"`、`error: null`，output 含 `installed`、`running`、有界 `version` 和状态枚举；失败为 `status: "failed"`、`output: null`、`error: "probe_failed"`。不接受任意错误文本、stderr、命令、路径或 URL。
 
-The Agent validates the envelope again and records the last 128 results in a
-private atomic journal before uploading. Identity includes job ID, type and
-deployment revision, plus a journal binding to Controller/Agent/instance. A
-redelivered job returns its saved result using the new lease without re-probing.
-The journal holds no bearer or lease credentials; one process holds the config
-lock. The GUI retains a create UUID across uncertain retries until acknowledgment
-(page reload loses that in-memory UUID; inspect the list before creating again).
+Agent 再次校验任务结构，上传前将最近 128 条结果写入私密原子日志。任务身份包含 ID、type、deployment revision，日志另绑定 Controller/Agent/instance。重新下发时用新租约回传已保存结果，不重复探测。日志不保存 Bearer 或租约凭据；每份配置由一个进程持锁。GUI 在不确定重试时保留创建 UUID，直到收到确认；刷新页面会丢失这个内存 UUID，再次创建前应检查列表。
 
-This is bounded at-least-once delivery, not exactly-once execution. A crash after
-probe execution but before journal persistence, an evicted journal entry, or a
-manually deleted journal can repeat a read-only probe. A disconnect spanning all
-three attempts/deadline ends in failure even if a probe locally completed.
-Future destructive actions must be independently idempotent.
+这是有界的至少一次投递，**不保证恰好执行一次**。探测结束但尚未持久化时崩溃、日志淘汰或人工删除，都可能重复只读探测。断连跨越全部尝试或期限时，即使本地已完成也可能最终失败；未来破坏性动作必须自行保证幂等。
 
-## 8. Validation
+## 8. 验证
 
-Tests exercise concurrent idempotent creation and claim, stale attempt rejection,
-retry exhaustion, cancellation/deadlines, revocation and cross-Agent ownership,
-capability mismatch, backpressure/pruning, DB upgrade and migration failure
-rollback, strict API payload/result schemas and secret omission. A real reference
-Agent uses an actual loopback HTTP development server for registration, heartbeat,
-claim/start/result and revocation. A lost upload reclaims the same job and proves
-the persisted local result avoids a second probe. Local process-lock and corrupt
-journal checks fail closed. Frontend capability rules are tested.
+覆盖并发幂等创建/领取、旧尝试拒绝、重试耗尽、取消/期限、撤销和跨 Agent 归属、能力不匹配、容量限制/清理、DB 升级及迁移失败回滚、严格 payload/result 与秘密不外泄。真实参考 Agent 在回环 HTTP 开发服务上完成注册、心跳、领取/开始/结果和撤销；上传丢失后重领同一任务，验证本地持久结果可避免第二次探测。进程锁与损坏日志检查采取失败关闭；前端能力规则有测试。
 
-Existing configuration concurrency/history and Mihomo parser checks remain in CI.
-Full privileged OS/architecture installation and production deployment are not
-claimed. Validation numbers and browser results belong in the accompanying PR.
+既有配置并发/历史及 Mihomo parser CI 保留。B2 不宣称执行完整系统/架构的特权安装或生产部署；各次测试数量和浏览器证据属于对应 PR，最新安装矩阵见[安装指南](AGENT_INSTALL.md)。
 
-## 9. Security boundaries
+## 9. 安全边界
 
-No shell action, SSH access, user-controlled subprocess arguments, script download,
-root job executor, inbound socket or disabled TLS verification. The fixed probe
-only inspects `/opt/proxyforge-agent/bin/sing-box` and `proxyforge-singbox.service`;
-user-managed runtimes are not adopted. UI results use textContent. Fixed error
-codes avoid forwarding stdout/stderr or HTTP response bodies into error logs.
-Agent-reported version/inventory strings remain untrusted bounded data.
+B2 无 shell 动作、SSH、用户可控子进程参数、脚本下载、root 执行器、入站 socket 或关闭 TLS 验证。固定探测只检查 `/opt/proxyforge-agent/bin/sing-box` 与 `proxyforge-singbox.service`，不接管用户运行环境。UI 结果用 textContent；固定错误码避免把 stdout/stderr 或 HTTP 正文写入错误日志。Agent 上报版本/清单仍是受长度限制的不可信数据。
 
-## 10. Deferred scope
+## 10. B2 当时未包含的范围
 
-sing-box install/update/restart, desired-state deployments, VLESS Reality, SS2022,
-managed-node projection, upgrade distribution, long-running job renewal, metrics,
-WebSockets and arbitrary execution. The next planned PR is managed runtime.
+sing-box 安装/更新/重启、期望状态部署、VLESS Reality、SS2022、托管节点投影、升级分发、长任务续租、指标、WebSocket 与任意执行。运行环境和续租后来在 B3 实现；当前阶段进度见[开发计划](NEXT_STEPS.md)。
 
-## 11. Migration and backup
+## 11. 迁移与备份
 
-Schema 1 → 2 is a single transaction and preserves Agent credentials/inventory.
-Fresh databases create schema 1 and 2 transactionally. A newer schema is rejected.
-Before deployment, stop the Controller and make a private consistent runtime
-backup (or use SQLite's backup API for the DB). Never copy only the main database
-while WAL is active. Preserve YAML, credentials and DB together. Stop Agents for
-backup/upgrade when a predictable cutover is required, then upgrade Controller
-before Agents. There is no automatic downgrade migration.
+schema 1 → 2 在单个事务完成，保留 Agent 凭据和清单；新库事务性创建 schema 1、2，拒绝更新的 schema。部署前停 Controller，私密保存一致运行状态，或对 DB 使用 SQLite backup API；WAL 活跃时不要仅复制主文件。YAML、凭据和 DB 成套保存。需要可预测切换时，备份/升级期间也停 Agent，先升级 Controller 再升级 Agent。不提供自动降级迁移。
 
-## 12. Rollback
+## 12. 回滚
 
-An Agent-only rollback to the saved B1 package remains compatible with a B2
-Controller. Preserve its private config/journal; B1 ignores the journal. For a
-Controller rollback to B1, stop Agents and Controller, privately preserve the
-current runtime, and restore the pre-upgrade schema-1 DB with matching code.
-B1 refuses schema 2: changing its version marker or dropping tables is not a safe
-rollback. Restoring a DB loses intervening jobs/enrollments/revocations; reconcile
-those identities and revoke/rotate as needed before resuming. No sing-box state
-was changed by B2. MEMORY.md stays gitignored/dockerignored and is never uploaded.
+仅恢复 B1 Agent 包仍兼容 B2 Controller；保留私密配置/日志，B1 忽略日志。Controller 回到 B1 则须先停 Agent 和 Controller、保存当前现场，再恢复升级前 schema 1 DB 及匹配代码。B1 拒绝 schema 2，修改版本标记或删表不是安全回滚。
+
+恢复 DB 会丢失备份之后的任务、注册和撤销；恢复同步前应核对身份，必要时撤销/轮换。B2 不改变 sing-box 状态。MEMORY.md 继续 Git/Docker 忽略，永不上传。
