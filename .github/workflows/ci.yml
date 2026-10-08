@@ -204,6 +204,30 @@ jobs:
           sudo env GITHUB_ACTIONS=true "$(command -v python)" scripts/check_debian_installation.py
           --disposable-system-test --expected-debian "${{ matrix.debian }}" --expected-arch "${{ matrix.arch }}" --check-helper
 
+  agent-install-debian-vm:
+    name: Agent + helper / Debian ${{ matrix.debian }} ${{ matrix.arch }} / full VM
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: ubuntu-24.04, debian: "12", arch: amd64, qemu: qemu-system-x86}
+          - {runner: ubuntu-24.04-arm, debian: "12", arch: arm64, qemu: qemu-system-arm qemu-efi-aarch64}
+          - {runner: ubuntu-24.04, debian: "13", arch: amd64, qemu: qemu-system-x86}
+          - {runner: ubuntu-24.04-arm, debian: "13", arch: arm64, qemu: qemu-system-arm qemu-efi-aarch64}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install VM tools on disposable runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ${{ matrix.qemu }} qemu-utils cloud-image-utils openssh-client
+      - name: Verify independent Debian kernel and real Agent/helper installation
+        # Native guest architecture; SSH binds only loopback and pins an ephemeral host key.
+        run: >-
+          python3 scripts/check_debian_vm_installation.py --disposable-system-test
+          --expected-debian "${{ matrix.debian }}" --expected-arch "${{ matrix.arch }}"
+
   controller-image:
     name: Controller image / non-root and recovery
     runs-on: ubuntu-24.04

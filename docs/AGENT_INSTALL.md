@@ -165,7 +165,7 @@ PROXYFORGE_BOOTSTRAP
 
 Debian 四项在同架构 GitHub VM 内运行官方 Debian 用户空间/systemd PID 1 的一次性容器，系统 Python 为 3.11/3.13；共享宿主机内核，不代表完整 Debian VM/裸机验收。固定镜像、参数、特权范围与验证见[Debian CI 说明](AGENT_INSTALL_DEBIAN_CI.md)。
 
-表中 CI 项表示持续执行的测试入口，是否通过以目标提交八项 job 的结果为准。该 CI 使用隔离 runner 的测试域名、回环 HTTPS Controller 和专用测试 CA（保持证书/主机名校验），不是公网可达性验收；不在开发机或生产运行此特权脚本。CI 结果应随 PR/发布记录核对，不能把平台允许列表、进程快照或单元测试当作全部主机/整个安装期间的完整证明。真实公网 HTTPS、完整 Debian VM/裸机四组合、生产升级仍待分别验收。helper 安装 CI 的新结果也须按目标提交八项 job 核对，不代表公网链路已验收。GitHub 镜像预装了测试工具，不等同于所有云厂商的最小系统镜像。
+表中 CI 项表示持续执行的测试入口，是否通过以目标提交八项 job 的结果为准。该 CI 使用隔离 runner 的测试域名、回环 HTTPS Controller 和专用测试 CA（保持证书/主机名校验），不是公网可达性验收；不在开发机或生产运行此特权脚本。CI 结果应随 PR/发布记录核对，不能把平台允许列表、进程快照或单元测试当作全部主机/整个安装期间的完整证明。本次新增完整 Debian VM 四组合任务，目标提交结果须另核对；真实公网 HTTPS、裸机差异、生产升级仍待分别验收。helper 安装 CI 的新结果也须按目标提交八项 job 核对，不代表公网链路已验收。GitHub 镜像预装了测试工具，不等同于所有云厂商的最小系统镜像。
 
 维护者可用 `python -m scripts.agent_install_command --bootstrap-commit <完整提交> --bootstrap-sha256 <可信SHA256> --server https://your-controller.example` 重新生成命令；可选 `--action runtime` 或 `--action check`，这两种操作不传 `--server`。修改 bootstrap 后须同步固定提交、hash 与文档，不能只改下载 URL。
 

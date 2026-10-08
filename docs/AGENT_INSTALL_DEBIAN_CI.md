@@ -1,6 +1,6 @@
 # Debian 安装 CI 验收
 
-本任务验证 Debian 12/13 × amd64/arm64 的普通 Agent 安装及随后显式启用的 helper。每项运行在相同架构的独立 GitHub Ubuntu VM 上，启动官方 Debian 用户空间和 systemd PID 1 的一次性容器；不使用 QEMU 或更改平台声明。容器共享宿主机内核，**不能将结果称为完整 Debian VM、裸机或公网验收**。
+容器任务验证 Debian 12/13 × amd64/arm64 的普通 Agent 安装及随后显式启用的 helper。每项运行在相同架构的独立 GitHub Ubuntu VM 上，启动官方 Debian 用户空间和 systemd PID 1 的一次性容器；不使用 QEMU 或更改平台声明。容器共享宿主机内核，**不能将结果称为完整 Debian VM、裸机或公网验收**。
 
 ## 固定来源和执行边界
 
@@ -27,3 +27,25 @@ HTTPS Controller 在容器回环地址运行，使用专用测试 CA 并保留�
 ## helper 阶段
 
 驱动传入 `--check-helper` 后，容器内的同一安装脚本继续执行控制台返回的固定 helper 命令，并以真实 Agent UID 经 Unix socket 验证对应架构 sing-box 的安装、重启、回滚、停止、启动与能力心跳。未经授权的本机 UID、socket 权限、独立服务用户、默认无入站监听与重复安装拒绝也列入检查，详见[完整验收边界](AGENT_INSTALL.md#显式-helper-安装验收)。完整 Debian 内核/VM、公网握手和 Controller 队列/租约仍不能由此替代。容器内执行预算为 900 秒、外层 job 为 20 分钟；下载失败或动作失败使对应 job 失败。
+
+## 完整 Debian VM 验收
+
+另外四项 `Agent + helper / Debian <版本> <架构> / full VM` 在同架构 GitHub Ubuntu 24.04 runner 内启动 QEMU。guest 启动自己的 Debian 内核和 systemd PID 1，使用 Debian 系统 Python 3.11/3.13；不共享宿主机内核、不跨架构模拟。宿主机可访问 `/dev/kvm` 时使用 KVM，否则使用同架构 TCG，并在日志注明；这仍是完整虚拟机，不代表裸机或全部云厂商环境。
+
+`scripts/check_debian_vm_installation.py` 固定 [Debian 12 官方云镜像](https://cloud.debian.org/images/cloud/bookworm/20261006-2623/)（构建 `20261006-2623`）和 [Debian 13 官方云镜像](https://cloud.debian.org/images/cloud/trixie/20261001-2618/)（构建 `20261001-2618`）。四份 generic qcow2 的 SHA512 于 2026-10-08 从对应日期的官方 `SHA512SUMS` 独立核对并写入驱动；不从浮动 latest 或下载时取得的新 hash 决定信任。校验失败删除本次临时下载且不启动 VM，下载有 2 GiB 上限、30 秒读取操作超时及阶段间 600 秒预算检查；不承诺底层 DNS 的严格墙钟限制。
+
+驱动只允许显式 `--disposable-system-test`、GitHub Linux runner 和匹配的真实宿主机架构。它先执行仓库隐私检查，再用 `git archive HEAD` 导出受控源码；忽略文件、MEMORY、本机配置和 data 不进入 guest。VM 的 qcow2 overlay、NoCloud seed、临时客户端与主机 SSH 密钥在 0700 临时目录中创建。SSH 使用固定临时主机公钥和 `StrictHostKeyChecking=yes`，QEMU 只转发 `127.0.0.1` 的随机 SSH 端口；没有宿主机目录共享、生产端口或外网入站。依据见 [cloud-init QEMU/NoCloud 指南](https://docs.cloud-init.io/en/latest/howto/launch_qemu.html)、[SSH 主机密钥配置](https://docs.cloud-init.io/en/latest/reference/modules.html#ssh)和 [QEMU 参数文档](https://www.qemu.org/docs/master/system/invocation.html)。
+
+cloud-init 完成后，驱动核对本次随机 VM 标记、发行版/版本、架构、systemd PID 1、虚拟化类型和独立 Debian 内核，之后才安装测试 venv 和执行安装流程。apt 从该发行版官方源安装测试依赖，Python 包强制项目哈希锁；不宣称所有 apt 输入或 VM 磁盘可逐字节复现。
+
+仅在专用、可丢弃的 CI runner 使用以下入口，**不要在开发机或生产服务器执行**：
+
+```bash
+python3 scripts/check_debian_vm_installation.py --disposable-system-test --expected-debian 12 --expected-arch amd64
+```
+
+CI 为四组合分别安装对应架构 QEMU、qemu-utils、cloud-image-utils 和 openssh-client；入口始终启用 `--check-helper`。guest 复用前述真实控制台命令、固定远端下载、隐藏 TTY 注册、可信回环 HTTPS、普通 Agent 默认无 helper、0600 凭据/重复安装拒绝，然后显式启用 helper，验收本机授权、实际 sing-box 生命周期与能力心跳。
+
+每个步骤有超时，SSH 就绪最多 480 秒，cloud-init 180 秒，测试依赖准备 600 秒，安装/helper 900 秒，job 总预算 40 分钟。正常退出或异常时仅终止自己启动的 QEMU，等待退出后清理临时密钥、seed 和磁盘；强制取消由一次性 runner 销毁兜底。seed、私钥、磁盘和 guest 日志不上传为 artifact。
+
+新增任务的实际结果须按目标提交四项 job 核对；任务存在不等于验收成功。完整 VM 通过后，真实公网 HTTPS、Controller 队列/租约、各平台公网代理握手、裸机差异和生产升级仍分别待验收。
