@@ -27,7 +27,7 @@ GEOSITE/非国家 GEOIP 从 [MetaCubeX 官方规则数据](https://github.com/Me
 
 旧 `GEOIP,lan` 使用 private 地址集合，国家代码规范为大写。provider 使用保存的 `rule-providers` 定义，URL 中携带定义 SHA256 revision；定义变化时拒绝旧链接并要求更新配置。支持 HTTP 来源的 YAML/text、domain/ipcidr/classical 条件，不支持 MRS、本地文件或未支持条件。规则集内容失败不会以空集返回成功。
 
-新下载复用现有安全出站：每跳 DNS 校验并固定连接 IP、系统 CA、忽略环境代理、总预算 30 秒、最大 8 MiB。规则资源最多 4 个同时下载，成功结果在进程内缓存 4 小时，总缓存上限 32 MiB；失败不缓存。展开额外 proxy-provider 时也使用安全出站与 60 秒共享预算。正常 YAML 响应使用 no-store，错误只返回位置/固定说明，不回显 URL 或规则/节点秘密。
+新下载复用现有安全出站：每跳 DNS 校验并固定连接 IP、系统 CA、忽略环境代理、总预算 30 秒、最大 8 MiB、最多 25 万条条件（覆盖官方 CN 集合的 11 万余条）。规则资源最多 4 个同时下载，成功结果在进程内缓存 4 小时，总缓存上限 32 MiB；失败不缓存。展开额外 proxy-provider 时也使用安全出站与 60 秒共享预算。正常 YAML 响应使用 no-store，错误只返回位置/固定说明，不回显 URL 或规则/节点秘密。
 
 ## 验证、部署与恢复
 

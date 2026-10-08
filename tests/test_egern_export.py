@@ -141,6 +141,12 @@ class EgernExportTests(unittest.TestCase):
         with self.assertRaises(ConfigValidationError):
             convert_rule_set('payload: ["PROCESS-NAME,secret-canary"]')
 
+    def test_rule_set_accepts_official_cn_scale_and_rejects_above_bound(self):
+        result = convert_rule_set('+.example.com\n' * 111224, 'domain', 'text')
+        self.assertEqual(len(result['domain_suffix_set']), 111224)
+        with self.assertRaises(ConfigValidationError):
+            convert_rule_set('+.example.com\n' * 250001, 'domain', 'text')
+
     def test_airport_provider_expansion_uses_namespaced_decorated_snapshot(self):
         airports = [{'name': 'Airport', 'url': 'https://airport.example/sub'}]
         template = {'proxy-groups': [{'name': 'Proxy', 'type': 'select', 'include-all': True}], 'rules': ['MATCH,Proxy']}

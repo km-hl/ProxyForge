@@ -329,7 +329,7 @@ def convert_rule_set(content, behavior='classical', file_format='yaml'):
     else:
         entries = [line.strip() for line in content.splitlines()
                    if line.strip() and not line.lstrip().startswith('#')]
-    if not isinstance(entries, list) or not entries or len(entries) > 100000:
+    if not isinstance(entries, list) or not entries or len(entries) > 250000:
         raise ConfigValidationError(['Egern 规则集内容为空、过大或格式无效'])
     result = {}
     for index, entry in enumerate(entries, 1):
