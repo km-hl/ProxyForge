@@ -173,7 +173,14 @@ def check_helper(command, client, headers, agent_id):
     helper_path.write_text(helper_source.replace(
         '    except Exception:\n',
         '    except Exception as diagnostic_error:\n'
-        '        import traceback\n'
+        '        import traceback, subprocess\n'
+        '        print("CI helper uid/groups", os.getuid(), os.getgroups(), Path("/proc/self/setgroups").read_text().strip(), flush=True)\n'
+        '        for options in ({"extra_groups": []}, {"user": engine.backend.uid}, {"group": engine.backend.gid}):\n'
+        '            try:\n'
+        '                subprocess.run(["/usr/bin/true"], check=True, **options)\n'
+        '                print("CI identity check", list(options), "PASS", flush=True)\n'
+        '            except OSError as failure:\n'
+        '                print("CI identity check", list(options), failure.errno, flush=True)\n'
         '        print("CI helper mounts", [(line.split()[4], line.split()[5]) for line in Path("/proc/self/mountinfo").read_text().splitlines() if line.split()[4] in ("/var/lib/proxyforge-runtime", "/opt", "/tmp")], flush=True)\n'
         '        print("CI helper exception", type(diagnostic_error).__name__, getattr(diagnostic_error, "errno", None), Path(getattr(diagnostic_error, "filename", None) or "none").name, '
         '[(Path(frame.filename).name, frame.lineno) for frame in traceback.extract_tb(diagnostic_error.__traceback__)], flush=True)\n'))
