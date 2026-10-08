@@ -20,7 +20,7 @@
 | 8、10、9、11：结构、来源模型、路由、错误处理 | 待开发；按该顺序推进，异常处理按问题穿插 |
 | 12、13、14 后续：许可证、仓库信息、正式发布 | 待完成；许可证及首个正式 tag 需所有者决定 |
 
-Ubuntu 四组合 VM 和 Debian 四组合原生 systemd 容器安装 CI 已审查合并（#43、#46）。本次补齐八项中的显式 helper bootstrap、Unix socket 调用方身份与真实 sing-box 生命周期/能力心跳，结果按目标提交核对；随后继续完整 Debian VM/裸机与 Agent 公网验证。Controller 已按 Egern 优先任务部署，但不等于这些 Agent 验收完成。P1 收尾后进入第 8 项 AirportService 提取。以下设计和验收条款继续有效；历史问题表描述的是最初审查基线。
+Ubuntu 四组合 VM 和 Debian 四组合原生 systemd 容器安装 CI 已审查合并（#43、#46）。本次 #47 补齐八项中的显式 helper bootstrap、Unix socket 调用方身份与真实 sing-box 生命周期/能力心跳，并修复新 systemd 在 seccomp 初始化时移除 CAP_SETUID 导致配置检查无法降权的问题；推进固定下载锚点，最终结果按目标提交核对；随后继续完整 Debian VM/裸机与 Agent 公网验证。Controller 已按 Egern 优先任务部署，但不等于这些 Agent 验收完成。P1 收尾后进入第 8 项 AirportService 提取。以下设计和验收条款继续有效；历史问题表描述的是最初审查基线。
 
 ## 审查结论与修正
 
@@ -170,7 +170,7 @@ Controller 支持范围与使用系统 Python 的 Agent 支持范围分别决定
 1. 中文文档先提供从固定完整 commit 获取源码到安装、检查服务的完整命令块；不能只给需要用户预先找到源码目录的相对路径。
 2. 在控制台提供带有效固定版本、校验信息和 Controller HTTPS 地址的可复制命令；可使用固定官方归档或发布的最小 Agent 包。安装产物需先按第 14 项准备，不要求等架构重构完成。真正可用前不展示虚构下载 URL 或“即将支持”的可执行按钮。
 
-第一阶段命令与安全 bootstrap 已实现，见[Agent 完整下载安装](AGENT_INSTALL.md)：使用 #39 的完整固定提交与真实官方源码归档 SHA256，bootstrap 自身也固定提交/校验；普通 Agent 与显式 helper 分开，root 私有目录准备代码，保留隐藏输入 token。第二阶段已接入可信部署配置 `PROXYFORGE_PUBLIC_URL`、管理只读命令接口与控制台复制入口；Ubuntu 四组合独立 VM 和 Debian 四组合原生 systemd 容器使用 API 返回的命令验证真实安装和 HTTPS 心跳。完整 Debian VM/裸机、公网可达性与 helper 全平台仍待实测，详见安装指南矩阵。
+第一阶段命令与安全 bootstrap 已实现，见[Agent 完整下载安装](AGENT_INSTALL.md)：原始版本使用 #39 固定源码；本次 helper unit 降权修复已推进固定源码和 bootstrap 锚点，均使用实际远端内容与 SHA256 校验；普通 Agent 与显式 helper 分开，root 私有目录准备代码，保留隐藏输入 token。第二阶段已接入可信部署配置 `PROXYFORGE_PUBLIC_URL`、管理只读命令接口与控制台复制入口；Ubuntu 四组合独立 VM 和 Debian 四组合原生 systemd 容器使用 API 返回的命令验证真实安装和 HTTPS 心跳。完整 Debian VM/裸机、公网可达性与 helper 全平台仍待实测，详见安装指南矩阵。
 
 接口与安全边界：
 
