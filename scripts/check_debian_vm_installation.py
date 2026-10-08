@@ -107,7 +107,8 @@ def qemu_command(work, arch, port):
                '-drive', f'file={work / "guest.qcow2"},format=qcow2,if=virtio',
                '-drive', f'file={work / "seed.img"},format=raw,if=virtio,readonly=on',
                '-netdev', f'user,id=net0,hostfwd=tcp:127.0.0.1:{port}-:22',
-               '-device', 'virtio-net-pci,netdev=net0']
+               # Disk boot needs no optional iPXE network ROM.
+               '-device', 'virtio-net-pci,netdev=net0,romfile=']
     if arch == 'arm64':
         command += ['-bios', '/usr/share/qemu-efi-aarch64/QEMU_EFI.fd']
     print('Full Debian VM accelerator:', accelerator, 'native architecture:', arch, flush=True)
