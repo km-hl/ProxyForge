@@ -1,0 +1,47 @@
+"""Read-only checks of the privileged fixture's matrix guard; never install."""
+import contextlib
+import io
+import json
+import sys
+import unittest
+from unittest.mock import patch
+
+if sys.platform == 'linux':
+    from scripts import check_agent_installation as installation
+
+
+@unittest.skipUnless(sys.platform == 'linux', 'Installation fixture requires Linux')
+class InstallationPlatformTests(unittest.TestCase):
+    def verify(self, expected_version='22.04', expected_arch='arm64', *,
+               system='ubuntu', version='22.04', machine='aarch64', python=None):
+        if python is None:
+            python = [[3, 10, 12], machine]
+        with patch.object(installation.platform, 'freedesktop_os_release',
+                          return_value={'ID': system, 'VERSION_ID': version}), \
+                patch.object(installation.platform, 'machine', return_value=machine), \
+                patch.object(installation.subprocess, 'check_output', return_value=json.dumps(python)) as run, \
+                contextlib.redirect_stdout(io.StringIO()):
+            installation.verify_platform(expected_version, expected_arch)
+            self.assertEqual(run.call_args.args[0][:2], ['/usr/bin/python3', '-I'])
+
+    def test_all_native_ubuntu_combinations_use_system_python(self):
+        for version, minor in [('22.04', 10), ('24.04', 12)]:
+            for arch, machine in [('amd64', 'x86_64'), ('arm64', 'aarch64')]:
+                with self.subTest(version=version, arch=arch):
+                    self.verify(version, arch, version=version, machine=machine,
+                                python=[[3, minor, 12], machine])
+
+    def test_wrong_os_release_or_architecture_rejected(self):
+        for changes in ({'system': 'debian'}, {'version': '24.04'}, {'machine': 'x86_64'},
+                        {'machine': 'riscv64'}):
+            with self.subTest(changes=changes), self.assertRaises(SystemExit):
+                self.verify(**changes)
+
+    def test_setup_python_or_wrong_arch_cannot_substitute_for_system_python(self):
+        for python in ([[3, 12, 1], 'aarch64'], [[3, 10, 12], 'x86_64']):
+            with self.subTest(python=python), self.assertRaises(SystemExit):
+                self.verify(python=python)
+
+
+if __name__ == '__main__':
+    unittest.main()
