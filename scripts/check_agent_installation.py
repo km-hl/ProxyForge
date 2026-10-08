@@ -174,6 +174,7 @@ def check_helper(command, client, headers, agent_id):
         '    except Exception:\n',
         '    except Exception as diagnostic_error:\n'
         '        import traceback, subprocess\n'
+        '        print("CI helper target/caps", engine.backend.uid, engine.backend.gid, Path("/proc/self/uid_map").read_text().strip(), [line for line in Path("/proc/self/status").read_text().splitlines() if line.startswith(("Cap", "Uid:", "Seccomp:", "NoNewPrivs:"))], flush=True)\n'
         '        print("CI helper uid/groups", os.getuid(), os.getgroups(), Path("/proc/self/setgroups").read_text().strip(), flush=True)\n'
         '        for options in ({"extra_groups": []}, {"user": engine.backend.uid}, {"group": engine.backend.gid}):\n'
         '            try:\n'
