@@ -44,13 +44,13 @@ CONFIG = Path('/etc/proxyforge-agent/config.json')
 
 
 def verify_platform(expected_version, expected_arch, expected_os='ubuntu'):
-    """Fail before host writes if the matrix label does not match the real VM."""
+    """Fail before host writes if the matrix label does not match the real environment."""
     release = platform.freedesktop_os_release()
     arch = {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(platform.machine().lower())
     if (release.get('ID'), release.get('VERSION_ID'), arch) != (expected_os, expected_version, expected_arch):
         raise SystemExit('Runner OS/architecture does not match the installation matrix')
-    # setup-python hosts the test Controller; the installer/service must keep
-    # using Ubuntu's separate system interpreter, including 3.10 on 22.04.
+    # Test Controller and Agent interpreters are separate; always verify the
+    # distro system Python, including Ubuntu 22.04's 3.10 and Debian 12's 3.11.
     system_python = json.loads(subprocess.check_output([
         '/usr/bin/python3', '-I', '-c',
         'import json,platform,sys; print(json.dumps([list(sys.version_info[:3]),platform.machine()]))',
