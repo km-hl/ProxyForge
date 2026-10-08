@@ -1,11 +1,11 @@
 # ProxyForge 下一阶段开发计划（审查修订版）
 
-更新：2026-10-08。原计划于 2026-09-28 审查，基线为 `f963e04c1b749ec9405f47602eaae24d9891a41b`；当前合并进度核对至 PR #46（`7a11407`）。下表区分已合并、文档收尾与未验收内容；代码合并不等于生产部署。
+更新：2026-10-08。原计划于 2026-09-28 审查，基线为 `f963e04c1b749ec9405f47602eaae24d9891a41b`；当前合并进度核对至 PR #47（`960916b`）。下表区分已合并、文档收尾与未验收内容；代码合并不等于生产部署。
 
 目标：优先提高 Controller、Airport、Agent 和部署系统的稳定性、安全性与可维护性，再扩展功能。
 现有数据库 schema 5、Agent 0.6.0，以及 HTTP/API/运行文件兼容边界继续有效。
 
-2026-10-08 用户调整优先级：Egern 原生订阅 #44/#45 已合并并部署。用户指定生产环境的真实 HTTPS 默认/Egern 订阅、22 个规则资源与冷恢复副本验收通过；290 个兼容节点、34 组、129 条最终规则，仅跳过 1 个 XHTTP。iOS Egern 导入/握手待真实客户端验证，转换契约见[Egern 说明](EGERN_EXPORT.md)。现恢复安装矩阵：Ubuntu #43 已审查合并；#46 补齐 Debian 同架构 systemd 容器四组合，八项安装 CI 均已实测通过，完整 Debian VM/裸机、公网和 helper 仍单列验收。
+2026-10-08 用户调整优先级：Egern 原生订阅 #44/#45 已合并并部署。用户指定生产环境的真实 HTTPS 默认/Egern 订阅、22 个规则资源与冷恢复副本验收通过；290 个兼容节点、34 组、129 条最终规则，仅跳过 1 个 XHTTP。iOS Egern 导入/握手待真实客户端验证，转换契约见[Egern 说明](EGERN_EXPORT.md)。现恢复安装矩阵：Ubuntu #43 已审查合并；#46 补齐 Debian 同架构 systemd 容器四组合，八项安装 CI 均已实测通过，helper 八组合已随 #47 验收通过并合并；完整 Debian VM 四组合已于本次 #48 实测通过，裸机差异与公网仍单列验收。
 
 ## 当前进度
 
@@ -15,12 +15,12 @@
 | 5：Session 隔离、DNS pinning、网络预算 | 已合并 #33、#37、#38 |
 | 17、7、6：Python 升级、依赖锁、非 root 容器 | 已合并 #34、#35、#36 |
 | 14：固定安装产物前置 | 已合并 #39；正式 tag/Release 与发布自动化未完成 |
-| 16：固定 bootstrap、文档命令、控制台复制入口 | 已合并 #40、#41；Ubuntu 四组合 VM 与 Debian 四组合原生 systemd 容器的真实安装/HTTPS 心跳 CI 已通过；完整 Debian VM/裸机与公网待验收；本次增加 helper 八组合 CI，结果按目标提交核对 |
+| 16：固定 bootstrap、文档命令、控制台复制入口 | 已合并 #40、#41；Ubuntu 四组合 VM 与 Debian 四组合原生 systemd 容器的真实安装/HTTPS 心跳 CI 已通过；helper 八组合已通过并合并 #47；完整 Debian VM 四组合随 #48 实测通过、PR 待审查；裸机差异与公网待验收，最新提交 CI 仍须核对 |
 | 15：中文说明 | 已合并 #42，补齐 5 份英文正文、安装参数/提示对照并修正旧 README；后续按[中文说明覆盖表](DOCUMENTATION.md)持续维护 |
 | 8、10、9、11：结构、来源模型、路由、错误处理 | 待开发；按该顺序推进，异常处理按问题穿插 |
 | 12、13、14 后续：许可证、仓库信息、正式发布 | 待完成；许可证及首个正式 tag 需所有者决定 |
 
-Ubuntu 四组合 VM 和 Debian 四组合原生 systemd 容器安装 CI 已审查合并（#43、#46）。本次 #47 补齐八项中的显式 helper bootstrap、Unix socket 调用方身份与真实 sing-box 生命周期/能力心跳，并修复新 systemd 在 seccomp 初始化时移除 CAP_SETUID 导致配置检查无法降权的问题；推进固定下载锚点，最终结果按目标提交核对；随后继续完整 Debian VM/裸机与 Agent 公网验证。Controller 已按 Egern 优先任务部署，但不等于这些 Agent 验收完成。P1 收尾后进入第 8 项 AirportService 提取。以下设计和验收条款继续有效；历史问题表描述的是最初审查基线。
+Ubuntu 四组合 VM 和 Debian 四组合原生 systemd 容器安装 CI 已审查合并（#43、#46）。已合并 #47 补齐八项中的显式 helper bootstrap、Unix socket 调用方身份与真实 sing-box 生命周期/能力心跳，并修复新 systemd 在 seccomp 初始化时移除 CAP_SETUID 导致配置检查无法降权的问题；已推进并验证固定下载锚点，44 项 CI 检查全部成功；本次 #48 完整 Debian VM 四组合已实测通过，最新提交 CI 须复核；裸机差异与 Agent 公网仍待验证。Controller 已按 Egern 优先任务部署，但不等于这些 Agent 验收完成。P1 收尾后进入第 8 项 AirportService 提取。以下设计和验收条款继续有效；历史问题表描述的是最初审查基线。
 
 ## 审查结论与修正
 
@@ -170,7 +170,7 @@ Controller 支持范围与使用系统 Python 的 Agent 支持范围分别决定
 1. 中文文档先提供从固定完整 commit 获取源码到安装、检查服务的完整命令块；不能只给需要用户预先找到源码目录的相对路径。
 2. 在控制台提供带有效固定版本、校验信息和 Controller HTTPS 地址的可复制命令；可使用固定官方归档或发布的最小 Agent 包。安装产物需先按第 14 项准备，不要求等架构重构完成。真正可用前不展示虚构下载 URL 或“即将支持”的可执行按钮。
 
-第一阶段命令与安全 bootstrap 已实现，见[Agent 完整下载安装](AGENT_INSTALL.md)：原始版本使用 #39 固定源码；本次 helper unit 降权修复已推进固定源码和 bootstrap 锚点，均使用实际远端内容与 SHA256 校验；普通 Agent 与显式 helper 分开，root 私有目录准备代码，保留隐藏输入 token。第二阶段已接入可信部署配置 `PROXYFORGE_PUBLIC_URL`、管理只读命令接口与控制台复制入口；Ubuntu 四组合独立 VM 和 Debian 四组合原生 systemd 容器使用 API 返回的命令验证真实安装和 HTTPS 心跳。完整 Debian VM/裸机、公网可达性与 helper 全平台仍待实测，详见安装指南矩阵。
+第一阶段命令与安全 bootstrap 已实现，见[Agent 完整下载安装](AGENT_INSTALL.md)：原始版本使用 #39 固定源码；本次 helper unit 降权修复已推进固定源码和 bootstrap 锚点，均使用实际远端内容与 SHA256 校验；普通 Agent 与显式 helper 分开，root 私有目录准备代码，保留隐藏输入 token。第二阶段已接入可信部署配置 `PROXYFORGE_PUBLIC_URL`、管理只读命令接口与控制台复制入口；Ubuntu 四组合独立 VM 和 Debian 四组合原生 systemd 容器使用 API 返回的命令验证真实安装和 HTTPS 心跳。helper 八组合已通过；完整 Debian VM 四组合随 #48 实测通过，裸机差异与公网可达性仍待实测，详见安装指南矩阵。
 
 接口与安全边界：
 
@@ -230,7 +230,7 @@ Controller 支持范围与使用系统 Python 的 Agent 支持范围分别决定
 区分 Controller 发布版本、Agent 软件版本、数据库 schema 和各能力协议版本；安装 manifest 记录兼容关系、完整 commit、产物与 SHA256。
 先提供第 16 项需要的可验证固定产物，再逐步完善发布自动化；不要让安装命令依赖可变 master/latest。
 
-安装产物准备已实现：`scripts/agent_artifacts.py` 从完整 Git 提交和固定文件清单构建可重复 tar + manifest，记录 Agent 版本、配套 Controller 提交、schema 基线及各能力协议；独立预期 manifest SHA256 固定整包与成员校验。见[产物契约、命令和验证边界](AGENT_ARTIFACTS.md)。此工具不创建正式 tag/Release、不解包或安装；第 16 项第一阶段另已提供[固定官方源码 bootstrap、root 目录检查与完整命令](AGENT_INSTALL.md)，控制台入口已合并，隔离安装 CI 已扩为 Ubuntu 四组合；本次新增 Debian 同架构 systemd 容器四组合，完整 Debian VM/裸机及公网仍待补齐。Agent 已补[中文安装、升级与恢复说明](../agent/README.zh-CN.md)，第 15 项的全量中文覆盖与本次审查范围见[说明索引](DOCUMENTATION.md)。
+安装产物准备已实现：`scripts/agent_artifacts.py` 从完整 Git 提交和固定文件清单构建可重复 tar + manifest，记录 Agent 版本、配套 Controller 提交、schema 基线及各能力协议；独立预期 manifest SHA256 固定整包与成员校验。见[产物契约、命令和验证边界](AGENT_ARTIFACTS.md)。此工具不创建正式 tag/Release、不解包或安装；第 16 项第一阶段另已提供[固定官方源码 bootstrap、root 目录检查与完整命令](AGENT_INSTALL.md)，控制台入口已合并，隔离安装 CI 已扩为 Ubuntu 四组合；Debian 同架构 systemd 容器与 helper 八组合已合并，完整 Debian VM 四组合随 #48 实测通过，裸机差异及公网仍待补齐。Agent 已补[中文安装、升级与恢复说明](../agent/README.zh-CN.md)，第 15 项的全量中文覆盖与本次审查范围见[说明索引](DOCUMENTATION.md)。
 
 每次发布提供中文的新增功能、修复、安全变更、数据格式变化、升级步骤、Agent/helper 是否需升级、已测矩阵/已知限制和回滚方式。
 发布门禁采用 [发布验收与恢复流程](RELEASE_ACCEPTANCE.md)；Controller 先升级，DB/key 一致备份；版本化发布不等于已完成真实公网 Reality/SS2022 验收。
