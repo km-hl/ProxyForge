@@ -117,6 +117,53 @@ class AgentPublicTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'root-owned'):
                 PUBLIC.private_parent(parent)
 
+    def test_live_backup_never_opens_host_sqlite_connection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            data = work / 'live'
+            data.mkdir()
+            with contextlib.closing(sqlite3.connect(data / 'proxyforge.db')) as db:
+                db.execute('CREATE TABLE schema_migrations(version INTEGER)')
+                db.execute('INSERT INTO schema_migrations VALUES(5)')
+                for table in PUBLIC.TABLES:
+                    db.execute('CREATE TABLE ' + table + '(id TEXT)')
+                db.commit()
+            exported = (data / 'proxyforge.db').read_bytes()
+            connect = sqlite3.connect
+
+            def protected_connect(path, *args, **kwargs):
+                if str(path).startswith((data / 'proxyforge.db').as_uri()):
+                    raise AssertionError('Host must not open the live WAL database')
+                return connect(path, *args, **kwargs)
+
+            with patch.object(PUBLIC, 'quiet', return_value=exported) as transport, \
+                    patch.object(PUBLIC.sqlite3, 'connect', side_effect=protected_connect):
+                _, counts, _ = PUBLIC.backup(data, work / 'backup', container='test-controller')
+            self.assertFalse(any(counts.values()))
+            self.assertEqual(transport.call_args.args[0][:6], ['docker', 'exec', '-i', 'test-controller', 'python', '-I'])
+            self.assertEqual(json.loads(transport.call_args.kwargs['payload']), {'operation': 'backup'})
+
+    def test_live_counts_use_container_transport(self):
+        counts = {table: 0 for table in PUBLIC.TABLES}
+        with patch.object(PUBLIC, 'quiet', return_value=json.dumps(counts).encode()) as transport, \
+                patch.object(PUBLIC.sqlite3, 'connect') as host_connect:
+            self.assertEqual(PUBLIC.live_counts('test-controller'), counts)
+            host_connect.assert_not_called()
+            self.assertEqual(json.loads(transport.call_args.kwargs['payload']), {'operation': 'counts'})
+
+    def test_database_export_rejects_wrong_data_user_before_open(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory) / 'copy.db'
+            fixture.write_bytes(b'not opened')
+            program = PUBLIC.DATABASE.replace('/app/data/proxyforge.db', fixture.as_posix())
+            info = fixture.stat()
+            with patch.object(PUBLIC.os, 'geteuid', return_value=info.st_uid + 1, create=True), \
+                    patch.object(PUBLIC.os, 'getegid', return_value=info.st_gid, create=True), \
+                    patch.object(PUBLIC.sqlite3, 'connect') as connect:
+                with self.assertRaisesRegex(ValueError, 'configured data user'):
+                    exec(program, {})
+                connect.assert_not_called()
+
 
 @unittest.skipIf(sys.platform == 'win32', 'Real controlling TTY requires Linux')
 class PublicGuestTTYTests(unittest.TestCase):

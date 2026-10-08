@@ -62,11 +62,44 @@ except urllib.error.HTTPError as exc:
 '''
 
 
+# Keep live database access in the application namespace and data-user boundary.
+# Host-side SQLite access is reserved for offline copies.
+DATABASE = '''import contextlib,json,os,sqlite3,sys,tempfile
+from pathlib import Path
+database=Path('/app/data/proxyforge.db')
+info=database.stat()
+if (os.geteuid(),os.getegid())!=(info.st_uid,info.st_gid):
+ raise ValueError('Database operations require the configured data user')
+operation=json.load(sys.stdin)['operation']
+with contextlib.closing(sqlite3.connect(database.as_uri()+'?mode=ro',uri=True)) as source:
+ if operation=='counts':
+  print(json.dumps({table:source.execute('SELECT COUNT(*) FROM '+table).fetchone()[0]
+                   for table in ('agents','jobs','deployments','chains')}))
+ elif operation=='backup':
+  with tempfile.TemporaryDirectory(prefix='proxyforge-db-copy-') as directory:
+   target_path=Path(directory)/'copy.db'
+   with contextlib.closing(sqlite3.connect(target_path)) as target:
+    source.backup(target)
+   sys.stdout.buffer.write(target_path.read_bytes())
+ else:
+  raise ValueError('Unsupported database operation')
+'''
+
+
 def quiet(command, *, payload=None, timeout=30):
     result = subprocess.run(command, input=payload, capture_output=True, timeout=timeout)
     if result.returncode:
         raise RuntimeError('Subprocess failed; private output withheld')
     return result.stdout
+
+
+def controller_database(container, operation):
+    return quiet(['docker', 'exec', '-i', container, 'python', '-I', '-c', DATABASE],
+                 payload=json.dumps({'operation': operation}).encode(), timeout=90)
+
+
+def live_counts(container):
+    return json.loads(controller_database(container, 'counts'))
 
 
 def api(container, base, method, path, payload=None, expected=200):
@@ -124,7 +157,7 @@ def directory_snapshot(data):
         for path in [data, *sorted(data.rglob('*'))] if path.is_dir()}
 
 
-def backup(data, destination):
+def backup(data, destination, *, container=None):
     """Copy-only rehearsal of an online SQLite backup; no live restore or stop."""
     before = files_snapshot(data)
     directories = directory_snapshot(data)
@@ -136,9 +169,13 @@ def backup(data, destination):
     source_info = source_db.lstat()
     if not stat.S_ISREG(source_info.st_mode) or source_info.st_nlink != 1:
         raise ValueError('Unsafe database file')
-    with contextlib.closing(sqlite3.connect(source_db.as_uri() + '?mode=ro', uri=True)) as source, \
-            contextlib.closing(sqlite3.connect(copied / 'proxyforge.db')) as target:
-        source.backup(target)
+    if container is not None:
+        (copied / 'proxyforge.db').write_bytes(controller_database(container, 'backup'))
+    else:
+        # Offline/copy-only use; never use a host connection for the live Controller.
+        with contextlib.closing(sqlite3.connect(source_db.as_uri() + '?mode=ro', uri=True)) as source, \
+                contextlib.closing(sqlite3.connect(copied / 'proxyforge.db')) as target:
+            source.backup(target)
     (copied / 'proxyforge.db').chmod(stat.S_IMODE(source_info.st_mode))
     if files_snapshot(data) != before or directory_snapshot(data) != directories:
         raise ValueError('Configuration changed during backup')
@@ -249,6 +286,9 @@ def main():
     if len(mounts) != 1 or mounts[0].is_symlink():
         raise ValueError('Expected one authoritative data bind mount')
     data = mounts[0].resolve(strict=True)
+    database_owner = (data / 'proxyforge.db').stat()
+    if record['Config']['User'] != f'{database_owner.st_uid}:{database_owner.st_gid}':
+        raise ValueError('Controller must run as the numeric database UID:GID')
     output = args.output_dir.absolute()
     private_parent(output.parent)
     if output.exists() or output.is_relative_to(data) or data.is_relative_to(output):
@@ -259,9 +299,9 @@ def main():
     image_state = containers()
     commands = verified_commands(api(container, base, 'GET', '/api/agents/install-command'),
                                  base, args.expected_source_commit)
-    before, counts, backup_sha = backup(data, output / 'backup')
+    before, counts, backup_sha = backup(data, output / 'backup', container=container)
     # This operator fixture is for the initial control-plane acceptance only.
-    if any(counts.values()) or any(database_counts(data / 'proxyforge.db').values()):
+    if any(counts.values()) or any(live_counts(container).values()):
         raise ValueError('Acceptance requires no existing Agent/jobs/deployments/chains')
     name = 'Public acceptance VM ' + uuid.uuid4().hex
     agent_id = instance_id = None
@@ -417,7 +457,7 @@ def main():
             if agent_id is not None and identifier != agent_id:
                 raise ValueError('Fixture identity changed before cleanup')
             api(container, base, 'DELETE', '/api/agents/' + identifier, expected=204)
-        cleanup_ok = (files_snapshot(data) == before and database_counts(data / 'proxyforge.db') == counts
+        cleanup_ok = (files_snapshot(data) == before and live_counts(container) == counts
                       and containers() == image_state)
         report['fixture_removed_and_business_unchanged'] = cleanup_ok
         (output / 'report.json').write_text(json.dumps(report, indent=2))

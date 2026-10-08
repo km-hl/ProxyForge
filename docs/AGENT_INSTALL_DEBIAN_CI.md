@@ -74,7 +74,7 @@ sudo python3 scripts/check_agent_public.py --disposable-vm \
   --output-dir /root/proxyforge-public-acceptance-YYYYMMDD-unique
 ```
 
-输出目录必须全新、位于 Controller data 之外；其父目录及祖先必须由 root 持有、不可被 group/world 写入且无符号链接。写入注册记录前，驱动复制完整 data 的静态文件及目录权限，使用 SQLite 在线 backup API 获取一致数据库，不复制热 WAL/SHM；保存原始 UID/GID/mode、SHA256 清单及私有 tar，逐项读取归档并在数据库副本核对 schema 5、integrity 和 foreign keys。配置在备份期间变化则停止。这是在线一致备份和副本读取演练，不替代涉及升级/迁移时的停写冷备；不会将备份恢复到生产数据库。
+输出目录必须全新、位于 Controller data 之外；其父目录及祖先必须由 root 持有、不可被 group/world 写入且无符号链接。写入注册记录前，驱动复制完整 data 的静态文件及目录权限，由 Controller 容器内与数据库 UID/GID 一致的运行用户使用 SQLite 在线 backup API 获取一致数据库，不复制热 WAL/SHM；保存原始 UID/GID/mode、SHA256 清单及私有 tar，逐项读取归档并在数据库副本核对 schema 5、integrity 和 foreign keys。配置在备份期间变化则停止。这是在线一致备份和副本读取演练，不替代涉及升级/迁移时的停写冷备；不会将备份恢复到生产数据库。线上 SQLite 的备份及资源数量检查只在 Controller 容器内执行；宿主机 root 不连接热数据库，使热 SQLite/WAL/SHM 访问维持在应用的数据用户与容器命名空间中。容器 User 必须与数据文件的数值 UID:GID 匹配，否则在数据库连接前拒绝。
 
 随后启动自己的 Debian 12 amd64 KVM VM，固定云镜像与 SHA512 沿用前节。限定 1 CPU/1 GiB 内存，SSH 仅绑定宿主机回环地址，临时密钥、seed、overlay 在 0700 目录中，没有宿主机共享目录或公网入站端口。核对随机标记、独立 Debian 内核、真实发行版、systemd 和架构后，才向该 VM 传递安装命令。宿主机不安装 Agent，不替换现有 Controller 镜像或重启业务容器。
 
