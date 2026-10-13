@@ -435,4 +435,3 @@ class AirportService:
                     self.logger.warning("后台定时任务：机场数据不完整，放弃覆盖旧缓存")
         except AirportSourcesChanged:
             self.logger.info("后台定时任务：来源已更新，丢弃旧刷新结果")
-

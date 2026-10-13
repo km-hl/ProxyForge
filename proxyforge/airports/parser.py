@@ -26,4 +26,3 @@ def parse_airport_response(text: str) -> list:
     except: pass
 
     return []
-
