@@ -4,8 +4,9 @@
 
 ```text
 ProxyForge/
-├── main.py                    # Web 入口、API 编排、运行文件与机场缓存
+├── main.py                    # Web 入口、API 编排、运行初始化与服务装配
 ├── proxyforge/                # Controller 内部 Python 包
+│   ├── airports/              # 机场解析、拉取、缓存与刷新协调
 │   ├── control/               # Agent/Job/Deployment/Chain API 与 SQLite 存储
 │   ├── config/                # 模板事务与历史、DNS/TUN 校验、Mihomo 基线
 │   ├── security/              # 管理凭据/会话、登录限速、安全出站请求
@@ -33,6 +34,8 @@ ProxyForge/
 
 | 位置 | 职责 |
 | --- | --- |
+| `airports/service.py` | 显式注入依赖，统一机场节点/元信息缓存与后台刷新协调 |
+| `airports/parser.py` | 纯 YAML / Base64 订阅解析，沿用分享链接解析 |
 | `control/agent_api.py`、`job_api.py`、`deployment_api.py` | 管理/Agent 路由、鉴权衔接、请求与响应 schema |
 | `control/control_store.py` | SQLite 连接、migration、注册、身份和心跳 |
 | `control/job_store.py` | 租约、重试、状态回报与任务保留 |
@@ -51,7 +54,7 @@ ProxyForge/
 
 ## 3. API 与启动入口
 
-保持 `uvicorn main:app`、`python main.py`、Docker Compose 与原 systemd 入口。`main.py` 继续负责 Web 路由编排、运行数据初始化和机场请求/缓存；导入此入口仍有初始化副作用，测试应使用现有隔离加载器。
+保持 `uvicorn main:app`、`python main.py`、Docker Compose 与原 systemd 入口。`main.py` 继续负责 Web 路由编排、运行数据初始化和 AirportService 装配；机场请求与缓存协调位于 `proxyforge/airports/`。导入此入口仍有初始化副作用，测试应使用现有隔离加载器。
 
 `proxyforge` 包的 `__init__.py` 不装配应用；导入内部库不创建运行数据，不加载 `.env`。HTTP 路径、请求模型、静态资源 URL 和订阅输出保持原有行为。
 
@@ -62,7 +65,9 @@ Controller 当前支持单进程、单副本运行，不启用多个 Uvicorn wor
 ## 4. 鉴权与模块依赖
 
 ```text
-main.py → control / config / security / subscription
+main.py → airports / control / config / security / subscription
+airports.service → airports.parser / config.template_store / security.outbound_budget / subscription.nodes
+airports.parser → subscription.links
 subscription.builder → subscription.validation / nodes
 subscription.validation → config.network_config
 control → agent 协议规格 + security
@@ -70,6 +75,18 @@ agent → 标准库及自身模块（不依赖 Controller 包）
 ```
 
 控制面与订阅算法不能反向导入 `main.py`。纯订阅模块只能使用显式参数；文件、网络和请求鉴权仍由入口及对应存储/安全模块负责。管理身份、Agent 凭据和订阅 token 的边界保持原样。
+
+### AirportService 装配约定
+
+每个 Controller 进程只装配一个 `airport_service`，管理来源保存/全局导入、订阅、provider、元信息和后台刷新均使用该实例。服务持有节点 TTL 缓存、RLock、来源代次/快照、元信息代次和请求接受序号；不能为各请求另建实例。
+
+构造参数 `sources_reader`、`cache_path`、`info_cache_path`、`http_get`、`clock`、`monotonic`、`configuration_lock` 均由入口显式传入；另可传 `ca_bundle`、`batch_timeout` 和 logger。入口在当前数据目录中固定两个缓存的绝对路径；服务不读取 `.env` 或创建目录。`clock` 为 Unix 时间，`monotonic` 须与 `safe_get` 的 `time.monotonic()` 使用同一时间域；前者用于 JSON 缓存，后者用于 TTL 与批次期限。不得混用两种时间。
+
+`configuration_lock` 是可重入的上下文管理器工厂，入口传 `TemplateStore.locked()`，先完成提交恢复再读取来源。固定配置锁→缓存锁顺序，联网不持锁；来源回调保留旧 URL 字符串、对象及未知扩展字段，不标准化或重写磁盘。旧环境迁移/管理提交、鉴权、HTTP 状态和异步生命周期仍由入口负责。
+
+核心接口为 `airport_cache_snapshot()`、`airport_cache_locked(snapshot)`、`get_airport_proxies_cached(snapshot=None)`、`subscription_airports()`、`get_airports_info(force_indices="")`、`refresh_airport_cache(stop_event=None)` 和 `invalidate_airport_cache(clear_disk=False)`。服务抛出 `AirportSourcesChanged` / 存储 `OSError`，入口在不持锁的错误适配器中沿用原 503 与存储错误响应；校验错误仍沿用订阅的 422。`main.py` 的节点缓存/订阅/后台刷新函数仅作适配，不持第二份状态。
+
+YAML 节点缓存、JSON 元信息缓存、12 小时/24 小时 TTL、两次快照尝试、5 个并发请求和 180 秒批次预算保持兼容。`tests/test_airport_service.py` 直接装配独立服务验证依赖、实例隔离、旧来源扩展字段、时钟、解析及错误边界；原有并发/原子写/预算/生命周期测试继续覆盖实际生产服务，HTTP 测试保留鉴权、provider 和默认/Egern 订阅。
 
 ## 5. Agent 协议与分发
 
@@ -103,7 +120,7 @@ from proxyforge.subscription.builder import build_subscription_config
 
 ```bash
 python -m unittest discover -s tests -v
-node --test tests/rule_order.test.js tests/html_security.test.js tests/network_settings.test.js tests/template_session.test.js tests/agents.test.js tests/managed_nodes.test.js
+node --test tests/rule_order.test.js tests/html_security.test.js tests/network_settings.test.js tests/template_session.test.js tests/agents.test.js tests/managed_nodes.test.js tests/subscription_export.test.js
 ruff check --select E9,F63,F7,F82 .
 python -m compileall -q main.py proxyforge agent scripts
 python scripts/check_repository_privacy.py
@@ -117,7 +134,7 @@ CI 编译范围覆盖完整包；Mihomo 生成与 sing-box/systemd 工具同步�
 
 ## 10. 整理范围
 
-本次不重写 UI、不引入前端构建链，不迁移运行数据。`main.py` 保留与文件状态和请求上下文相关的编排；后续若继续拆分路由，应显式注入存储依赖并覆盖事务/缓存行为，不能只为缩短文件而产生循环依赖。
+本次不重写 UI、不引入前端构建链，不迁移运行数据。`main.py` 保留与管理提交和请求上下文相关的编排，机场运行状态集中在服务实例；后续若继续拆分路由，应显式注入存储依赖并覆盖事务/缓存行为，不能只为缩短文件而产生循环依赖。
 
 ## 11. 升级
 

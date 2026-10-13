@@ -237,7 +237,7 @@ class DeploymentApiTest(unittest.TestCase):
             content = yaml.safe_dump(template, allow_unicode=True, sort_keys=False)
             app.save_template_content(content)
             admin = {'Authorization': 'Bearer ' + TEST_ADMIN_TOKEN}
-            with TestClient(app.app) as client, patch.object(app, 'get_airport_proxies_cached', return_value=[]):
+            with TestClient(app.app) as client, patch.object(app.airport_service, "get_airport_proxies_cached", return_value=[]):
                 before = app.template_store().snapshot()
                 apply(1)
                 for state in ('pending', 'failed'):

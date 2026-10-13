@@ -1,3 +1,4 @@
+from proxyforge.airports.service import AirportService, AirportSourcesChanged
 from proxyforge.subscription.links import parse_share_link
 from proxyforge.subscription.nodes import (
     CUSTOM_NODES_SOURCE, strip_internal_proxy_fields, add_flag_to_proxy_name,
@@ -16,27 +17,23 @@ import os
 import shutil
 import yaml
 import logging
-import base64
 import json
 import urllib.parse
 import re
 import threading
 import time
 from contextlib import contextmanager
-from copy import deepcopy
 from pathlib import Path
 from functools import wraps
 from proxyforge.config.template_store import (
-    TemplateStore, TemplateConflict, ConfigurationTooLarge, MAX_TEMPLATE_BYTES, sync_directory, atomic_write,
+    TemplateStore, TemplateConflict, ConfigurationTooLarge, MAX_TEMPLATE_BYTES,
 )
 from proxyforge.control.control_store import ControlStore
 from proxyforge.control.agent_api import attach_agent_routes
-from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, HTTPException, Query, Header, Depends, Body, Request
 from fastapi.responses import PlainTextResponse, FileResponse, Response
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from cachetools import TTLCache
 from typing import List, Dict, Any
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -48,7 +45,6 @@ from proxyforge.security.runtime_security import (
     RuntimeConfigStore,
 )
 from proxyforge.security.network_security import UnsafeOutboundUrl, safe_get, validate_outbound_url
-from proxyforge.security.outbound_budget import check_outbound_deadline, OutboundTimeout, OutboundCancelled
 from proxyforge.security.auth_rate_limit import LoginRateLimiter
 from proxyforge.config.network_config import validate_network_config, network_error_messages
 
@@ -161,14 +157,6 @@ async def security_headers(request: Request, call_next):
         response.headers["Cache-Control"] = "no-store"
     return response
 
-_subscription_cache = TTLCache(maxsize=1, ttl=12 * 60 * 60)
-_subscription_cache_lock = threading.RLock()
-_airport_cache_generation = 0
-_airport_cache_sources = None
-_airport_info_generation = 0
-_airport_info_sequence = 0
-_airport_info_accepted = {}
-
 # ================= 核心读写逻辑 =================
 
 def template_store():
@@ -223,7 +211,7 @@ def load_airports() -> List[str]:
             save_airports([legacy_url])
             return [legacy_url]
         return []
-        
+
     try:
         with open(AIRPORTS_PATH, "r", encoding="utf-8") as f:
             urls = yaml.safe_load(f)
@@ -235,59 +223,49 @@ def load_airports() -> List[str]:
 @configuration_locked
 def save_airports(urls: List[str]):
     # Legacy initialization also participates in cache invalidation.
-    invalidate_airport_cache(clear_disk=True)
+    airport_service.invalidate_airport_cache(clear_disk=True)
     with open(AIRPORTS_PATH, "w", encoding="utf-8") as f:
         yaml.dump(urls, f, allow_unicode=True, sort_keys=False)
 
 
-class AirportSourcesChanged(Exception):
-    """A refresh no longer belongs to the active source/cache generation."""
+# 一个实例统一协调来源更新、订阅请求、元信息请求和后台刷新。
+airport_service = AirportService(
+    sources_reader=lambda: load_airports(), cache_path=Path(CACHE_FILE_PATH).absolute(),
+    info_cache_path=(Path(DATA_DIR) / "airports_info_cache.json").absolute(), http_get=safe_get,
+    clock=time.time, monotonic=time.monotonic,
+    configuration_lock=lambda: template_store().locked(), ca_bundle=AIRPORT_CA_BUNDLE,
+    batch_timeout=AIRPORT_BATCH_TIMEOUT, logger=logger,
+)
 
 
-@configuration_locked
-def invalidate_airport_cache(*, clear_disk=False):
-    global _airport_cache_generation, _airport_cache_sources, _airport_info_generation
-    with _subscription_cache_lock:
-        _airport_cache_generation += 1
-        _subscription_cache.clear()
-        if clear_disk:
-            _airport_cache_sources = None
-            _airport_info_generation += 1
-            _airport_info_accepted.clear()
-            # Remove before committing changed sources: a crash must not leave a
-            # name-only disk cache belonging to a different URL after restart.
-            for path in (Path(CACHE_FILE_PATH), Path(DATA_DIR) / "airports_info_cache.json"):
-                try:
-                    path.unlink()
-                except FileNotFoundError:
-                    pass
-                else:
-                    sync_directory(path.parent)
+def airport_service_errors(function):
+    """只映射服务错误，不持锁；网络请求期间仍允许配置提交。"""
+    @wraps(function)
+    def wrapper(*args, **kwargs):
+        try:
+            return function(*args, **kwargs)
+        except AirportSourcesChanged:
+            raise HTTPException(status_code=503, detail="机场配置正在更新，请稍后重试") from None
+        except OSError:
+            raise HTTPException(status_code=503, detail={"code": "storage_unavailable",
+                "message": "存储暂不可用，提交状态待核对；请恢复存储后重新读取，勿直接重试覆盖"}) from None
+    return wrapper
 
 
-@configuration_locked
-def airport_cache_snapshot():
-    global _airport_cache_sources
-    sources = load_airports()
-    with _subscription_cache_lock:
-        # Also notice configuration recovered from a previously committed redo
-        # journal. Direct external writers are not a supported consistency API.
-        if _airport_cache_sources is not None and _airport_cache_sources != sources:
-            invalidate_airport_cache(clear_disk=True)
-        _airport_cache_sources = deepcopy(sources)
-        return deepcopy(sources), _airport_cache_generation
+@airport_service_errors
+def get_airport_proxies_cached(snapshot=None):
+    return airport_service.get_airport_proxies_cached(snapshot)
 
 
-@contextmanager
-def airport_cache_locked(snapshot):
-    # Always take the configuration lock before the memory-cache lock. Never
-    # perform network I/O in this context. Recovery runs before the source read.
-    with template_store().locked():
-        sources = load_airports()
-        with _subscription_cache_lock:
-            if snapshot[1] != _airport_cache_generation or snapshot[0] != sources:
-                raise AirportSourcesChanged()
-            yield
+@airport_service_errors
+def subscription_airports():
+    return airport_service.subscription_airports()
+
+
+@airport_service_errors
+def refresh_airport_cache(stop_event=None):
+    return airport_service.refresh_airport_cache(stop_event)
+
 
 @configuration_locked
 def load_manual_nodes() -> List[Dict[str, Any]]:
@@ -358,230 +336,6 @@ def load_template_content() -> str:
 def save_template_content(content: str):
     return template_store().commit({"template.yaml": content})
 
-def save_cache_to_file(proxies: List[Dict[str, Any]], snapshot):
-    with airport_cache_locked(snapshot):
-        try:
-            content = yaml.dump(proxies, allow_unicode=True, sort_keys=False)
-            atomic_write(CACHE_FILE_PATH, content)
-        except Exception as e:
-            logger.error("持久化节点缓存失败（%s）", type(e).__name__)
-
-@configuration_locked
-def load_cache_from_file() -> List[Dict[str, Any]]:
-    if not os.path.exists(CACHE_FILE_PATH):
-        return []
-    try:
-        with open(CACHE_FILE_PATH, "r", encoding="utf-8") as f:
-            nodes = yaml.safe_load(f)
-            return nodes if isinstance(nodes, list) else []
-    except Exception as e:
-        logger.error(f"读取节点持久化缓存失败: {e}")
-    return []
-
-def parse_airport_response(text: str) -> list:
-    # Try YAML first
-    try:
-        config = yaml.safe_load(text)
-        if isinstance(config, dict) and "proxies" in config and isinstance(config["proxies"], list):
-            return config["proxies"]
-    except: pass
-        
-    # Try Base64
-    try:
-        import base64
-        t = text.strip()
-        t += "=" * ((4 - len(t) % 4) % 4)
-        decoded = base64.b64decode(t).decode('utf-8')
-        proxies = []
-        for line in decoded.splitlines():
-            p = parse_share_link(line)
-            if p: proxies.append(p)
-        return proxies
-    except: pass
-    
-    return []
-
-def merge_airport_proxies_with_cache(
-    proxies: List[Dict[str, Any]], airports: List[Any]
-):
-    merged = list(proxies or [])
-    cached = load_cache_from_file()
-    available_sources = {
-        str(proxy.get("_airport_name", "")).lower()
-        for proxy in merged if isinstance(proxy, dict)
-    }
-    missing_sources = []
-    for index, airport in enumerate(airports):
-        source_name = get_airport_name(airport, index)
-        source_key = source_name.lower()
-        if source_key not in available_sources:
-            cached_for_source = [
-                proxy for proxy in cached
-                if isinstance(proxy, dict) and str(proxy.get("_airport_name", "")).lower() == source_key
-            ]
-            if cached_for_source:
-                merged.extend(cached_for_source)
-                available_sources.add(source_key)
-        if source_key not in available_sources:
-            missing_sources.append(source_name)
-    return merged, missing_sources
-
-
-def fetch_airport_item(item: Any, index: int = 0, *, deadline=None, stop_event=None) -> List[Dict[str, Any]]:
-    url = item.get("url", "") if isinstance(item, dict) else item
-    if not isinstance(url, str) or not url.strip():
-        return []
-
-    airport_name = get_airport_name(item, index)
-    headers = {"User-Agent": "clash-verge/v1.6.0 clash-meta/1.18.3"}
-    logger.info(f"正在从 {airport_name} 拉取节点")
-    try:
-        check_outbound_deadline(deadline, stop_event)
-        response = safe_get(url.strip(), headers=headers, timeout=30, ca_bundle=AIRPORT_CA_BUNDLE,
-                            deadline=deadline, stop_event=stop_event)
-        response.raise_for_status()
-        proxies = parse_airport_response(response.text)
-        check_outbound_deadline(deadline, stop_event)
-        if proxies:
-            for proxy in proxies:
-                if isinstance(proxy, dict):
-                    proxy["_airport_name"] = airport_name
-            logger.info(f"成功从 {airport_name} 拉取到 {len(proxies)} 个节点")
-            return proxies
-        logger.warning(f"{airport_name} 订阅内容解析成功，但未找到代理节点")
-    except Exception as e:
-        logger.error(f"拉取 {airport_name} 订阅失败（{type(e).__name__}）")
-    return []
-
-def fetch_airport_proxies(sources=None, stop_event=None) -> List[Dict[str, Any]]:
-    deadline = time.monotonic() + AIRPORT_BATCH_TIMEOUT
-    urls_data = load_airports() if sources is None else sources
-    if not urls_data:
-        logger.warning("未配置机场订阅链接，跳过拉取。")
-        return []
-        
-    def fetch(pair):
-        try:
-            check_outbound_deadline(deadline, stop_event)
-        except (OutboundTimeout, OutboundCancelled):
-            return []
-        return fetch_airport_item(pair[1], pair[0], deadline=deadline, stop_event=stop_event)
-
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        results = list(executor.map(fetch, enumerate(urls_data)))
-        
-    all_proxies = []
-    seen_names = set()
-    
-    for proxies in results:
-        for p in proxies:
-            original_name = p.get('name', 'node')
-            name = original_name
-            airport_name = p.get("_airport_name", "")
-            collision_count = 1
-            while name in seen_names:
-                name = f"{original_name} ({airport_name})"
-                if name in seen_names:
-                    name = f"{original_name} ({airport_name} {collision_count})"
-                    collision_count += 1
-            seen_names.add(name)
-            p["name"] = name
-            all_proxies.append(p)
-            
-    return all_proxies
-
-def fetch_single_airport_info(item, *, deadline=None) -> dict:
-    """Fetch and parse only; the caller owns all cache reads and writes."""
-    url = item.get("url", "").strip() if isinstance(item, dict) else item.strip()
-    custom_name = item.get("name", "") if isinstance(item, dict) else ""
-    
-    info = {
-        "url": url,
-        "name": custom_name or urllib.parse.urlparse(url).netloc,
-        "nodesCount": 0,
-        "upload": 0,
-        "download": 0,
-        "total": 0,
-        "expire": 0,
-        "error": None
-    }
-    if not url: return info
-    
-    try:
-        check_outbound_deadline(deadline)
-        headers = {"User-Agent": "clash-verge/v1.6.0 clash-meta/1.18.3"}
-        res = safe_get(url, headers=headers, timeout=30, ca_bundle=AIRPORT_CA_BUNDLE, deadline=deadline)
-        res.raise_for_status()
-        
-        # 尝试提取名称
-        if not custom_name:
-            cd = res.headers.get("content-disposition", "")
-            if "filename=" in cd:
-                import re
-                m = re.search(r'filename=["\']?([^"\';]+)', cd)
-                if m:
-                    info["name"] = urllib.parse.unquote(m.group(1))
-                
-        # 尝试提取流量信息
-        userinfo = res.headers.get("subscription-userinfo", "")
-        if userinfo:
-            import re
-            for k in ["upload", "download", "total", "expire"]:
-                m = re.search(rf'{k}\s*=\s*(\d+)', userinfo)
-                if m:
-                    info[k] = int(m.group(1))
-                    
-        proxies = parse_airport_response(res.text)
-        check_outbound_deadline(deadline)
-        info["nodesCount"] = len(proxies)
-            
-    except Exception as e:
-        info["error"] = type(e).__name__
-        
-    info["_timestamp"] = time.time()
-    return info
-
-
-@configuration_locked
-def load_airport_info_cache():
-    try:
-        with open(Path(DATA_DIR) / "airports_info_cache.json", encoding="utf-8") as stream:
-            data = json.load(stream)
-    except FileNotFoundError:
-        return {}
-    except (OSError, ValueError, UnicodeError) as exc:
-        logger.warning("读取机场信息缓存失败（%s）", type(exc).__name__)
-        return {}
-    if not isinstance(data, dict):
-        logger.warning("机场信息缓存结构无效，重新获取")
-        return {}
-    valid = {}
-    now = time.time()
-    for url, entry in data.items():
-        if not isinstance(entry, dict):
-            continue
-        stamp, info = entry.get("_timestamp"), entry.get("info")
-        if (type(stamp) not in (int, float) or not 0 <= stamp <= now
-                or not isinstance(info, dict) or info.get("url") != url
-                or not isinstance(info.get("name"), str)
-                or "error" not in info or not (info["error"] is None or isinstance(info["error"], str))
-                or any(type(info.get(field)) is not int or info[field] < 0
-                       for field in ("nodesCount", "upload", "download", "total", "expire"))):
-            continue
-        info["_timestamp"] = stamp
-        valid[url] = entry
-    if len(valid) != len(data):
-        logger.warning("机场信息缓存包含无效条目，忽略损坏条目")
-    return valid
-
-
-@configuration_locked
-def save_airport_info_cache(data):
-    try:
-        atomic_write(Path(DATA_DIR) / "airports_info_cache.json", json.dumps(data))
-    except Exception as exc:
-        logger.warning("持久化机场信息缓存失败（%s）", type(exc).__name__)
-
 
 @configuration_locked
 def cleanup_runtime_template_references() -> Dict[str, Any]:
@@ -617,53 +371,6 @@ def cleanup_runtime_template_references() -> Dict[str, Any]:
     return result
 
 
-def get_airport_proxies_cached(snapshot=None) -> List[Dict[str, Any]]:
-    if snapshot is None:
-        for _ in range(2):
-            try:
-                return get_airport_proxies_cached(airport_cache_snapshot())
-            except AirportSourcesChanged:
-                continue
-        raise HTTPException(status_code=503, detail="机场配置正在更新，请稍后重试")
-    with airport_cache_locked(snapshot):
-        cached = _subscription_cache.get(())
-        if cached is not None:
-            return deepcopy(cached)
-    proxies = fetch_airport_proxies(snapshot[0])
-    with airport_cache_locked(snapshot):
-        # Another request may have filled the same generation while we fetched.
-        cached = _subscription_cache.get(())
-        if cached is None:
-            cached = deepcopy(proxies)
-            _subscription_cache[()] = cached
-        return deepcopy(cached)
-
-
-def subscription_airports():
-    for _ in range(2):
-        snapshot = airport_cache_snapshot()
-        try:
-            try:
-                proxies = get_airport_proxies_cached(snapshot)
-            except AirportSourcesChanged:
-                raise
-            except Exception as exc:
-                logger.error("尝试使用本地持久化备份（%s）", type(exc).__name__)
-                with airport_cache_locked(snapshot):
-                    proxies = load_cache_from_file()
-            with airport_cache_locked(snapshot):
-                proxies, missing = merge_airport_proxies_with_cache(proxies, snapshot[0])
-                if missing:
-                    raise ConfigValidationError([
-                        f"机场 [{source}] 当前未拉取到节点，且没有可用缓存" for source in missing
-                    ])
-                if proxies:
-                    save_cache_to_file(proxies, snapshot)
-                return snapshot[0], proxies
-        except AirportSourcesChanged:
-            continue
-    raise HTTPException(status_code=503, detail="机场配置正在更新，请稍后重试")
-
 # ================= 订阅下发接口 (对外公开) =================
 
 @app.get("/egern/ruleset/{kind}", response_class=PlainTextResponse)
@@ -682,6 +389,7 @@ def get_egern_rule_set(kind: str, token: str = Query(...), value: str = Query(..
         return PlainTextResponse("规则集暂时不可用，请稍后重试", status_code=502)
 
 @app.get("/provider/{airport_index}", response_class=PlainTextResponse)
+@airport_service_errors
 def get_airport_provider(
     airport_index: int,
     token: str = Query(..., description="安全验证 Token"),
@@ -693,11 +401,11 @@ def get_airport_provider(
         raise HTTPException(status_code=404, detail="Airport provider not found")
 
     airport = airports[airport_index]
-    proxies = fetch_airport_item(airport, airport_index)
+    proxies = airport_service.fetch_airport_item(airport, airport_index)
     if not proxies:
         source_name = get_airport_name(airport, airport_index).lower()
         proxies = [
-            proxy for proxy in load_cache_from_file()
+            proxy for proxy in airport_service.load_cache_from_file()
             if isinstance(proxy, dict) and str(proxy.get("_airport_name", "")).lower() == source_name
         ]
     if not proxies:
@@ -776,7 +484,7 @@ def get_subscription(
         if format == "egern":
             yaml_content = (f"# ProxyForge Egern：跳过 {skipped} 个不兼容节点；空代理组使用 REJECT。\n"
                             "# 节点、代理组和分流已转换；DNS/TUN 请在 Egern 中配置。\n" + yaml_content)
-        
+
         encoded_name = urllib.parse.quote(name)
         headers = {
             "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}",
@@ -784,7 +492,7 @@ def get_subscription(
             "Cache-Control": "no-store",
             "ProxyForge-Skipped-Nodes": str(skipped),
         }
-        
+
         return PlainTextResponse(content=yaml_content, headers=headers)
     except ConfigValidationError as e:
         logger.warning("订阅配置校验失败: %s", "; ".join(e.errors))
@@ -993,72 +701,16 @@ def update_airports(data: AirportsModel):
         if cleanup_result["total"]:
             updates["template.yaml"] = yaml.safe_dump(template_config, allow_unicode=True, sort_keys=False)
     updates["airports.yaml"] = yaml.safe_dump(data.urls, allow_unicode=True, sort_keys=False)
-    invalidate_airport_cache(clear_disk=(old_airports != data.urls))
+    airport_service.invalidate_airport_cache(clear_disk=(old_airports != data.urls))
     snapshot = template_store().commit(updates, source="update_airports")
     return {"status": "ok", "cleanedReferences": cleanup_result["total"], "template_revision": snapshot["revision"]}
 
+
 @app.get("/api/airports/info", dependencies=[Depends(verify_api_token)])
+@airport_service_errors
 def get_airports_info(force_indices: str = ""):
-    global _airport_info_sequence
-    deadline = time.monotonic() + AIRPORT_BATCH_TIMEOUT
-    force_idx_list = []
-    if force_indices:
-        try:
-            force_idx_list = [int(x) for x in force_indices.split(",") if x.strip()]
-        except ValueError:
-            pass
+    return airport_service.get_airports_info(force_indices)
 
-    for _ in range(2):
-        with configuration_lock():
-            sources = deepcopy(load_airports())
-            generation = _airport_info_generation
-            _airport_info_sequence += 1
-            sequence = _airport_info_sequence
-            cached = load_airport_info_cache()
-            urls = [(item.get("url", "") if isinstance(item, dict) else item).strip() for item in sources]
-            force_urls = {url for i, url in enumerate(urls) if i in force_idx_list or force_indices == "all"}
-            now = time.time()
-            pending = list(dict.fromkeys(url for url in urls if url in force_urls or url not in cached
-                                         or now - cached[url]["_timestamp"] >= 24 * 3600))
-
-        # One fetch per URL, independent of aliases. No configuration/cache lock
-        # is held during network I/O and workers never touch shared cache files.
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            fetched = dict(zip(pending, executor.map(lambda item: fetch_single_airport_info(item, deadline=deadline), pending)))
-
-        with configuration_lock():
-            if generation != _airport_info_generation or sources != load_airports():
-                continue
-            latest = load_airport_info_cache()
-            # Re-read and merge only this request's fresh entries. A newer
-            # accepted refresh wins even if its replace/directory fsync failed.
-            entries = {url: value for url, value in latest.items() if url in urls}
-            changed = False
-            for url, info in fetched.items():
-                if url and sequence > _airport_info_accepted.get(url, 0):
-                    entries[url] = {"info": info, "_timestamp": info["_timestamp"]}
-                    _airport_info_accepted[url] = sequence
-                    changed = True
-            if changed:
-                save_airport_info_cache(entries)
-            results = []
-            for item, url in zip(sources, urls):
-                # Prefer a concurrent committed refresh; if persistence failed,
-                # still return the result acquired by this request.
-                if url in fetched and _airport_info_accepted.get(url) == sequence:
-                    info = fetched[url]
-                elif url in entries:
-                    info = entries[url]["info"]
-                elif url in fetched:
-                    info = fetched[url]
-                else:
-                    info = cached[url]["info"]
-                info = deepcopy(info)
-                if isinstance(item, dict) and item.get("name"):
-                    info["name"] = item["name"]
-                results.append(info)
-            return {"info": results}
-    raise HTTPException(status_code=503, detail="机场配置正在更新，请稍后重试")
 
 class ParseLinksModel(BaseModel):
     links: List[str]
@@ -1235,7 +887,7 @@ def import_template(data: ImportModel):
         raise HTTPException(status_code=400, detail={"message": "节点配置校验失败", "errors": errors})
     check_airport_urls(data.urls)
     validate_saved_template(data.content, data.nodes + managed_nodes(), data.urls)
-    invalidate_airport_cache(clear_disk=(load_airports() != data.urls))
+    airport_service.invalidate_airport_cache(clear_disk=(load_airports() != data.urls))
     snapshot = template_store().commit({
         "template.yaml": data.content,
         "custom_nodes.yaml": yaml.safe_dump([strip_internal_proxy_fields(n) for n in data.nodes],
@@ -1256,36 +908,6 @@ def control_store():
 attach_agent_routes(app, verify_api_token, control_store)
 
 # ================= 后台定时刷新任务 =================
-
-def refresh_airport_cache(stop_event=None):
-    def stopping():
-        return stop_event is not None and stop_event.is_set()
-
-    if stopping():
-        return
-    snapshot = airport_cache_snapshot()
-    if stopping():
-        return
-    proxies = fetch_airport_proxies(snapshot[0], stop_event=stop_event)
-    if stopping():
-        return
-    try:
-        with airport_cache_locked(snapshot):
-            proxies, missing_sources = merge_airport_proxies_with_cache(proxies, snapshot[0])
-            # Check again after waiting for the configuration lock and disk I/O.
-            if stopping():
-                return
-            if proxies and not missing_sources:
-                save_cache_to_file(proxies, snapshot)
-                # Supersede in-flight foreground computations as well as the
-                # previous cached value, without changing the source list.
-                invalidate_airport_cache()
-                _subscription_cache[()] = deepcopy(proxies)
-                logger.info("后台定时任务完成，成功更新了 %s 个机场节点", len(proxies))
-            else:
-                logger.warning("后台定时任务：机场数据不完整，放弃覆盖旧缓存")
-    except AirportSourcesChanged:
-        logger.info("后台定时任务：来源已更新，丢弃旧刷新结果")
 
 
 AIRPORT_REFRESH_START_DELAY = 300

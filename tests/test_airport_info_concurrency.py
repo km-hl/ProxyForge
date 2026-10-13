@@ -1,3 +1,4 @@
+from proxyforge.airports import service as airport_module
 import concurrent.futures
 import json
 import tempfile
@@ -47,7 +48,7 @@ class AirportInfoConcurrencyTest(unittest.TestCase):
             barrier.wait(10)
             return response(1)
 
-        with patch.object(self.app, "safe_get", side_effect=fetch):
+        with patch.object(self.app.airport_service, "http_get", side_effect=fetch):
             result = self.app.get_airports_info("all")
         self.assertEqual(len(result["info"]), 2)
         self.assertEqual(set(self.read()), {source["url"] for source in self.sources})
@@ -60,7 +61,7 @@ class AirportInfoConcurrencyTest(unittest.TestCase):
             barrier.wait(10)
             return response(10 if url == self.sources[0]["url"] else 20)
 
-        with patch.object(self.app, "safe_get", side_effect=fetch):
+        with patch.object(self.app.airport_service, "http_get", side_effect=fetch):
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
                 futures = [pool.submit(self.app.get_airports_info, str(i)) for i in range(2)]
                 for future in futures:
@@ -79,7 +80,7 @@ class AirportInfoConcurrencyTest(unittest.TestCase):
                 return response(1)
             return response(2)
 
-        with patch.object(self.app, "safe_get", side_effect=fetch):
+        with patch.object(self.app.airport_service, "http_get", side_effect=fetch):
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 pending = pool.submit(self.app.get_airports_info, "all")
                 try:
@@ -91,8 +92,8 @@ class AirportInfoConcurrencyTest(unittest.TestCase):
         self.assertEqual(self.read()[self.sources[0]["url"]]["info"]["upload"], 2)
 
     def test_one_write_per_batch_and_no_write_for_all_cache_hits(self):
-        with patch.object(self.app, "safe_get", return_value=response(1)), \
-             patch.object(self.app, "atomic_write", wraps=self.app.atomic_write) as write:
+        with patch.object(self.app.airport_service, "http_get", return_value=response(1)), \
+             patch.object(airport_module, "atomic_write", wraps=airport_module.atomic_write) as write:
             self.app.get_airports_info("all")
             self.assertEqual(write.call_count, 1)
             self.assertEqual(Path(write.call_args.args[0]), self.cache)
@@ -102,10 +103,10 @@ class AirportInfoConcurrencyTest(unittest.TestCase):
     def test_worker_never_reads_or_writes_cache(self):
         self.seed()
         original = self.cache.read_bytes()
-        with patch.object(self.app, "safe_get", return_value=response(9)), \
-             patch.object(self.app, "load_airport_info_cache", side_effect=AssertionError("cache read")), \
-             patch.object(self.app, "atomic_write", side_effect=AssertionError("cache write")):
-            info = self.app.fetch_single_airport_info(self.sources[0]["url"])
+        with patch.object(self.app.airport_service, "http_get", return_value=response(9)), \
+             patch.object(self.app.airport_service, "load_airport_info_cache", side_effect=AssertionError("cache read")), \
+             patch.object(airport_module, "atomic_write", side_effect=AssertionError("cache write")):
+            info = self.app.airport_service.fetch_single_airport_info(self.sources[0]["url"])
         self.assertEqual(info["upload"], 9)
         self.assertEqual(self.cache.read_bytes(), original)
 
@@ -114,7 +115,7 @@ class AirportInfoConcurrencyTest(unittest.TestCase):
         from test_api_integration import TEST_ADMIN_TOKEN
         client = TestClient(self.app.app)
         self.addCleanup(client.close)
-        with patch.object(self.app, "safe_get", return_value=response(7)) as fetch:
+        with patch.object(self.app.airport_service, "http_get", return_value=response(7)) as fetch:
             self.assertEqual(client.get("/api/airports/info").status_code, 401)
             fetch.assert_not_called()
             result = client.get("/api/airports/info", params={"force_indices": "all"},
@@ -148,7 +149,7 @@ class AirportInfoConcurrencyTest(unittest.TestCase):
                         return response(7)
 
                     with patch.object(self.app.TemplateStore, "locked", failing_lock), \
-                         patch.object(self.app, "safe_get", side_effect=fetch) as network:
+                         patch.object(self.app.airport_service, "http_get", side_effect=fetch) as network:
                         result = client.get("/api/airports/info", params={"force_indices": "all"},
                                             headers={"Authorization": "Bearer " + TEST_ADMIN_TOKEN})
                     self.assertEqual(result.status_code, 503, result.text)
@@ -163,7 +164,7 @@ class AirportInfoConcurrencyTest(unittest.TestCase):
         self.app.save_airports(sources)
         remote = response(4)
         remote.headers["content-disposition"] = 'attachment; filename="Upstream"'
-        with patch.object(self.app, "safe_get", return_value=remote) as fetch:
+        with patch.object(self.app.airport_service, "http_get", return_value=remote) as fetch:
             first = self.app.get_airports_info("all")["info"]
             self.assertEqual(fetch.call_count, 1)
             self.assertEqual([info["name"] for info in first], ["第一机场", "第二机场", "Upstream"])
@@ -180,7 +181,7 @@ class AirportInfoConcurrencyTest(unittest.TestCase):
         for entry in legacy.values():
             entry["info"].pop("_timestamp")
         self.cache.write_text(json.dumps(legacy), encoding="utf-8")
-        with patch.object(self.app, "safe_get", return_value=response(5)) as fetch:
+        with patch.object(self.app.airport_service, "http_get", return_value=response(5)) as fetch:
             result = self.app.get_airports_info("bad,0")["info"]
             fetch.assert_not_called()
             self.assertEqual([info["upload"] for info in result], [0, 0])
@@ -192,18 +193,18 @@ class AirportInfoConcurrencyTest(unittest.TestCase):
 
     def test_error_results_keep_24_hour_ttl_and_force_can_retry(self):
         self.app.save_airports(self.sources[:1])
-        with patch.object(self.app.time, "time", return_value=100000), \
-             patch.object(self.app, "safe_get", side_effect=TimeoutError("fixture")) as fetch:
+        with patch.object(self.app.airport_service, "clock", return_value=100000), \
+             patch.object(self.app.airport_service, "http_get", side_effect=TimeoutError("fixture")) as fetch:
             first = self.app.get_airports_info()["info"][0]
             self.assertEqual(first["error"], "TimeoutError")
             self.app.get_airports_info()
             self.assertEqual(fetch.call_count, 1)
-        with patch.object(self.app.time, "time", return_value=100000 + 86400 - 1), \
-             patch.object(self.app, "safe_get", return_value=response(8)) as fetch:
+        with patch.object(self.app.airport_service, "clock", return_value=100000 + 86400 - 1), \
+             patch.object(self.app.airport_service, "http_get", return_value=response(8)) as fetch:
             self.assertEqual(self.app.get_airports_info()["info"][0], first)
             fetch.assert_not_called()
-        with patch.object(self.app.time, "time", return_value=100000 + 86400), \
-             patch.object(self.app, "safe_get", return_value=response(8)) as fetch:
+        with patch.object(self.app.airport_service, "clock", return_value=100000 + 86400), \
+             patch.object(self.app.airport_service, "http_get", return_value=response(8)) as fetch:
             self.assertIsNone(self.app.get_airports_info()["info"][0]["error"])
             self.assertEqual(fetch.call_count, 1)
             self.app.get_airports_info("all")
@@ -213,7 +214,7 @@ class AirportInfoConcurrencyTest(unittest.TestCase):
         for damaged in ('{"secret":', '[]', '{"secret-url": {"info": [], "_timestamp": "broken"}}'):
             with self.subTest(damaged=damaged):
                 self.cache.write_text(damaged, encoding="utf-8")
-                with patch.object(self.app, "safe_get", return_value=response(3)), \
+                with patch.object(self.app.airport_service, "http_get", return_value=response(3)), \
                      self.assertLogs(self.app.logger, level="WARNING") as logs:
                     result = self.app.get_airports_info()
                 self.assertEqual(len(result["info"]), 2)
@@ -225,7 +226,7 @@ class AirportInfoConcurrencyTest(unittest.TestCase):
         data = self.read()
         data[self.sources[0]["url"]]["_timestamp"] = float("nan")
         self.cache.write_text(json.dumps(data), encoding="utf-8")
-        with patch.object(self.app, "safe_get", return_value=response(6)) as fetch:
+        with patch.object(self.app.airport_service, "http_get", return_value=response(6)) as fetch:
             self.app.get_airports_info()
         self.assertEqual(fetch.call_count, 1)
         self.assertEqual(fetch.call_args.args[0], self.sources[0]["url"])
@@ -241,7 +242,7 @@ class AirportInfoConcurrencyTest(unittest.TestCase):
                     self.assertTrue(release.wait(10))
                     return response(1)
 
-                with patch.object(self.app, "safe_get", side_effect=fetch):
+                with patch.object(self.app.airport_service, "http_get", side_effect=fetch):
                     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                         pending = pool.submit(self.app.get_airports_info, "all")
                         try:
@@ -269,7 +270,7 @@ class AirportInfoConcurrencyTest(unittest.TestCase):
                 return response(1)
             return response(2)
 
-        with patch.object(self.app, "safe_get", side_effect=fetch):
+        with patch.object(self.app.airport_service, "http_get", side_effect=fetch):
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 pending = pool.submit(self.app.get_airports_info, "all")
                 try:
@@ -291,7 +292,7 @@ class AirportInfoConcurrencyTest(unittest.TestCase):
             return response(1)
 
         from fastapi import HTTPException
-        with patch.object(self.app, "safe_get", side_effect=fetch) as fetch_mock:
+        with patch.object(self.app.airport_service, "http_get", side_effect=fetch) as fetch_mock:
             with self.assertRaises(HTTPException) as error:
                 self.app.get_airports_info("all")
         self.assertEqual(error.exception.status_code, 503)
@@ -307,8 +308,8 @@ class AirportInfoConcurrencyTest(unittest.TestCase):
             self.assertTrue(release.wait(10))
             return response(1)
 
-        with patch.object(self.app, "safe_get", side_effect=fetch) as fetch_mock, \
-             patch.object(self.app, "fetch_airport_proxies", return_value=[{"name": "n", "_airport_name": "A"}]):
+        with patch.object(self.app.airport_service, "http_get", side_effect=fetch) as fetch_mock, \
+             patch.object(self.app.airport_service, "fetch_airport_proxies", return_value=[{"name": "n", "_airport_name": "A"}]):
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 pending = pool.submit(self.app.get_airports_info, "all")
                 try:
@@ -330,12 +331,12 @@ class AirportInfoConcurrencyTest(unittest.TestCase):
                 return response(1)
             return response(2)
 
-        with patch.object(self.app, "safe_get", side_effect=fetch):
+        with patch.object(self.app.airport_service, "http_get", side_effect=fetch):
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 pending = pool.submit(self.app.get_airports_info, "all")
                 try:
                     self.assertTrue(started.wait(10))
-                    with patch.object(self.app, "atomic_write", side_effect=OSError("fixture")):
+                    with patch.object(airport_module, "atomic_write", side_effect=OSError("fixture")):
                         result = self.app.get_airports_info("all")
                     self.assertEqual(result["info"][0]["upload"], 2)
                 finally:

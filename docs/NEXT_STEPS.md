@@ -1,6 +1,6 @@
 # ProxyForge 下一阶段开发计划（审查修订版）
 
-更新：2026-10-08。原计划于 2026-09-28 审查，基线为 `f963e04c1b749ec9405f47602eaae24d9891a41b`；当前合并进度核对至 PR #48（`c5946a2`）。下表区分已合并、文档收尾与未验收内容；代码合并不等于生产部署。
+更新：2026-10-13。原计划于 2026-09-28 审查，基线为 `f963e04c1b749ec9405f47602eaae24d9891a41b`；当前合并进度核对至 PR #49（`dab376f`）。下表区分已合并、文档收尾与未验收内容；代码合并不等于生产部署。
 
 目标：优先提高 Controller、Airport、Agent 和部署系统的稳定性、安全性与可维护性，再扩展功能。
 现有数据库 schema 5、Agent 0.6.0，以及 HTTP/API/运行文件兼容边界继续有效。
@@ -17,10 +17,11 @@
 | 14：固定安装产物前置 | 已合并 #39；正式 tag/Release 与发布自动化未完成 |
 | 16：固定 bootstrap、文档命令、控制台复制入口 | 已合并 #40、#41；Ubuntu 四组合 VM 与 Debian 四组合原生 systemd 容器的真实安装/HTTPS 心跳 CI 已通过；helper 八组合已通过并合并 #47；完整 Debian VM 四组合已审查合并 #48、52 CI 全成功；Debian 12 amd64 的真实公网注册/心跳/队列/helper 已实测，其他平台公网、独立网络及裸机仍待 |
 | 15：中文说明 | 已合并 #42，补齐 5 份英文正文、安装参数/提示对照并修正旧 README；后续按[中文说明覆盖表](DOCUMENTATION.md)持续维护 |
-| 8、10、9、11：结构、来源模型、路由、错误处理 | 待开发；按该顺序推进，异常处理按问题穿插 |
+| 8：AirportService | 本次已提取解析、拉取、节点/元信息缓存与刷新协调，PR 待审查；接口与数据格式兼容 |
+| 10、9、11：来源模型、路由、错误处理 | 下一步内部来源标准化，再整理 Router；异常处理按问题穿插 |
 | 12、13、14 后续：许可证、仓库信息、正式发布 | 待完成；许可证及首个正式 tag 需所有者决定 |
 
-Ubuntu 四组合 VM 和 Debian 四组合原生 systemd 容器安装 CI 已审查合并（#43、#46）。已合并 #47 补齐八项中的显式 helper bootstrap、Unix socket 调用方身份与真实 sing-box 生命周期/能力心跳，并修复新 systemd 在 seccomp 初始化时移除 CAP_SETUID 导致配置检查无法降权的问题；已推进并验证固定下载锚点，44 项 CI 检查全部成功；完整 Debian VM 四组合 #48 已审查合并，52 CI 全成功。下一公网验收已实际完成 Debian 12 amd64 的注册、在线心跳、队列租约领取/开始/结果、request_id 幂等、sing-box 生命周期和撤销退出 4；使用现有 Egern Controller 及其历史固定安装来源，没有升级生产 Controller 或已有 Agent。验收 VM 与 Controller 共用物理宿主机，经真实公网域名入口通信；短任务未观察到续租，租约续期/故障重领、独立网络、其他平台公网和代理握手继续单列，不将其写成全部通过。完成该交付 review 后进入第 8 项 AirportService 提取。以下设计和验收条款继续有效；历史问题表描述的是最初审查基线。
+Ubuntu 四组合 VM 和 Debian 四组合原生 systemd 容器安装 CI 已审查合并（#43、#46）。已合并 #47 补齐八项中的显式 helper bootstrap、Unix socket 调用方身份与真实 sing-box 生命周期/能力心跳，并修复新 systemd 在 seccomp 初始化时移除 CAP_SETUID 导致配置检查无法降权的问题；已推进并验证固定下载锚点，44 项 CI 检查全部成功；完整 Debian VM 四组合 #48 已审查合并，52 CI 全成功。下一公网验收已实际完成 Debian 12 amd64 的注册、在线心跳、队列租约领取/开始/结果、request_id 幂等、sing-box 生命周期和撤销退出 4；使用现有 Egern Controller 及其历史固定安装来源，没有升级生产 Controller 或已有 Agent。验收 VM 与 Controller 共用物理宿主机，经真实公网域名入口通信；短任务未观察到续租，租约续期/故障重领、独立网络、其他平台公网和代理握手继续单列，不将其写成全部通过。公网交付 #49 已审查合并，52 CI 检查全成功；第 8 项提取已实现并待审查，下一步第 10 项内部来源标准化。以下设计和验收条款继续有效；历史问题表描述的是最初审查基线。
 
 ## 审查结论与修正
 
@@ -192,6 +193,8 @@ Controller 支持范围与使用系统 Python 的 Agent 支持范围分别决定
 完成 P0 并稳定后，优先建立最小 `proxyforge/airports/` 边界；按实际职责决定 service/cache/parser 文件数量。
 迁移机场解析、拉取、合并与缓存编排；注入 sources、cache path、HTTP client、clock 及必要提交协调依赖。
 模块不导入 `main`、不依赖 FastAPI Request/Response、管理 session 或全局 app。保留内部库导入无副作用，不改变 provider、缓存格式和 UI。
+
+本次已实现 `proxyforge/airports/service.py` 与纯解析 `parser.py`：同一实例持有缓存/代次/接受序号，注入来源读取、绝对缓存路径、HTTP/CA、双时钟和模板恢复锁。旧环境迁移、HTTP 错误映射及异步调度仍在入口；来源字符串/对象/未知字段原样保留。原并发、原子写、信息汇总、预算与后台退出测试迁移到实际服务，另补直接装配与实例隔离验证；具体契约见[项目结构](PROJECT_STRUCTURE.md#airportservice-装配约定)。此改动不包含生产部署。
 
 ### 9. 逐步整理 FastAPI Router
 

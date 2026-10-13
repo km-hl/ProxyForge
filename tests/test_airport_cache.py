@@ -40,7 +40,7 @@ class AirportCacheFallbackTest(unittest.TestCase):
         cached = [self.node("A cached", "Airport A"), self.node("B cached", "Airport B")]
         self.write_cache(cached)
 
-        merged, missing = self.app.merge_airport_proxies_with_cache([], airports)
+        merged, missing = self.app.airport_service.merge_airport_proxies_with_cache([], airports)
 
         self.assertEqual(merged, cached)
         self.assertEqual(missing, [])
@@ -53,7 +53,7 @@ class AirportCacheFallbackTest(unittest.TestCase):
         fresh = [self.node("A fresh", "Airport A")]
         self.write_cache([self.node("A old", "Airport A"), self.node("B cached", "Airport B")])
 
-        merged, missing = self.app.merge_airport_proxies_with_cache(fresh, airports)
+        merged, missing = self.app.airport_service.merge_airport_proxies_with_cache(fresh, airports)
 
         self.assertEqual([node["name"] for node in merged], ["A fresh", "B cached"])
         self.assertEqual(missing, [])
@@ -61,7 +61,7 @@ class AirportCacheFallbackTest(unittest.TestCase):
     def test_missing_cache_is_reported_instead_of_silently_publishing_empty_data(self):
         airports = [{"name": "Airport A", "url": "https://a.invalid/sub"}]
 
-        merged, missing = self.app.merge_airport_proxies_with_cache([], airports)
+        merged, missing = self.app.airport_service.merge_airport_proxies_with_cache([], airports)
 
         self.assertEqual(merged, [])
         self.assertEqual(missing, ["Airport A"])
@@ -88,9 +88,9 @@ class AirportCacheFallbackTest(unittest.TestCase):
             def get(url, **kwargs):
                 raise RuntimeError(f"failed to reach {url}")
 
-        with patch.object(self.app, "logger", CapturingLogger()), \
-             patch.object(self.app, "safe_get", side_effect=FailingRequests.get):
-            proxies = self.app.fetch_airport_item(secret_url)
+        with patch.object(self.app.airport_service, "logger", CapturingLogger()), \
+             patch.object(self.app.airport_service, "http_get", side_effect=FailingRequests.get):
+            proxies = self.app.airport_service.fetch_airport_item(secret_url)
 
         self.assertEqual(proxies, [])
         combined_logs = "\n".join(messages)

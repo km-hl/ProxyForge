@@ -83,9 +83,9 @@ class AirportBackgroundTest(unittest.IsolatedAsyncioTestCase):
 
                 with patch.object(self.app, "AIRPORT_REFRESH_START_DELAY", 0), \
                      patch.object(self.app, "cleanup_runtime_template_references"), \
-                     patch.object(self.app, "fetch_airport_proxies", side_effect=block if stage == "network" else None,
+                     patch.object(self.app.airport_service, "fetch_airport_proxies", side_effect=block if stage == "network" else None,
                                   return_value=[]), \
-                     patch.object(self.app, "load_cache_from_file", side_effect=block if stage == "disk" else None,
+                     patch.object(self.app.airport_service, "load_cache_from_file", side_effect=block if stage == "disk" else None,
                                   return_value=[]):
                     await self.app.startup_event()
                     try:
@@ -113,8 +113,8 @@ class AirportBackgroundTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(self.app, "AIRPORT_REFRESH_START_DELAY", 0), \
              patch.object(self.app, "AIRPORT_REFRESH_SHUTDOWN_TIMEOUT", 0), \
              patch.object(self.app, "cleanup_runtime_template_references"), \
-             patch.object(self.app, "fetch_airport_proxies", side_effect=fetch), \
-             patch.object(self.app, "save_cache_to_file", wraps=self.app.save_cache_to_file) as save:
+             patch.object(self.app.airport_service, "fetch_airport_proxies", side_effect=fetch), \
+             patch.object(self.app.airport_service, "save_cache_to_file", wraps=self.app.airport_service.save_cache_to_file) as save:
             await self.app.startup_event()
             state = self.app.app.state.airport_updater
             try:
@@ -129,9 +129,9 @@ class AirportBackgroundTest(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(asyncio.shield(state.worker), 5)
             save.assert_not_called()
             self.assertTrue(state.thread_done.is_set())
-            self.assertEqual(self.app.load_cache_from_file(), [])
-            with self.app._subscription_cache_lock:
-                self.assertEqual(len(self.app._subscription_cache), 0)
+            self.assertEqual(self.app.airport_service.load_cache_from_file(), [])
+            with self.app.airport_service._subscription_cache_lock:
+                self.assertEqual(len(self.app.airport_service._subscription_cache), 0)
 
     async def test_shutdown_waits_for_worker_without_cancelling_it(self):
         self.sources()
@@ -145,7 +145,7 @@ class AirportBackgroundTest(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(self.app, "AIRPORT_REFRESH_START_DELAY", 0), \
              patch.object(self.app, "cleanup_runtime_template_references"), \
-             patch.object(self.app, "fetch_airport_proxies", side_effect=fetch):
+             patch.object(self.app.airport_service, "fetch_airport_proxies", side_effect=fetch):
             await self.app.startup_event()
             state = self.app.app.state.airport_updater
             try:
@@ -210,8 +210,8 @@ class AirportBackgroundTest(unittest.IsolatedAsyncioTestCase):
                 raise TimeoutError("test worker release")
             return []
 
-        with patch.object(self.app, "fetch_airport_item", side_effect=fetch):
-            worker = asyncio.create_task(asyncio.to_thread(self.app.fetch_airport_proxies, ["fixture"] * 12, stop))
+        with patch.object(self.app.airport_service, "fetch_airport_item", side_effect=fetch):
+            worker = asyncio.create_task(asyncio.to_thread(self.app.airport_service.fetch_airport_proxies, ["fixture"] * 12, stop))
             try:
                 await self.wait(started)
                 stop.set()
@@ -228,9 +228,9 @@ class AirportBackgroundTest(unittest.IsolatedAsyncioTestCase):
             stop.set()
             return [self.node("late")], []
 
-        with patch.object(self.app, "fetch_airport_proxies", return_value=[]), \
-             patch.object(self.app, "merge_airport_proxies_with_cache", side_effect=merge), \
-             patch.object(self.app, "save_cache_to_file") as save:
+        with patch.object(self.app.airport_service, "fetch_airport_proxies", return_value=[]), \
+             patch.object(self.app.airport_service, "merge_airport_proxies_with_cache", side_effect=merge), \
+             patch.object(self.app.airport_service, "save_cache_to_file") as save:
             await asyncio.to_thread(self.app.refresh_airport_cache, stop)
         save.assert_not_called()
 
@@ -239,12 +239,12 @@ class AirportBackgroundTest(unittest.IsolatedAsyncioTestCase):
         cache = Path(self.app.CACHE_FILE_PATH)
         old = [self.node("A old"), self.node("B cached", "B")]
         cache.write_text(yaml.safe_dump(old), encoding="utf-8")
-        with patch.object(self.app, "fetch_airport_proxies", return_value=[self.node("A fresh")]):
+        with patch.object(self.app.airport_service, "fetch_airport_proxies", return_value=[self.node("A fresh")]):
             await asyncio.to_thread(self.app.refresh_airport_cache, threading.Event())
-        self.assertEqual([item["name"] for item in self.app.load_cache_from_file()], ["A fresh", "B cached"])
+        self.assertEqual([item["name"] for item in self.app.airport_service.load_cache_from_file()], ["A fresh", "B cached"])
         cache.write_text(yaml.safe_dump([self.node("A only")]), encoding="utf-8")
         original = cache.read_bytes()
-        with patch.object(self.app, "fetch_airport_proxies", return_value=[]):
+        with patch.object(self.app.airport_service, "fetch_airport_proxies", return_value=[]):
             await asyncio.to_thread(self.app.refresh_airport_cache, threading.Event())
         self.assertEqual(cache.read_bytes(), original)
 
@@ -260,8 +260,8 @@ class AirportBackgroundTest(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(self.app, "AIRPORT_REFRESH_START_DELAY", 0), \
              patch.object(self.app, "cleanup_runtime_template_references"), \
-             patch.object(self.app, "fetch_airport_proxies", side_effect=fetch), \
-             patch.object(self.app, "save_cache_to_file") as save:
+             patch.object(self.app.airport_service, "fetch_airport_proxies", side_effect=fetch), \
+             patch.object(self.app.airport_service, "save_cache_to_file") as save:
             await self.app.startup_event()
             state = self.app.app.state.airport_updater
             try:
@@ -328,8 +328,8 @@ class AirportBackgroundTest(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(self.app, "AIRPORT_REFRESH_START_DELAY", 0), \
              patch.object(self.app, "cleanup_runtime_template_references"), \
-             patch.object(self.app, "fetch_airport_proxies", side_effect=fetch), \
-             patch.object(self.app, "save_cache_to_file") as save:
+             patch.object(self.app.airport_service, "fetch_airport_proxies", side_effect=fetch), \
+             patch.object(self.app.airport_service, "save_cache_to_file") as save:
             await self.app.startup_event()
             state = self.app.app.state.airport_updater
             try:
@@ -371,8 +371,8 @@ class AirportBackgroundTest(unittest.IsolatedAsyncioTestCase):
     async def test_pre_stopped_refresh_does_not_read_or_fetch(self):
         stop = threading.Event()
         stop.set()
-        with patch.object(self.app, "airport_cache_snapshot") as snapshot, \
-             patch.object(self.app, "fetch_airport_proxies") as fetch:
+        with patch.object(self.app.airport_service, "airport_cache_snapshot") as snapshot, \
+             patch.object(self.app.airport_service, "fetch_airport_proxies") as fetch:
             await asyncio.to_thread(self.app.refresh_airport_cache, stop)
         snapshot.assert_not_called()
         fetch.assert_not_called()
