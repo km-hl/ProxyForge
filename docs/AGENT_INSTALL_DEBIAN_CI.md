@@ -51,3 +51,39 @@ CI 为四组合分别安装对应架构 QEMU、qemu-utils、cloud-image-utils �
 新增任务的实际结果须按目标提交四项 job 核对；任务存在不等于验收成功。完整 VM 通过后，真实公网 HTTPS、Controller 队列/租约、各平台公网代理握手、裸机差异和生产升级仍分别待验收。
 
 四组合首次完整成功记录：PR #48 的 `7961f711609f6c6ccca2a25fdf56159a7a94cc1d`，PR workflow `37780642839` 四项 VM job 均成功；Debian 12 内核为 `6.1.0-53` 的对应架构，Debian 13 内核以日志实际值为准。该轮使用同架构 TCG，保留真实平台、系统 Python、安装、HTTPS 心跳和 helper 生命周期日志。同期 push 的 Debian 12 arm64 在 cloud-init 初始 SSH 重置时失败，其余三项成功；后续修复只读等待的有界重试并添加回归，最新提交完整 CI 须再次核对。本记录不将单次成功当作所有云厂商或公网验收。
+
+最终 `bee202986ca3d7a6cbd5b02dcbc2914409022e6f` 的 push `37783408093` / PR `37783416308` 均成功，52 项检查全部 SUCCESS；四 VM × 两轮全部通过。#48 已审查合并为 `c5946a293e05d7b7dc08578e557ccef1221825c9`。
+
+## 真实公网 HTTPS operator 验收
+
+`scripts/check_agent_public.py` 是独立的已授权运维入口，**不是前述 CI 脚本的生产开关**。仅用于控制面初次验收：现有 Agent、jobs、deployments、chains 必须均为空，否则停止。管理员先确认目标 Controller、业务范围和可用资源；在可信、root 控制的源码目录运行。不要将 CI 的 `GITHUB_ACTIONS` 标记伪造到生产环境。
+
+宿主机要求 Linux amd64、root、可访问的 KVM、Docker bind-mounted `/app/data`、至少 2 GiB 可用内存和 3 GiB 空闲磁盘。需要 QEMU、qemu-img、cloud-localds、SSH，可按已确认的软件包变更范围准备：
+
+```bash
+sudo apt-get install --no-install-recommends --no-upgrade qemu-system-x86 qemu-utils cloud-image-utils openssh-client
+```
+
+先独立核对 `docker inspect` 的 Controller 镜像 ID 和安装来源；下列摘要占位符必须替换为已核验的完整值。`--expected-source-commit` 只能选驱动内已审查的两个来源：当前 `da2550a923f3a64a7d1e932a56090a34966f6ab7`，或历史 `977b16b41e0d5332d933df007e7a683189c1fdc8`。API 返回的 bootstrap/hash/完整命令必须与对应可信锚点逐字一致，不能由 API 自行选择任意 root 执行代码。
+
+```bash
+sudo python3 scripts/check_agent_public.py --disposable-vm \
+  --controller-url https://your-controller.example \
+  --expected-controller-image 'sha256:<已核验的64位镜像摘要>' \
+  --expected-source-commit da2550a923f3a64a7d1e932a56090a34966f6ab7 \
+  --output-dir /root/proxyforge-public-acceptance-YYYYMMDD-unique
+```
+
+输出目录必须全新、位于 Controller data 之外；其父目录及祖先必须由 root 持有、不可被 group/world 写入且无符号链接。写入注册记录前，驱动复制完整 data 的静态文件及目录权限，由 Controller 容器内与数据库 UID/GID 一致的运行用户使用 SQLite 在线 backup API 获取一致数据库，不复制热 WAL/SHM；保存原始 UID/GID/mode、SHA256 清单及私有 tar，逐项读取归档并在数据库副本核对 schema 5、integrity 和 foreign keys。配置在备份期间变化则停止。这是在线一致备份和副本读取演练，不替代涉及升级/迁移时的停写冷备；不会将备份恢复到生产数据库。线上 SQLite 的备份及资源数量检查只在 Controller 容器内执行；宿主机 root 不连接热数据库，使热 SQLite/WAL/SHM 访问维持在应用的数据用户与容器命名空间中。容器 User 必须与数据文件的数值 UID:GID 匹配，否则在数据库连接前拒绝。
+
+随后启动自己的 Debian 12 amd64 KVM VM，固定云镜像与 SHA512 沿用前节。限定 1 CPU/1 GiB 内存，SSH 仅绑定宿主机回环地址，临时密钥、seed、overlay 在 0700 目录中，没有宿主机共享目录或公网入站端口。核对随机标记、独立 Debian 内核、真实发行版、systemd 和架构后，才向该 VM 传递安装命令。宿主机不安装 Agent，不替换现有 Controller 镜像或重启业务容器。
+
+使用实际管理接口返回的普通安装命令和真实公网 HTTPS 根地址；不改 DNS/hosts，不添加测试 CA，不关闭证书校验。注册凭据只经私有管道进入 VM 的非回显 TTY，不进入参数、URL、环境、终端输出或 history。管理会话在 Controller 容器内生成并使用，管理 HTTP 禁止重定向；不会导出 session secret/cookie。检查 Agent 0600 身份、普通安装默认无 helper、重复安装拒绝及真实在线平台心跳后，才显式执行同一接口的 helper 命令。
+
+任务通过真实 `POST /api/agents/{id}/jobs` 下发，由实际 Agent 守护进程经公网领取、持有租约、开始和回传结果，不由探针直接调用 runtime socket 代替。先查未安装状态，再测试固定 sing-box install/restart/rollback/stop/start；核对单次尝试、时间戳、重复 request_id 的幂等、专用非 root runtime 用户、默认无入站和身份不变。仅在运行期间真正看到 `lease_until` 增长时，报告 `lease_renewal_observed=true`；短任务通过不能当作续租或故障重领验收。
+
+最后停止本次 runtime、撤销本次 Agent，等待其因凭据被拒绝以退出码 4 停止同步。正常结束、异常或 SIGTERM 会尽力先终止自己 QEMU，再仅删除随机名称、实例 ID 和未分配角色均匹配的临时 Agent 及其级联 jobs；配置文件、业务资源数量与所有运行容器的 ID/image/StartedAt/RestartCount 再次比较。保留正常注册凭据消费记录与审计事件；不回滚整份生产数据库。断电、SIGKILL 或公共入口失联时可能需要管理员凭保留备份检查临时记录，禁止猜测删除其他 Agent。
+
+私有输出目录保留 `backup/manifest.json`、`backup/SHA256SUMS`、`backup/data.tar`、读取过的 data 副本和脱敏 `report.json`；不得上传备份、原始 API 响应、VM seed/密钥/磁盘/日志。报告分别记录验收成功、清理不变量和每个任务是否实际观察到续租；退出码非零不能当作验收通过。
+
+该拓扑是 **同物理宿主机上的隔离 VM，经真实公网域名/HTTPS 入口访问 Controller**。它覆盖实际公网注册、心跳和队列结果回传，不能称为两个独立服务器/网络，也不验证所有平台、裸机、生产 Agent 升级、Reality/SS2022 公网代理握手或租约超时后的故障重领。生产 Controller 的旧固定来源验收与 master 的新来源 CI 需分别记录，不能据此声称新 helper unit 已部署。

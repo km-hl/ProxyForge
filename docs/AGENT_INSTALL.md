@@ -165,7 +165,7 @@ PROXYFORGE_BOOTSTRAP
 
 Debian 四项在同架构 GitHub VM 内运行官方 Debian 用户空间/systemd PID 1 的一次性容器，系统 Python 为 3.11/3.13；共享宿主机内核，不代表完整 Debian VM/裸机验收。固定镜像、参数、特权范围与验证见[Debian CI 说明](AGENT_INSTALL_DEBIAN_CI.md)。
 
-表中 CI 项表示持续执行的测试入口，是否通过以目标提交十二项 job（Ubuntu VM 四项、Debian 容器四项、Debian 完整 VM 四项）的结果为准。该 CI 使用隔离 runner 的测试域名、回环 HTTPS Controller 和专用测试 CA（保持证书/主机名校验），不是公网可达性验收；不在开发机或生产运行此特权脚本。CI 结果应随 PR/发布记录核对，不能把平台允许列表、进程快照或单元测试当作全部主机/整个安装期间的完整证明。完整 Debian VM 四组合在 #48 已实测通过，最新目标提交结果仍须另核对；真实公网 HTTPS、裸机差异、生产升级仍待分别验收。helper 安装 CI 的结果也须按目标提交十二项 job 核对，不代表公网链路已验收。GitHub 镜像预装了测试工具，不等同于所有云厂商的最小系统镜像。
+表中 CI 项表示持续执行的测试入口，是否通过以目标提交十二项 job（Ubuntu VM 四项、Debian 容器四项、Debian 完整 VM 四项）的结果为准。该 CI 使用隔离 runner 的测试域名、回环 HTTPS Controller 和专用测试 CA（保持证书/主机名校验），不是公网可达性验收；不在开发机或生产运行此特权脚本。CI 结果应随 PR/发布记录核对，不能把平台允许列表、进程快照或单元测试当作全部主机/整个安装期间的完整证明。完整 Debian VM 四组合在 #48 已实测通过，最新目标提交结果仍须另核对；本次单独完成的 Debian 12 amd64 公网控制面验收见下节，其他平台公网、裸机差异、生产升级仍待分别验收。helper 安装 CI 的结果也须按目标提交十二项 job 核对，不代表公网链路已验收。GitHub 镜像预装了测试工具，不等同于所有云厂商的最小系统镜像。
 
 维护者可用 `python -m scripts.agent_install_command --bootstrap-commit <完整提交> --bootstrap-sha256 <可信SHA256> --server https://your-controller.example` 重新生成命令；可选 `--action runtime` 或 `--action check`，这两种操作不传 `--server`。修改 bootstrap 后须同步固定提交、hash 与文档，不能只改下载 URL。
 
@@ -182,3 +182,11 @@ Debian 四项在同架构 GitHub VM 内运行官方 Debian 用户空间/systemd 
 八组合验收发现，systemd 255/257 的 seccomp 初始化可能移除未显式保留的 `CAP_SETUID`，使 root helper 无法将配置检查子进程切换到专用 runtime 用户。helper unit 显式设置 `AmbientCapabilities=CAP_SETUID`，保留已有设计要求的降权能力；`NoNewPrivileges=true`、目录保护、socket 调用方校验和非 root sing-box 服务保持有效。依据见[systemd 255 初始化源码](https://github.com/systemd/systemd/blob/v255/src/core/exec-invoke.c#L4484-L4490)。
 
 普通 Agent 的 Python 模块、0.6.0 版本、身份凭据和协议均未改变。已安装旧 helper 的主机须由管理员先私密备份 Agent 配置、runtime 数据及旧 unit，停止 `proxyforge-runtime.socket` 与 `proxyforge-runtime.service`，核对新版固定来源中的 unit 后替换 `/etc/systemd/system/proxyforge-runtime.service`，执行 `sudo systemctl daemon-reload` 和 `sudo systemctl start proxyforge-runtime.socket`，再验证实际 runtime 操作与心跳；无需删除配置或重新注册。回退时停止 helper、恢复备份 unit 并重新加载/启动 socket。旧环境如果缺少该能力，恢复旧 unit 会恢复原安装失败限制。本 CI 不在生产主机执行升级。
+
+## 真实公网控制面验收
+
+2026-10-08，现有 Egern 生产 Controller（`af37e88d89bc0c53dbd9b31830a2759a36fe5fda`）的实际命令已在同宿主机独立 Debian 12 amd64 KVM VM 验收：固定下载、隐藏 TTY 注册、系统 CA 公网 HTTPS 心跳、普通 Agent 默认无 helper、重复安装拒绝及凭据隐私检查通过。Controller 未升级，本次使用其历史来源 `977b16b41e0d5332d933df007e7a683189c1fdc8`，不宣称上文的新 helper unit 已部署。
+
+随后显式启用 helper，真实 Agent 守护进程通过 Controller 队列领取/开始/回传 singbox.status/install/restart/rollback/stop/start；request_id 幂等、单次尝试、专用 runtime 用户、身份不变和默认无入站通过。撤销后以退出码 4 停止同步，临时 Agent/jobs/VM 已移除，既有配置和运行容器保持一致。在线备份/校验清单与脱敏报告留在 root 私有目录。
+
+拓扑、可复制 operator 命令与失败清理见[公网验收说明](AGENT_INSTALL_DEBIAN_CI.md#真实公网-https-operator-验收)。短动作未观察到租约续期；这不覆盖租约超时后的故障重领、两个独立服务器/网络、其他平台公网、裸机、已有 Agent 升级或 Reality/SS2022 公网代理握手。它与上文的新来源安装 CI 是不同验收记录。
