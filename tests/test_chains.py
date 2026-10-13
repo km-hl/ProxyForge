@@ -224,7 +224,7 @@ class ChainStoreTest(unittest.TestCase):
             app.save_template_content(yaml.safe_dump(template, allow_unicode=True, sort_keys=False))
             before = app.template_store().snapshot()
             self.put(1)
-            with TestClient(app.app) as client, patch.object(app, 'get_airport_proxies_cached', return_value=[]):
+            with TestClient(app.app) as client, patch.object(app.airport_service, "get_airport_proxies_cached", return_value=[]):
                 for status in ('pending', 'failed'):
                     response = client.get('/sub', params={'token': TEST_SUBSCRIPTION_TOKEN})
                     self.assertEqual(response.status_code, 200, response.text)

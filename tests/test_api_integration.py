@@ -235,7 +235,7 @@ class ApiIntegrationTest(unittest.TestCase):
 
         with (
             patch.object(self.app_module, "load_airports", return_value=[airport]),
-            patch.object(self.app_module, "fetch_airport_item", return_value=proxies),
+            patch.object(self.app_module.airport_service, "fetch_airport_item", return_value=proxies),
         ):
             response = self.client.get(
                 f"/provider/0?token={TEST_SUBSCRIPTION_TOKEN}"
@@ -277,13 +277,11 @@ class ApiIntegrationTest(unittest.TestCase):
                 "cleanup_runtime_template_references",
                 return_value={"proxyReferences": [], "providerReferences": [], "total": 0},
             ),
-            patch.object(self.app_module, "get_airport_proxies_cached", return_value=proxies),
-            patch.object(
-                self.app_module,
-                "merge_airport_proxies_with_cache",
+            patch.object(self.app_module.airport_service, "get_airport_proxies_cached", return_value=proxies),
+            patch.object(self.app_module.airport_service, "merge_airport_proxies_with_cache",
                 return_value=(proxies, []),
             ),
-            patch.object(self.app_module, "save_cache_to_file"),
+            patch.object(self.app_module.airport_service, "save_cache_to_file"),
             patch.object(self.app_module, "load_airports", return_value=[airport]),
             patch.object(self.app_module, "load_custom_nodes", return_value=[]),
             patch.object(self.app_module, "load_template_content", return_value=template),
@@ -369,7 +367,7 @@ class ApiIntegrationTest(unittest.TestCase):
         headers = {"Authorization": f"Bearer {TEST_ADMIN_TOKEN}"}
         with patch.object(self.app_module, "load_airports", return_value=[]), \
              patch.object(self.app_module, "load_custom_nodes", return_value=[]), \
-             patch.object(self.app_module, "get_airport_proxies_cached", return_value=[]):
+             patch.object(self.app_module.airport_service, "get_airport_proxies_cached", return_value=[]):
             report = self.client.post("/api/template/validate", headers=headers, json={"content": content}).json()
             self.assertEqual(report["baseline"], "Mihomo v1.19.31")
             self.assertFalse(report["errors"])
@@ -388,7 +386,7 @@ class ApiIntegrationTest(unittest.TestCase):
         with patch.object(self.app_module, "load_template_content", return_value="dns: []\n"), \
              patch.object(self.app_module, "load_airports", return_value=[]), \
              patch.object(self.app_module, "load_custom_nodes", return_value=[]), \
-             patch.object(self.app_module, "get_airport_proxies_cached", return_value=[]):
+             patch.object(self.app_module.airport_service, "get_airport_proxies_cached", return_value=[]):
             response = self.client.get(f"/sub?token={TEST_SUBSCRIPTION_TOKEN}")
             self.assertEqual(response.status_code, 422)
             self.assertIn("dns", response.text)

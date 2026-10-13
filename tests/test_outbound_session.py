@@ -258,8 +258,8 @@ class OutboundSessionTest(unittest.TestCase):
         with patch.dict(os.environ, {"PROXYFORGE_AIRPORT_CA_BUNDLE": "trusted-fixture.pem"}):
             app = load_isolated_application(Path(self.temp.name))
         result = SimpleNamespace(headers={}, text="proxies: []", raise_for_status=lambda: None)
-        with patch.object(app, "safe_get", return_value=result) as fetch:
-            app.fetch_airport_item("https://subscription.example/sub")
-            app.fetch_single_airport_info("https://subscription.example/sub")
+        with patch.object(app.airport_service, "http_get", return_value=result) as fetch:
+            app.airport_service.fetch_airport_item("https://subscription.example/sub")
+            app.airport_service.fetch_single_airport_info("https://subscription.example/sub")
         self.assertEqual(fetch.call_count, 2)
         self.assertTrue(all(call.kwargs["ca_bundle"] == "trusted-fixture.pem" for call in fetch.call_args_list))

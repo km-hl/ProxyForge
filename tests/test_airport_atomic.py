@@ -20,7 +20,7 @@ def interrupted_cache_writer(root, kind, ready):
     app = load_isolated_application(Path(root))
     source = {"name": "fixture", "url": "https://airport.invalid/sub"}
     app.save_airports([source])
-    snapshot = app.airport_cache_snapshot()
+    snapshot = app.airport_service.airport_cache_snapshot()
     path = Path(app.CACHE_FILE_PATH) if kind == "nodes" else Path(app.DATA_DIR) / "airports_info_cache.json"
     path.write_bytes(b"[]\n" if kind == "nodes" else b"{}\n")
 
@@ -31,12 +31,12 @@ def interrupted_cache_writer(root, kind, ready):
 
     with patch.object(template_store.os, "replace", side_effect=pause_before_replace):
         if kind == "nodes":
-            app.save_cache_to_file([{"name": "new"}], snapshot)
+            app.airport_service.save_cache_to_file([{"name": "new"}], snapshot)
         else:
             response = type("Response", (), {
                 "headers": {}, "text": "proxies: []", "raise_for_status": lambda self: None,
             })()
-            with patch.object(app, "safe_get", return_value=response):
+            with patch.object(app.airport_service, "http_get", return_value=response):
                 app.get_airports_info("all")["info"][0]
 
 
@@ -47,7 +47,7 @@ class AirportAtomicWriteTest(unittest.TestCase):
         self.app = load_isolated_application(Path(self.temp.name))
         self.source = {"name": "示例机场", "url": "https://airport.invalid/sub"}
         self.app.save_airports([self.source])
-        self.snapshot = self.app.airport_cache_snapshot()
+        self.snapshot = self.app.airport_service.airport_cache_snapshot()
         self.proxies = [{"name": "新节点", "_airport_name": "示例机场"}]
         self.response = type("Response", (), {
             "headers": {}, "text": "proxies: []", "raise_for_status": lambda self: None,
@@ -65,8 +65,8 @@ class AirportAtomicWriteTest(unittest.TestCase):
 
     def write(self, kind):
         if kind == "nodes":
-            return self.app.save_cache_to_file(self.proxies, self.snapshot)
-        with patch.object(self.app, "safe_get", return_value=self.response):
+            return self.app.airport_service.save_cache_to_file(self.proxies, self.snapshot)
+        with patch.object(self.app.airport_service, "http_get", return_value=self.response):
             return self.app.get_airports_info("all")["info"][0]
 
     def assert_no_temporaries(self, kind):
@@ -192,7 +192,7 @@ class AirportAtomicWriteTest(unittest.TestCase):
                 remnant = path.with_name("." + path.name + "." + "a" * 32)
                 remnant.write_text("partial: [", encoding="utf-8")
                 if kind == "nodes":
-                    self.assertEqual(self.app.load_cache_from_file(), [{"name": "old"}])
+                    self.assertEqual(self.app.airport_service.load_cache_from_file(), [{"name": "old"}])
                 else:
                     self.write(kind)
                     self.assertIn(self.source["url"], json.loads(path.read_text(encoding="utf-8")))
@@ -230,7 +230,7 @@ class AirportAtomicWriteTest(unittest.TestCase):
 
     def test_failed_node_persistence_still_returns_fetched_subscription_nodes(self):
         original = self.seed("nodes")
-        with patch.object(self.app, "fetch_airport_item", return_value=self.proxies), \
+        with patch.object(self.app.airport_service, "fetch_airport_item", return_value=self.proxies), \
              patch.object(template_store.os, "replace", side_effect=OSError("fixture")):
             sources, proxies = self.app.subscription_airports()
         self.assertEqual(sources, [self.source])
@@ -250,7 +250,7 @@ class AirportAtomicWriteTest(unittest.TestCase):
 
     def test_written_info_preserves_cached_response_shape_and_force_behavior(self):
         first = self.write("info")
-        with patch.object(self.app, "safe_get", return_value=self.response) as fetch:
+        with patch.object(self.app.airport_service, "http_get", return_value=self.response) as fetch:
             self.assertEqual(self.app.get_airports_info()["info"][0], first)
             fetch.assert_not_called()
             forced = self.app.get_airports_info("all")["info"][0]

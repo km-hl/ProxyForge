@@ -24,7 +24,7 @@
 
 异常消息只含固定说明；机场调用方继续只记录异常类型，不输出包含订阅身份的异常正文。
 
-`fetch_airport_item(..., deadline=None, stop_event=None)` 和 `fetch_single_airport_info(..., deadline=None)` 在网络前和解析后检查批次期限。`fetch_airport_proxies` 从入口创建一次 180 秒预算；`get_airports_info` 在来源快照和有限重试之前创建预算，配置变化重试不重新获得 180 秒。单节点 provider 使用 `safe_get` 默认 60 秒网络预算。订阅 API 因来源变化重新调用节点批次时，会创建新一批预算；180 秒不是整个 HTTP API 的强制返回上限。
+当前这些批次调用位于 `AirportService`，由入口注入 `safe_get`、CA 和时钟，预算边界保持不变。`fetch_airport_item(..., deadline=None, stop_event=None)` 和 `fetch_single_airport_info(..., deadline=None)` 在网络前和解析后检查批次期限。`fetch_airport_proxies` 从入口创建一次 180 秒预算；`get_airports_info` 在来源快照和有限重试之前创建预算，配置变化重试不重新获得 180 秒。单节点 provider 使用 `safe_get` 默认 60 秒网络预算。订阅 API 因来源变化重新调用节点批次时，会创建新一批预算；180 秒不是整个 HTTP API 的强制返回上限。
 
 ## DNS、连接与慢流
 
