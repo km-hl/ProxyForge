@@ -1,3 +1,4 @@
+from proxyforge.nodes.api import NodesModel, ParseLinksModel, create_node_router
 from proxyforge.airports.service import AirportService, AirportSourcesChanged
 from proxyforge.airports.api import AirportsModel, check_airport_urls, create_airport_router
 from proxyforge.subscription.links import parse_share_link
@@ -668,74 +669,20 @@ update_airports = airport_api.update_airports
 get_airports_info = airport_api.get_airports_info
 
 
-class ParseLinksModel(BaseModel):
-    links: List[str]
-
-@app.post("/api/parse-links", dependencies=[Depends(verify_api_token)])
-def parse_links_api(data: ParseLinksModel):
-    nodes = []
-    errors = []
-    for index, link in enumerate(data.links, 1):
-        parsed = parse_share_link(link)
-        if parsed:
-            parsed = {k: v for k, v in parsed.items() if v is not None}
-            node_errors = validate_proxy_nodes([parsed], location=f"links[{index}]")
-            if node_errors:
-                errors.extend(node_errors)
-            else:
-                nodes.append(parsed)
-        else:
-            scheme = link.split(":", 1)[0] if ":" in link else "未知协议"
-            errors.append(f"links[{index}] ({scheme}) 分享链接格式无效")
-    if errors:
-        raise HTTPException(status_code=400, detail={"message": "分享链接校验失败", "errors": errors})
-    return {"nodes": nodes}
-
-@app.get("/api/nodes", dependencies=[Depends(verify_api_token)])
-def get_nodes():
-    return {"nodes": load_custom_nodes()}
-
-@app.get("/api/proxies", dependencies=[Depends(verify_api_token)])
-def get_all_proxies():
-    custom = load_custom_nodes()
-    airports = get_airport_proxies_cached()
-    return {"proxies": custom + airports}
-
-class NodesModel(BaseModel):
-    nodes: List[Dict[str, Any]]
-
-@app.post("/api/nodes", dependencies=[Depends(verify_api_token)])
-@configuration_locked
-def update_nodes(data: NodesModel):
-    data.nodes = manual_node_input(data.nodes)
-    errors = validate_proxy_nodes(data.nodes, location="nodes")
-    if errors:
-        raise HTTPException(status_code=400, detail={"message": "节点配置校验失败", "errors": errors})
-    old_names = {
-        proxy.get("name") for proxy in load_manual_nodes()
-        if isinstance(proxy, dict) and proxy.get("name")
-    }
-    new_names = {
-        proxy.get("name") for proxy in data.nodes
-        if isinstance(proxy, dict) and proxy.get("name")
-    }
-    removed_names = old_names - new_names
-    updates = {}
-    cleanup_result = {"proxyReferences": [], "providerReferences": [], "total": 0}
-    if removed_names:
-        try:
-            template_config = yaml.safe_load(load_template_content()) or {}
-        except yaml.YAMLError as e:
-            raise HTTPException(status_code=400, detail=f"无法清理节点引用，模板 YAML 错误: {e}")
-        cleanup_result = cleanup_proxy_group_references(
-            template_config,
-            removed_proxy_names=removed_names,
-        )
-        if cleanup_result["total"]:
-            updates["template.yaml"] = yaml.safe_dump(template_config, allow_unicode=True, sort_keys=False)
-    updates["custom_nodes.yaml"] = yaml.safe_dump([strip_internal_proxy_fields(n) for n in data.nodes], allow_unicode=True, sort_keys=False)
-    snapshot = template_store().commit(updates, source="update_nodes")
-    return {"status": "ok", "cleanedReferences": cleanup_result["total"], "template_revision": snapshot["revision"]}
+node_api = create_node_router(
+    verify_management=verify_api_token, configuration_lock=configuration_lock,
+    nodes_reader=lambda: load_custom_nodes(),
+    airport_proxy_reader=lambda: get_airport_proxies_cached(),
+    manual_input=lambda nodes: manual_node_input(nodes),
+    manual_nodes_reader=lambda: load_manual_nodes(),
+    template_reader=lambda: load_template_content(), template_store=lambda: template_store(),
+)
+app.include_router(node_api.router)
+# 同一组实际处理函数，保留既有 Python 工具调用名称。
+parse_links_api = node_api.parse_links_api
+get_nodes = node_api.get_nodes
+get_all_proxies = node_api.get_all_proxies
+update_nodes = node_api.update_nodes
 
 @app.get("/api/template", dependencies=[Depends(verify_api_token)])
 @configuration_locked
