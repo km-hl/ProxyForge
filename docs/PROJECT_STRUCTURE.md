@@ -101,6 +101,8 @@ agent → 标准库及自身模块（不依赖 Controller 包）
 
 YAML 节点缓存、JSON 元信息缓存、12 小时/24 小时 TTL、两次快照尝试、5 个并发请求和 180 秒批次预算保持兼容。`tests/test_airport_service.py` 直接装配独立服务验证依赖、实例隔离、旧来源扩展字段、时钟、解析及错误边界；原有并发/原子写/预算/生命周期测试继续覆盖实际生产服务，HTTP 测试保留鉴权、provider 和默认/Egern 订阅。
 
+节点磁盘缓存读取捕获文件、Unicode 解码、YAML 解析/标量构造及过深嵌套的预期异常，日志只记固定描述及错误类型，返回空列表且不重写损坏文件。其余错误在此函数内不吞掉，配置锁/事务恢复失败仍由存储适配器处理；详见[读取异常与回退边界](AIRPORT_CACHE_CONCURRENCY.md#验证与边界)。这是第 11 项的独立兼容修复，不改变来源代次、缓存格式或正常订阅行为。
+
 ### 机场管理 Router 试点
 
 `airports/api.py:create_airport_router()` 在应用装配时建立三个管理路由：`GET /api/airports`、`POST /api/airports`、`GET /api/airports/info`。模块导入不创建 app、读取环境或运行文件；只有显式装配才创建 Router，装配本身也不读取配置或启动网络工作。
