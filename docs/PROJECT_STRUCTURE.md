@@ -35,6 +35,7 @@ ProxyForge/
 | 位置 | 职责 |
 | --- | --- |
 | `airports/service.py` | 显式注入依赖，统一机场节点/元信息缓存与后台刷新协调 |
+| `airports/sources.py` | AirportSource / AirportSnapshot 内部快照，旧格式投影与来源身份比较 |
 | `airports/parser.py` | 纯 YAML / Base64 订阅解析，沿用分享链接解析 |
 | `control/agent_api.py`、`job_api.py`、`deployment_api.py` | 管理/Agent 路由、鉴权衔接、请求与响应 schema |
 | `control/control_store.py` | SQLite 连接、migration、注册、身份和心跳 |
@@ -66,7 +67,8 @@ Controller 当前支持单进程、单副本运行，不启用多个 Uvicorn wor
 
 ```text
 main.py → airports / control / config / security / subscription
-airports.service → airports.parser / config.template_store / security.outbound_budget / subscription.nodes
+airports.service → airports.sources / airports.parser / config.template_store / security.outbound_budget
+airports.sources → subscription.nodes
 airports.parser → subscription.links
 subscription.builder → subscription.validation / nodes
 subscription.validation → config.network_config
@@ -82,9 +84,15 @@ agent → 标准库及自身模块（不依赖 Controller 包）
 
 构造参数 `sources_reader`、`cache_path`、`info_cache_path`、`http_get`、`clock`、`monotonic`、`configuration_lock` 均由入口显式传入；另可传 `ca_bundle`、`batch_timeout` 和 logger。入口在当前数据目录中固定两个缓存的绝对路径；服务不读取 `.env` 或创建目录。`clock` 为 Unix 时间，`monotonic` 须与 `safe_get` 的 `time.monotonic()` 使用同一时间域；前者用于 JSON 缓存，后者用于 TTL 与批次期限。不得混用两种时间。
 
-`configuration_lock` 是可重入的上下文管理器工厂，入口传 `TemplateStore.locked()`，先完成提交恢复再读取来源。固定配置锁→缓存锁顺序，联网不持锁；来源回调保留旧 URL 字符串、对象及未知扩展字段，不标准化或重写磁盘。旧环境迁移/管理提交、鉴权、HTTP 状态和异步生命周期仍由入口负责。
+`configuration_lock` 是可重入的上下文管理器工厂，入口传 `TemplateStore.locked()`，先完成提交恢复再读取来源。固定配置锁→缓存锁顺序，联网不持锁；来源回调仍返回旧 URL 字符串、对象及未知扩展字段，服务只在内存中建立类型，不重写磁盘。旧环境迁移/管理提交、鉴权、HTTP 状态和异步生命周期仍由入口负责。
 
 核心接口为 `airport_cache_snapshot()`、`airport_cache_locked(snapshot)`、`get_airport_proxies_cached(snapshot=None)`、`subscription_airports()`、`get_airports_info(force_indices="")`、`refresh_airport_cache(stop_event=None)` 和 `invalidate_airport_cache(clear_disk=False)`。服务抛出 `AirportSourcesChanged` / 存储 `OSError`，入口在不持锁的错误适配器中沿用原 503 与存储错误响应；校验错误仍沿用订阅的 422。`main.py` 的节点缓存/订阅/后台刷新函数仅作适配，不持第二份状态。
+
+内部 `airport_cache_snapshot()` 现在返回 `AirportSnapshot(sources, generation)`，`sources` 是保持原顺序的 `AirportSource` 元组。Python 调用方使用 `snapshot.sources`、`snapshot.generation`，需要旧格式列表时调用 `snapshot.to_legacy()`，不要继续使用旧二元 tuple 的数字下标。`save_cache_to_file` 和 `airport_cache_locked` 接收该快照；`subscription_airports()` 对入口/订阅构建器继续返回旧格式列表及节点。
+
+`AirportSource.from_legacy(value, index)` 支持旧 URL 字符串和对象，保存完整原始值的深拷贝；`to_legacy()` 返回新的副本。`url` 为节点请求使用的去空白字符串，非法类型/空值返回 `None`，不将数值或布尔值转成 URL；`name` 沿用节点命名。`info_url` / `info_alias` 保留元信息旧规则：别名不 trim、不收紧类型，空白别名、同 URL 多别名及 content-disposition 名称回退与节点命名分开处理。安全 URL 校验仍由原 API 与实际 HTTP client 执行。
+
+模型只读字段和对外深拷贝防止修改响应污染来源快照；原始 URL、嵌套扩展字段均参与来源比较，不能用规范化后的 URL 判定同一配置。未知字段变更、来源重排、原始空白差异与来源代次仍受原失效规则保护。模型 `repr` 不输出原始 URL/扩展字段；不要将包含原始来源的导出副本用于诊断日志。API 的 `List[Any]`、400/422、YAML 注释与格式均保持兼容；不把内部 dataclass 用作外部请求/响应 schema。
 
 YAML 节点缓存、JSON 元信息缓存、12 小时/24 小时 TTL、两次快照尝试、5 个并发请求和 180 秒批次预算保持兼容。`tests/test_airport_service.py` 直接装配独立服务验证依赖、实例隔离、旧来源扩展字段、时钟、解析及错误边界；原有并发/原子写/预算/生命周期测试继续覆盖实际生产服务，HTTP 测试保留鉴权、provider 和默认/Egern 订阅。
 
