@@ -1,4 +1,4 @@
-"""Parse supported share links without network or storage access."""
+"""纯分享链接解析；普通解析失败返回 None，控制信号向外传播。"""
 import base64
 import ipaddress
 import json
@@ -114,7 +114,8 @@ def parse_share_link(link: str) -> dict:
             if data.get("sni"):
                 node["servername"] = data.get("sni")
             return node
-        except: return None
+        except Exception:
+            return None
     elif link.lower().startswith("ss://"):
         try:
             parsed = urllib.parse.urlparse(link)
@@ -147,7 +148,8 @@ def parse_share_link(link: str) -> dict:
                 "password": password,
                 "udp": True
             }
-        except: return None
+        except Exception:
+            return None
     elif any(link.lower().startswith(prefix) for prefix in [
         "vless://",
         "trojan://",
@@ -435,5 +437,6 @@ def parse_share_link(link: str) -> dict:
                 if dialer_proxy:
                     node["dialer-proxy"] = dialer_proxy
             return node
-        except: return None
+        except Exception:
+            return None
     return None

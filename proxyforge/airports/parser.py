@@ -1,4 +1,4 @@
-"""机场 YAML / Base64 订阅解析，保持既有解析顺序。"""
+"""机场 YAML / Base64 订阅解析；保持回退顺序，控制信号向外传播。"""
 import base64
 import yaml
 
@@ -11,7 +11,8 @@ def parse_airport_response(text: str) -> list:
         config = yaml.safe_load(text)
         if isinstance(config, dict) and "proxies" in config and isinstance(config["proxies"], list):
             return config["proxies"]
-    except: pass
+    except Exception:
+        pass
 
     # Try Base64
     try:
@@ -23,6 +24,7 @@ def parse_airport_response(text: str) -> list:
             p = parse_share_link(line)
             if p: proxies.append(p)
         return proxies
-    except: pass
+    except Exception:
+        pass
 
     return []
