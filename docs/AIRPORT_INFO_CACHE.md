@@ -25,7 +25,7 @@ Controller 仍按单进程、单副本运行；没有新增 HTTP 路由、数据
 
 较新结果在尝试写磁盘前即登记序号。即使这次写入失败，也不允许较旧请求覆盖可能已经完成 replace 的新文件。若旧结果被拒绝，优先返回最新磁盘结果；磁盘也不可用时仍可返回该请求已取得的信息，但不把它再次持久化。后续新请求可继续刷新。
 
-内部来源在 `AirportService` 中使用 `AirportSource` 视图；`info_url`、`info_alias` 保留原有 URL/别名规则，与节点来源名分别处理。重复 URL 只拉取一次，按原来源顺序应用每个别名；内部类型不修改外部请求/响应和来源 YAML。
+HTTP 元信息处理由 `airports/api.py` 的 Router 转交注入的同一服务；原管理鉴权和错误适配不变。内部来源在 `AirportService` 中使用 `AirportSource` 视图；`info_url`、`info_alias` 保留原有 URL/别名规则，与节点来源名分别处理。重复 URL 只拉取一次，按原来源顺序应用每个别名；内部类型不修改外部请求/响应和来源 YAML。
 
 内部接口：
 

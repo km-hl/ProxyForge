@@ -34,6 +34,7 @@ ProxyForge/
 
 | 位置 | 职责 |
 | --- | --- |
+| `airports/api.py` | 三个机场管理接口的 Router 工厂、旧请求模型及共享 URL 校验 |
 | `airports/service.py` | 显式注入依赖，统一机场节点/元信息缓存与后台刷新协调 |
 | `airports/sources.py` | AirportSource / AirportSnapshot 内部快照，旧格式投影与来源身份比较 |
 | `airports/parser.py` | 纯 YAML / Base64 订阅解析，沿用分享链接解析 |
@@ -66,7 +67,8 @@ Controller 当前支持单进程、单副本运行，不启用多个 Uvicorn wor
 ## 4. 鉴权与模块依赖
 
 ```text
-main.py → airports / control / config / security / subscription
+main.py → airports.api / airports.service / control / config / security / subscription
+airports.api → airports.service / config.template_store / security.network_security / subscription.builder / nodes
 airports.service → airports.sources / airports.parser / config.template_store / security.outbound_budget
 airports.sources → subscription.nodes
 airports.parser → subscription.links
@@ -95,6 +97,18 @@ agent → 标准库及自身模块（不依赖 Controller 包）
 模型只读字段和对外深拷贝防止修改响应污染来源快照；原始 URL、嵌套扩展字段均参与来源比较，不能用规范化后的 URL 判定同一配置。未知字段变更、来源重排、原始空白差异与来源代次仍受原失效规则保护。模型 `repr` 不输出原始 URL/扩展字段；不要将包含原始来源的导出副本用于诊断日志。API 的 `List[Any]`、400/422、YAML 注释与格式均保持兼容；不把内部 dataclass 用作外部请求/响应 schema。
 
 YAML 节点缓存、JSON 元信息缓存、12 小时/24 小时 TTL、两次快照尝试、5 个并发请求和 180 秒批次预算保持兼容。`tests/test_airport_service.py` 直接装配独立服务验证依赖、实例隔离、旧来源扩展字段、时钟、解析及错误边界；原有并发/原子写/预算/生命周期测试继续覆盖实际生产服务，HTTP 测试保留鉴权、provider 和默认/Egern 订阅。
+
+### 机场管理 Router 试点
+
+`airports/api.py:create_airport_router()` 在应用装配时建立三个管理路由：`GET /api/airports`、`POST /api/airports`、`GET /api/airports/info`。模块导入不创建 app、读取环境或运行文件；只有显式装配才创建 Router，装配本身也不读取配置或启动网络工作。
+
+入口注入 `verify_management`、`configuration_lock`、`sources_reader`、`template_reader`、`template_store`、`airport_service` 和 `service_errors`。它们分别复用原管理鉴权、可恢复配置锁、旧格式读取回调、模板读取/提交工厂、单一机场服务与不持锁的 HTTP 错误适配器。不得为 Router 新建第二个 AirportService 或另配一套提交锁。
+
+工厂返回 `AirportApi`，其中有 `router` 及 `get_airports` / `update_airports` / `get_airports_info` 三个实际处理函数；`main.py` 只 include 一次 Router，并把原 Python 名称直接绑定到这些函数，不再注册同路径路由或实现第二份处理逻辑。`AirportsModel` 和 `check_airport_urls` 在 API 模块定义，入口保留导入名称供内部工具使用；全局导入继续共用同一个 URL 校验函数。
+
+路径、请求/响应字段、operationId、管理与订阅身份边界、Cookie 同源校验和安全响应头保持兼容。机场保存仍在同一配置锁内校验 URL、清理移除的 provider 引用、失效缓存，再用 TemplateStore 一次提交来源/模板；409/413 交由应用原异常处理器，存储故障和元信息来源冲突沿用原 503。元信息网络工作保持不持配置锁。
+
+本次只完成机场管理三个接口的试点。公开 `/provider/{airport_index}`、默认/Egern 订阅及 nodes/templates/auth 路由继续由入口编排；后续按依赖评估逐批迁移，不一次搬动全部路由。`tests/test_airport_router.py` 覆盖依赖隔离、单一处理函数绑定、鉴权/同源和共享错误处理；原有事务、源代次、后台退出与模板恢复测试继续覆盖真实生产路径。
 
 ## 5. Agent 协议与分发
 
