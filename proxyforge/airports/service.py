@@ -115,12 +115,13 @@ class AirportService:
     def load_cache_from_file(self) -> List[Dict[str, Any]]:
         if not os.path.exists(self.cache_path):
             return []
+        # SafeLoader 的非法标量和过深嵌套不一定抛出 YAMLError。
         try:
             with open(self.cache_path, "r", encoding="utf-8") as f:
                 nodes = yaml.safe_load(f)
                 return nodes if isinstance(nodes, list) else []
-        except Exception as e:
-            self.logger.error(f"读取节点持久化缓存失败: {e}")
+        except (OSError, ValueError, yaml.YAMLError, RecursionError) as exc:
+            self.logger.error("读取节点持久化缓存失败（%s）", type(exc).__name__)
         return []
 
     def merge_airport_proxies_with_cache(self,
