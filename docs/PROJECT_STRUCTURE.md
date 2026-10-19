@@ -7,6 +7,7 @@ ProxyForge/
 ├── main.py                    # Web 入口、API 编排、运行初始化与服务装配
 ├── proxyforge/                # Controller 内部 Python 包
 │   ├── airports/              # 机场解析、拉取、缓存与刷新协调
+│   ├── nodes/                 # 节点管理 Router，显式复用存储和只读边界
 │   ├── control/               # Agent/Job/Deployment/Chain API 与 SQLite 存储
 │   ├── config/                # 模板事务与历史、DNS/TUN 校验、Mihomo 基线
 │   ├── security/              # 管理凭据/会话、登录限速、安全出站请求
@@ -34,6 +35,7 @@ ProxyForge/
 
 | 位置 | 职责 |
 | --- | --- |
+| `nodes/api.py` | 分享链接解析、节点读写与代理聚合的管理 Router |
 | `airports/api.py` | 三个机场管理接口的 Router 工厂、旧请求模型及共享 URL 校验 |
 | `airports/service.py` | 显式注入依赖，统一机场节点/元信息缓存与后台刷新协调 |
 | `airports/sources.py` | AirportSource / AirportSnapshot 内部快照，旧格式投影与来源身份比较 |
@@ -67,7 +69,8 @@ Controller 当前支持单进程、单副本运行，不启用多个 Uvicorn wor
 ## 4. 鉴权与模块依赖
 
 ```text
-main.py → airports.api / airports.service / control / config / security / subscription
+main.py → airports.api / airports.service / nodes.api / control / config / security / subscription
+nodes.api → config.template_store / subscription.links / nodes / validation / builder
 airports.api → airports.service / config.template_store / security.network_security / subscription.builder / nodes
 airports.service → airports.sources / airports.parser / config.template_store / security.outbound_budget
 airports.sources → subscription.nodes
@@ -108,7 +111,19 @@ YAML 节点缓存、JSON 元信息缓存、12 小时/24 小时 TTL、两次快�
 
 路径、请求/响应字段、operationId、管理与订阅身份边界、Cookie 同源校验和安全响应头保持兼容。机场保存仍在同一配置锁内校验 URL、清理移除的 provider 引用、失效缓存，再用 TemplateStore 一次提交来源/模板；409/413 交由应用原异常处理器，存储故障和元信息来源冲突沿用原 503。元信息网络工作保持不持配置锁。
 
-本次只完成机场管理三个接口的试点。公开 `/provider/{airport_index}`、默认/Egern 订阅及 nodes/templates/auth 路由继续由入口编排；后续按依赖评估逐批迁移，不一次搬动全部路由。`tests/test_airport_router.py` 覆盖依赖隔离、单一处理函数绑定、鉴权/同源和共享错误处理；原有事务、源代次、后台退出与模板恢复测试继续覆盖真实生产路径。
+机场管理首先迁移三个接口，节点管理在下一批独立提取，见下节。公开 `/provider/{airport_index}`、默认/Egern 订阅及 templates/auth 路由继续由入口编排；后续按依赖评估逐批迁移，不一次搬动全部路由。`tests/test_airport_router.py` 覆盖依赖隔离、单一处理函数绑定、鉴权/同源和共享错误处理；原有事务、源代次、后台退出与模板恢复测试继续覆盖真实生产路径。
+
+### 节点管理 Router
+
+`nodes/api.py:create_node_router()` 显式装配四个管理接口：`POST /api/parse-links`、`GET /api/nodes`、`GET /api/proxies`、`POST /api/nodes`。导入及装配不创建全局 app、不读取文件/数据库或发起机场请求。`proxyforge/nodes/` 负责 HTTP 编排，`subscription/nodes.py` 继续只负责节点纯函数，两者职责不同。
+
+工厂注入 `verify_management`、`configuration_lock`、`nodes_reader`、`airport_proxy_reader`、`manual_input`、`manual_nodes_reader`、`template_reader` 和 `template_store`。入口以回调复用现有组合节点读取、机场缓存读取、托管只读过滤、原始手动节点读取和同一个可恢复模板存储；不在 Router 内新建 ControlStore、AirportService、配置锁或维护另一份清单。
+
+返回 `NodeApi(router, parse_links_api, get_nodes, get_all_proxies, update_nodes)`。入口只 include 一次，并把原四个 Python 名称直接绑定到实际处理函数；`NodesModel` 和 `ParseLinksModel` 在新 API 模块定义，入口保留导入名称。路径、请求/响应、operationId、模型校验与 400/401/403/409/422/503 保持兼容，管理鉴权与 Cookie 同源校验继续复用入口依赖。
+
+GET 节点继续返回手动与可发布的托管节点，GET 代理继续按原顺序追加机场缓存节点。POST 节点仍先在配置锁内用 `manual_input` 跳过原样托管节点、拒绝其修改/伪装，然后校验手动节点、按原手动名称清理引用，再在一次 TemplateStore 提交中写入手动节点和必要的模板更新。托管数据库、成功发布条件和清单读取仍在原入口/控制面；空手动列表不能删除托管节点。节点解析只返回完整成功结果或原错误，不开始存储事务。
+
+`tests/test_node_router.py` 验证独立装配/应用隔离、处理函数绑定、管理与 Cookie 边界、托管节点原样回传/禁止修改、失败不写盘、解析与存储独立，以及节点+模板提交中断后下一次读取同时恢复；既有部署/链路的真实 SQLite 只读节点回归、模板版本冲突和默认/Egern 订阅继续执行。整个第 9 项仍未完成，后续再评估模板、订阅与鉴权路由的依赖。
 
 ## 5. Agent 协议与分发
 
