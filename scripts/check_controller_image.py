@@ -153,8 +153,8 @@ def fresh_check():
     from proxyforge.control.control_store import ControlStore
     from container_data import inspect_data
     application.save_template_content(TEMPLATE)
-    application.save_cache_to_file([], application.airport_cache_snapshot())
-    application.save_airport_info_cache({})
+    application.airport_service.save_cache_to_file([], application.airport_service.airport_cache_snapshot())
+    application.airport_service.save_airport_info_cache({})
     require((DATA / 'airport_cache.yaml').exists(), 'Node cache not written')
     require((DATA / 'airports_info_cache.json').exists(), 'Info cache not written')
     require(application.template_store().list_history(), 'Template history not created')

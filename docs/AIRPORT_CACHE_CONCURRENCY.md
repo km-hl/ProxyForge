@@ -21,7 +21,7 @@ HTTP 路径、正常请求响应、订阅格式和运行文件路径保持不变
 - 返回节点使用深拷贝，调用方修改列表或嵌套字段不会污染下一次缓存命中。
 - 磁盘缓存读取、合并与受快照检查的提交参与同一个配置锁；磁盘节点写入失败仍可返回已得到的节点，不扩大原有缓存失败的影响范围。
 
-`main.py` 内部接口：`airport_cache_snapshot()` 返回来源及代次；`airport_cache_locked(snapshot)` 固定配置锁→内存锁的顺序；`get_airport_proxies_cached(snapshot=None)` 读取或计算；`subscription_airports()` 合并回退并有限重试；`refresh_airport_cache()` 执行一次后台刷新。
+第 8 项提取后，以下接口位于 `proxyforge/airports/service.py` 的 `AirportService`；入口只装配一个共享实例，详见[项目结构与依赖](PROJECT_STRUCTURE.md#airportservice-装配约定)。服务内部接口：`airport_cache_snapshot()` 返回来源及代次；`airport_cache_locked(snapshot)` 固定配置锁→内存锁的顺序；`get_airport_proxies_cached(snapshot=None)` 读取或计算；`subscription_airports()` 合并回退并有限重试；`refresh_airport_cache()` 执行一次后台刷新。
 `save_cache_to_file(proxies, snapshot)` 必须携带快照，不能绕过检查。`_subscription_cache` 为内部对象，所有访问必须在统一锁内。应用外部 HTTP API 不受这些 Python 接口调整影响。
 
 ## 来源修改与磁盘回退
