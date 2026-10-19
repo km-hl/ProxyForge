@@ -1,6 +1,6 @@
 # ProxyForge 下一阶段开发计划（审查修订版）
 
-更新：2026-10-19。原计划于 2026-09-28 审查，基线为 `f963e04c1b749ec9405f47602eaae24d9891a41b`；当前合并进度核对至 PR #50（`670fa98`）。下表区分已合并、文档收尾与未验收内容；代码合并不等于生产部署。
+更新：2026-10-19。原计划于 2026-09-28 审查，基线为 `f963e04c1b749ec9405f47602eaae24d9891a41b`；当前合并进度核对至 PR #51（`f1e2a7c`）。下表区分已合并、文档收尾与未验收内容；代码合并不等于生产部署。
 
 目标：优先提高 Controller、Airport、Agent 和部署系统的稳定性、安全性与可维护性，再扩展功能。
 现有数据库 schema 5、Agent 0.6.0，以及 HTTP/API/运行文件兼容边界继续有效。
@@ -18,11 +18,12 @@
 | 16：固定 bootstrap、文档命令、控制台复制入口 | 已合并 #40、#41；Ubuntu 四组合 VM 与 Debian 四组合原生 systemd 容器的真实安装/HTTPS 心跳 CI 已通过；helper 八组合已通过并合并 #47；完整 Debian VM 四组合已审查合并 #48、52 CI 全成功；Debian 12 amd64 的真实公网注册/心跳/队列/helper 已实测，其他平台公网、独立网络及裸机仍待 |
 | 15：中文说明 | 已合并 #42，补齐 5 份英文正文、安装参数/提示对照并修正旧 README；后续按[中文说明覆盖表](DOCUMENTATION.md)持续维护 |
 | 8：AirportService | 已审查合并 #50，52 CI 全成功；接口与数据格式兼容 |
-| 10：内部 AirportSource | 本次已建立类型快照、完整原始身份比较及旧格式投影，PR 待审查；不收紧外部 API |
-| 9、11：路由、错误处理 | 下一步整理 Router；异常处理按问题穿插 |
+| 10：内部 AirportSource | 已审查合并 #51，52 CI 全成功；不收紧外部 API |
+| 9：Router 逐步整理 | 机场管理三个接口试点已实现，PR 待审查；后续评估 nodes/templates/subscriptions/auth |
+| 11：异常处理 | 按实际问题穿插，独立兼容验证 |
 | 12、13、14 后续：许可证、仓库信息、正式发布 | 待完成；许可证及首个正式 tag 需所有者决定 |
 
-Ubuntu 四组合 VM 和 Debian 四组合原生 systemd 容器安装 CI 已审查合并（#43、#46）。已合并 #47 补齐八项中的显式 helper bootstrap、Unix socket 调用方身份与真实 sing-box 生命周期/能力心跳，并修复新 systemd 在 seccomp 初始化时移除 CAP_SETUID 导致配置检查无法降权的问题；已推进并验证固定下载锚点，44 项 CI 检查全部成功；完整 Debian VM 四组合 #48 已审查合并，52 CI 全成功。下一公网验收已实际完成 Debian 12 amd64 的注册、在线心跳、队列租约领取/开始/结果、request_id 幂等、sing-box 生命周期和撤销退出 4；使用现有 Egern Controller 及其历史固定安装来源，没有升级生产 Controller 或已有 Agent。验收 VM 与 Controller 共用物理宿主机，经真实公网域名入口通信；短任务未观察到续租，租约续期/故障重领、独立网络、其他平台公网和代理握手继续单列，不将其写成全部通过。公网交付 #49 已审查合并，52 CI 检查全成功；第 8 项 AirportService 随 #50 审查合并，52 CI 全成功；第 10 项内部来源类型已实现并待审查，后续进入第 9 项 Router。以下设计和验收条款继续有效；历史问题表描述的是最初审查基线。
+Ubuntu 四组合 VM 和 Debian 四组合原生 systemd 容器安装 CI 已审查合并（#43、#46）。已合并 #47 补齐八项中的显式 helper bootstrap、Unix socket 调用方身份与真实 sing-box 生命周期/能力心跳，并修复新 systemd 在 seccomp 初始化时移除 CAP_SETUID 导致配置检查无法降权的问题；已推进并验证固定下载锚点，44 项 CI 检查全部成功；完整 Debian VM 四组合 #48 已审查合并，52 CI 全成功。下一公网验收已实际完成 Debian 12 amd64 的注册、在线心跳、队列租约领取/开始/结果、request_id 幂等、sing-box 生命周期和撤销退出 4；使用现有 Egern Controller 及其历史固定安装来源，没有升级生产 Controller 或已有 Agent。验收 VM 与 Controller 共用物理宿主机，经真实公网域名入口通信；短任务未观察到续租，租约续期/故障重领、独立网络、其他平台公网和代理握手继续单列，不将其写成全部通过。公网交付 #49 已审查合并，52 CI 检查全成功；第 8 项 AirportService 随 #50 审查合并，52 CI 全成功；第 10 项内部来源类型随 #51 审查合并，52 CI 全成功；第 9 项机场管理 Router 试点已实现并待审查，后续评估节点/模板等路由。以下设计和验收条款继续有效；历史问题表描述的是最初审查基线。
 
 ## 审查结论与修正
 
@@ -203,13 +204,15 @@ Controller 支持范围与使用系统 Python 的 Agent 支持范围分别决定
 现有 Agent 路由已位于 `proxyforge/control/`，不要重复搬迁制造第二套路由体系。
 每个 PR 注入明确依赖，保留 path/method/status/body、鉴权、cookie 同源校验、限速、模板事务/冲突与缓存失效行为，避免循环 import。
 
+本次先提取 `proxyforge/airports/api.py` 的机场管理 Router 工厂，显式注入管理鉴权、配置锁/模板存储、来源/模板读取、共享 AirportService 与错误适配器。只迁移机场列表 GET/POST 和元信息 GET；保留原 `List[Any]`、operationId、状态/响应、Cookie 同源校验、provider 引用清理、事务/恢复、缓存失效和不持锁联网。入口原 Python 名称直接绑定同一处理函数，模块不导入 main、不装配全局 app。具体契约见[Router 装配](PROJECT_STRUCTURE.md#机场管理-router-试点)。本次只完成试点，后续路由仍需按依赖评估，不把整个第 9 项标为完成；不包含生产部署。
+
 ### 10. AirportSource schema
 
 先给内部来源快照建立类型，兼容旧 URL 字符串和 `{name, url}` 对象；读取标准化但不自动重写磁盘数据。
 外部 API 收紧校验另做明确变更：不能直接将 `List[Any]` 换成模型列表，导致旧字符串、未知扩展字段、400/422 或 URL 序列化悄悄变化。
 保留命名、顺序、provider 索引和模板引用，沿用安全 URL 检查；覆盖旧配置、旧 API 客户端和全局导入。
 
-本次已实现 `proxyforge/airports/sources.py` 的 `AirportSource` / `AirportSnapshot`，用于节点缓存和元信息批次的内部快照；保留完整旧格式深拷贝、来源位置、原始空白、未知嵌套字段及重复 URL 别名。节点名和元信息别名分别投影，不以规范化 URL 代替来源身份比较；服务输出给订阅构建器仍为旧格式副本。外部 `List[Any]`、400/422、全局导入与安全 URL 校验不变；读取不重写 YAML 注释/格式。新回归覆盖独立快照、默认/Egern/provider、原文件字节、扩展字段失效及旧请求边界，详见[内部装配契约](PROJECT_STRUCTURE.md#airportservice-装配约定)。本次不包含生产部署或外部 schema 收紧。
+已随 #51 合并 `proxyforge/airports/sources.py` 的 `AirportSource` / `AirportSnapshot`，用于节点缓存和元信息批次的内部快照；保留完整旧格式深拷贝、来源位置、原始空白、未知嵌套字段及重复 URL 别名。节点名和元信息别名分别投影，不以规范化 URL 代替来源身份比较；服务输出给订阅构建器仍为旧格式副本。外部 `List[Any]`、400/422、全局导入与安全 URL 校验不变；读取不重写 YAML 注释/格式。新回归覆盖独立快照、默认/Egern/provider、原文件字节、扩展字段失效及旧请求边界，详见[内部装配契约](PROJECT_STRUCTURE.md#airportservice-装配约定)。本次不包含生产部署或外部 schema 收紧。
 
 ### 11. 收窄异常捕获并脱敏
 

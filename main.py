@@ -1,4 +1,5 @@
 from proxyforge.airports.service import AirportService, AirportSourcesChanged
+from proxyforge.airports.api import AirportsModel, check_airport_urls, create_airport_router
 from proxyforge.subscription.links import parse_share_link
 from proxyforge.subscription.nodes import (
     CUSTOM_NODES_SOURCE, strip_internal_proxy_fields, add_flag_to_proxy_name,
@@ -44,7 +45,7 @@ from proxyforge.security.runtime_security import (
     RuntimeConfigError,
     RuntimeConfigStore,
 )
-from proxyforge.security.network_security import UnsafeOutboundUrl, safe_get, validate_outbound_url
+from proxyforge.security.network_security import safe_get
 from proxyforge.security.auth_rate_limit import LoginRateLimiter
 from proxyforge.config.network_config import validate_network_config, network_error_messages
 
@@ -653,63 +654,18 @@ def update_admin_token(
     set_management_session(response, request)
     return {"status": "ok"}
 
-@app.get("/api/airports", dependencies=[Depends(verify_api_token)])
-def get_airports():
-    return {"urls": load_airports()}
-
-class AirportsModel(BaseModel):
-    urls: List[Any]
-
-def check_airport_urls(urls):
-    for index, item in enumerate(urls, 1):
-        url = item.get("url", "") if isinstance(item, dict) else item
-        if not isinstance(url, str) or not url.strip():
-            raise HTTPException(status_code=400, detail=f"机场 [{index}] 缺少订阅地址")
-        try:
-            validate_outbound_url(url)
-        except UnsafeOutboundUrl as exc:
-            raise HTTPException(
-                status_code=400,
-                detail=f"机场 [{index}] 订阅地址不安全: {exc}",
-            ) from exc
-
-
-@app.post("/api/airports", dependencies=[Depends(verify_api_token)])
-@configuration_locked
-def update_airports(data: AirportsModel):
-    check_airport_urls(data.urls)
-
-    old_airports = load_airports()
-    new_provider_keys = {
-        get_airport_name(item, index).lower() for index, item in enumerate(data.urls)
-    }
-    removed_provider_names = [
-        get_airport_name(item, index) for index, item in enumerate(old_airports)
-        if get_airport_name(item, index).lower() not in new_provider_keys
-    ]
-    updates = {}
-    cleanup_result = {"proxyReferences": [], "providerReferences": [], "total": 0}
-    if removed_provider_names:
-        try:
-            template_config = yaml.safe_load(load_template_content()) or {}
-        except yaml.YAMLError as e:
-            raise HTTPException(status_code=400, detail=f"无法清理机场引用，模板 YAML 错误: {e}")
-        cleanup_result = cleanup_proxy_group_references(
-            template_config,
-            removed_provider_names=removed_provider_names,
-        )
-        if cleanup_result["total"]:
-            updates["template.yaml"] = yaml.safe_dump(template_config, allow_unicode=True, sort_keys=False)
-    updates["airports.yaml"] = yaml.safe_dump(data.urls, allow_unicode=True, sort_keys=False)
-    airport_service.invalidate_airport_cache(clear_disk=(old_airports != data.urls))
-    snapshot = template_store().commit(updates, source="update_airports")
-    return {"status": "ok", "cleanedReferences": cleanup_result["total"], "template_revision": snapshot["revision"]}
-
-
-@app.get("/api/airports/info", dependencies=[Depends(verify_api_token)])
-@airport_service_errors
-def get_airports_info(force_indices: str = ""):
-    return airport_service.get_airports_info(force_indices)
+# Router 与订阅/后台共用同一个服务、配置锁及存储工厂。
+airport_api = create_airport_router(
+    verify_management=verify_api_token, configuration_lock=configuration_lock,
+    sources_reader=lambda: load_airports(), template_reader=lambda: load_template_content(),
+    template_store=lambda: template_store(), airport_service=airport_service,
+    service_errors=airport_service_errors,
+)
+app.include_router(airport_api.router)
+# 保留已有内部 Python 调用名称，直接绑定同一处理函数，不注册重复路由。
+get_airports = airport_api.get_airports
+update_airports = airport_api.update_airports
+get_airports_info = airport_api.get_airports_info
 
 
 class ParseLinksModel(BaseModel):
