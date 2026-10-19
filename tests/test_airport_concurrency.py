@@ -48,7 +48,7 @@ class AirportConcurrencyTest(unittest.TestCase):
                 started, release = threading.Event(), threading.Event()
 
                 def fetch(item, index=0, **kwargs):
-                    if item == self.old:
+                    if item.to_legacy() == self.old:
                         started.set()
                         self.assertTrue(release.wait(10))
                         return [self.node("old")]
@@ -165,7 +165,7 @@ class AirportConcurrencyTest(unittest.TestCase):
 
         def fetch(item, index=0, **kwargs):
             calls.append(item)
-            self.set_sources([self.new] if item == self.old else [self.old])
+            self.set_sources([self.new] if item.to_legacy() == self.old else [self.old])
             return [self.node("stale")]
 
         with patch.object(self.app.airport_service, "fetch_airport_item", side_effect=fetch):
