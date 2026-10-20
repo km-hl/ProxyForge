@@ -152,6 +152,13 @@ def certificate(root):
     return key_path, cert_path
 
 
+def check_installed_license():
+    path = Path('/opt/proxyforge-agent/agent/LICENSE')
+    info = path.lstat()
+    assert stat.S_ISREG(info.st_mode) and info.st_uid == 0 and not stat.S_IMODE(info.st_mode) & 0o022
+    assert path.read_bytes() == (Path(__file__).resolve().parents[1] / 'agent/LICENSE').read_bytes()
+
+
 def check_helper(command, client, headers, agent_id):
     """Opt in with the console command, then cross the real Unix peer boundary."""
     before = CONFIG.read_bytes()
@@ -161,6 +168,7 @@ def check_helper(command, client, headers, agent_id):
         print(re.sub(r'pf(?:reg|agt)_[A-Za-z0-9_-]+', '[redacted]', diagnostic)[-4096:], flush=True)
         raise AssertionError('Explicit helper bootstrap failed')
     assert CONFIG.read_bytes() == before, 'Helper changed Agent identity/credentials'
+    check_installed_license()
     account = pwd.getpwnam('proxyforge-agent')
     info = Path('/run/proxyforge-runtime.sock').stat()
     assert stat.S_ISSOCK(info.st_mode) and info.st_uid == 0
@@ -316,6 +324,8 @@ def main():
                     assert stat.S_IMODE(CONFIG.stat().st_mode) == 0o600
                     assert CONFIG.stat().st_uid == pwd.getpwnam('proxyforge-agent').pw_uid
                     subprocess.run(['systemctl', 'is-active', '--quiet', 'proxyforge-agent'], check=True)
+                    check_installed_license()
+                    print('PASS: installed MIT license matches pinned source, root-owned and not writable by Agent', flush=True)
                     for path in ('/var/lib/proxyforge-runtime', '/run/proxyforge-runtime.sock',
                                  '/etc/systemd/system/proxyforge-runtime.service',
                                  '/etc/systemd/system/proxyforge-runtime.socket', '/opt/proxyforge-agent/bin/sing-box'):

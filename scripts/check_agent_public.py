@@ -31,6 +31,9 @@ from scripts import check_debian_vm_installation as vm_tools  # noqa: E402
 
 # Reviewed historical production and current install anchors, not API-supplied trust.
 ANCHORS = {
+    '2b8ea5873c7932b12b092a4321e92429ecdc9c19': (
+        '15d6e819f30cc678d5b759b62bef39a2568e3d85',
+        '4db985c1a5e4d7e63f9bde3c85f36afb55f61db500ef0b31ab2fb2ee025ba5c1'),
     '977b16b41e0d5332d933df007e7a683189c1fdc8': (
         '6e2e7ee39b85b3c3c6535a96ea7ac09ac1f86cbf',
         '0b0aea74ff770090bb35866327ed0af5af35372d0c8da0193c14e33a7aca23c5'),
