@@ -1,6 +1,6 @@
 # Agent 固定安装产物
 
-本工具完成开发计划第 14 项的安装产物准备：从完整 Git 提交生成最小代码包、中文操作说明与 SHA256 清单。它不创建正式版本、上传 Release、安装服务或生成注册 token。第 16 项第一阶段现已提供[官方固定源码 bootstrap 与完整命令](AGENT_INSTALL.md)，包含安全解包及 root 目录检查；控制台入口已随 #41 合并，Ubuntu 24.04 amd64 安装/HTTPS 心跳已验证，CI 本次扩为 Ubuntu 四组合，结果按对应提交核对；Debian 同架构 systemd 容器 CI 见[验收边界](AGENT_INSTALL_DEBIAN_CI.md)，完整 Debian VM/裸机与公网矩阵仍待完成，当前不要把 CI 包当作已发布的安装版本。
+本工具完成开发计划第 14 项的安装产物准备：从完整 Git 提交生成最小代码包、中文操作说明与 SHA256 清单。它不创建正式版本、上传 Release、安装服务或生成注册 token。第 16 项第一阶段现已提供[官方固定源码 bootstrap 与完整命令](AGENT_INSTALL.md)，包含安全解包及 root 目录检查；控制台入口已随 #41 合并，Ubuntu 24.04 amd64 安装/HTTPS 心跳已验证，CI 本次扩为 Ubuntu 四组合，结果按对应提交核对；Debian 同架构 systemd 容器 CI 见[验收边界](AGENT_INSTALL_DEBIAN_CI.md)，完整 Debian VM 四组合已随 #48 实测，Debian 12 amd64 公网注册/心跳/队列/helper 已验收，独立网络、其他平台公网与裸机仍待，当前不要把 CI 包当作已发布的安装版本。
 
 ## 构建与校验命令
 
@@ -22,7 +22,7 @@ python3 scripts/agent_artifacts.py verify --commit "$commit" \
 
 接收别人提供的包时，使用同一个 `verify` 命令，但 `--commit` 与 `--manifest-sha256` 必须由可信发布记录提前固定，**不能自行对刚下载的清单算 hash 再当作可信输入**。命令要求调用者显式传入这两个值；校验器也必须通过可信渠道取得并固定版本。SHA256 用于检测与可信预期的偏差，不等于代码签名或来源认证。
 
-当前没有本功能的正式 Release 下载地址、签名或自动更新源。正式分发前需确认项目许可证、版本号，审查并发布完整提交与 manifest 的 SHA256；不能从任意镜像同时获取包和 hash 后宣称已认证来源。首次安装、恢复、升级与卸载见 [Agent 中文说明](../agent/README.zh-CN.md)；已有安装仍拒绝覆盖。
+当前没有本功能的正式 Release 下载地址、签名或自动更新源。MIT 已由所有者选择，项目及第三方条款见[许可说明](LICENSING.md)；正式分发前仍需确认版本号，审查并发布完整提交与 manifest 的 SHA256；不能从任意镜像同时获取包和 hash 后宣称已认证来源。首次安装、恢复、升级与卸载见 [Agent 中文说明](../agent/README.zh-CN.md)；已有安装仍拒绝覆盖。
 
 ## 产物契约（format 1）
 
@@ -61,4 +61,4 @@ python3 -S -m unittest discover -s tests -p test_agent_artifacts.py -v
 
 这些证据不代替 Debian 12/13、Ubuntu 22.04/24.04 × amd64/arm64 的空白主机特权安装矩阵、实际公网 HTTPS 注册与心跳、helper 安装或生产升级。每项实际验证状态应随正式发布记录维护，参见 [发布验收与恢复](RELEASE_ACCEPTANCE.md)。
 
-中文文档补齐后，最小包包含 `docs/AGENT_INSTALL_HELP.md`，本次另加入 `docs/AGENT_INSTALL_DEBIAN_CI.md` 避免安装指南链接缺失，共 24 个 Agent 文件、14 份配套说明。构建和校验必须使用与目标提交匹配的工具清单；旧提交缺少新增文档时，新工具会拒绝构建，旧包仍用原提交的工具验证。加入中文说明本身不推动固定安装锚点；后续 helper unit 的降权修复已更新固定源码、bootstrap 提交及 SHA256，当前值以[完整安装命令](AGENT_INSTALL.md)为准。最小包不包含整个仓库：开发计划/完整文档索引请在官方仓库对应提交中阅读。
+中文文档补齐后，最小包包含 `docs/AGENT_INSTALL_HELP.md`，本次另加入 `docs/AGENT_INSTALL_DEBIAN_CI.md` 避免安装指南链接缺失，此前共 24 个 Agent 文件、14 份配套说明。本批再加入根 LICENSE、agent/LICENSE 与 docs/LICENSING.md；现为 25 个 Agent 文件、15 份配套说明及 1 个根许可，共 41 成员。源码安装的 Agent 与 helper 同样携带许可副本。构建和校验必须使用与目标提交匹配的工具清单；旧提交缺少新增文档时，新工具会拒绝构建，旧包仍用原提交的工具验证。加入中文说明本身不推动固定安装锚点；后续 helper unit 的降权修复已更新固定源码、bootstrap 提交及 SHA256，当前值以[完整安装命令](AGENT_INSTALL.md)为准。最小包不包含整个仓库：开发计划/完整文档索引请在官方仓库对应提交中阅读。

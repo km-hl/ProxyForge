@@ -46,6 +46,7 @@
 | [DOCUMENTATION.md](DOCUMENTATION.md) | 本文 | 完整索引与后续维护要求 |
 | [EGERN_EXPORT.md](EGERN_EXPORT.md) | 中文正文 | Egern 原生订阅、规则资源、兼容边界、鉴权、验证与恢复 |
 | [AGENT_INSTALL_DEBIAN_CI.md](AGENT_INSTALL_DEBIAN_CI.md) | 中文正文 | Debian systemd 容器/完整 VM、固定镜像与 CI 边界；隔离 KVM 的公网 operator 命令、备份、清理及实测范围 |
+| [LICENSING.md](LICENSING.md) | 中文正文 | 项目 MIT、Agent 许可副本、24 个锁定生产依赖及浏览器/内核的第三方许可边界 |
 
 ## 核验方式与持续维护
 
@@ -53,4 +54,4 @@
 
 每个改变用户行为的 PR 同步中文说明；保留英文版本时顶部互链且信息对等。增加/删除说明文件时更新本表。历史阶段记录须标出适用版本，当前操作统一指向安装/发布指南。安装参数标识符不翻译，但其用途和故障恢复须有中文入口。第三方源码、许可证和权威规范保持原文，中文解释不替代正式条款；未来 Release notes 同样须提供完整中文内容。
 
-本次文档补齐不代表第 16 项所有安装平台或公网验收完成，也不代表已选择许可证、发布正式 Release 或部署生产；这些状态以[开发计划](NEXT_STEPS.md)和对应发布记录为准。
+本次文档补齐不代表第 16 项所有安装平台或公网验收完成，也不代表已发布正式 Release 或部署生产；MIT 许可选择和交付进度等状态以[开发计划](NEXT_STEPS.md)和对应发布记录为准。

@@ -77,6 +77,18 @@ class AgentArtifactTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Manifest SHA256"):
                 self.verify(archive=b"not tar", manifest=b"not JSON", digest="0" * 64)
 
+    def test_license_copies_are_retained_even_with_a_rehashed_manifest(self):
+        self.assertEqual(self.files['LICENSE'], self.files['agent/LICENSE'])
+        self.assertEqual(self.files['LICENSE'], (artifacts.ROOT / 'LICENSE').read_bytes())
+        for path in ['LICENSE', 'agent/LICENSE']:
+            with self.subTest(path=path):
+                archive = self.altered_tar(omit=path)
+                manifest = copy.deepcopy(self.manifest)
+                del manifest['files'][path]
+                manifest['archive'].update(size=len(archive), sha256=artifacts.sha256(archive))
+                with self.assertRaises(ValueError):
+                    self.verify(archive, manifest)
+
     def test_archive_corruption_checked_before_tar_parsing(self):
         changed = bytearray(self.archive)
         changed[1024] ^= 1
