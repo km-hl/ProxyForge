@@ -48,6 +48,10 @@ class AgentBootstrapTests(unittest.TestCase):
             with self.assertRaises(bootstrap.InstallError):
                 bootstrap.verified_files(b"untrusted data")
 
+    def test_missing_license_is_rejected_before_installation(self):
+        with self.assertRaises(bootstrap.InstallError):
+            self.verified(self.archive(omit='LICENSE'))
+
     def test_rejects_paths_duplicates_links_and_devices(self):
         for name in ("/absolute", "../escape", bootstrap.PREFIX + "/../escape",
                      bootstrap.PREFIX + "/agent/main.py", bootstrap.PREFIX + "/agent\\outside",

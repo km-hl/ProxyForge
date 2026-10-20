@@ -64,13 +64,13 @@ CI 为四组合分别安装对应架构 QEMU、qemu-utils、cloud-image-utils �
 sudo apt-get install --no-install-recommends --no-upgrade qemu-system-x86 qemu-utils cloud-image-utils openssh-client
 ```
 
-先独立核对 `docker inspect` 的 Controller 镜像 ID 和安装来源；下列摘要占位符必须替换为已核验的完整值。`--expected-source-commit` 只能选驱动内已审查的两个来源：当前 `da2550a923f3a64a7d1e932a56090a34966f6ab7`，或历史 `977b16b41e0d5332d933df007e7a683189c1fdc8`。API 返回的 bootstrap/hash/完整命令必须与对应可信锚点逐字一致，不能由 API 自行选择任意 root 执行代码。
+先独立核对 `docker inspect` 的 Controller 镜像 ID 和安装来源；下列摘要占位符必须替换为已核验的完整值。`--expected-source-commit` 只能选驱动内已审查的三个来源：本批携带 MIT 许可的 `2b8ea5873c7932b12b092a4321e92429ecdc9c19`，或历史 `da2550a923f3a64a7d1e932a56090a34966f6ab7`、`977b16b41e0d5332d933df007e7a683189c1fdc8`。API 返回的 bootstrap/hash/完整命令必须与对应可信锚点逐字一致，不能由 API 自行选择任意 root 执行代码。新增来源不代表生产已更新；外部验收按所有者要求暂缓，下面历史实测记录保持原来源。
 
 ```bash
 sudo python3 scripts/check_agent_public.py --disposable-vm \
   --controller-url https://your-controller.example \
   --expected-controller-image 'sha256:<已核验的64位镜像摘要>' \
-  --expected-source-commit da2550a923f3a64a7d1e932a56090a34966f6ab7 \
+  --expected-source-commit 2b8ea5873c7932b12b092a4321e92429ecdc9c19 \
   --output-dir /root/proxyforge-public-acceptance-YYYYMMDD-unique
 ```
 

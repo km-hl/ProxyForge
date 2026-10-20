@@ -20,9 +20,9 @@ import urllib.parse
 import urllib.request
 
 
-# Fixed source including the helper UID capability fix; never a mutable branch.
-SOURCE_COMMIT = "da2550a923f3a64a7d1e932a56090a34966f6ab7"
-SOURCE_SHA256 = "3a95a0edac4ee87445feaffb10b053e6c4cee78e4b988dd5b1675768ac7b9a1c"
+# Fixed MIT-licensed source, including the helper UID capability fix.
+SOURCE_COMMIT = "2b8ea5873c7932b12b092a4321e92429ecdc9c19"
+SOURCE_SHA256 = "71b96112d1d6ef167815de464b6d29602e46fe9910e0f770748a67da1e9c10f6"
 SOURCE_URL = "https://codeload.github.com/km-hl/ProxyForge/tar.gz/" + SOURCE_COMMIT
 PREFIX = "ProxyForge-" + SOURCE_COMMIT
 MAX_DOWNLOAD = 8 * 1024 * 1024
@@ -36,7 +36,7 @@ FILES = frozenset((
     "proxyforge-singbox.service", "README.md", "README.zh-CN.md",
     "runtime_client.py", "runtime_download.py", "runtime_engine.py",
     "runtime_helper.py", "runtime_spec.py", "singbox-release.json",
-    "system_info.py", "install-compatibility.json",
+    "system_info.py", "install-compatibility.json", "LICENSE",
 ))
 INSTALLED_FILES = (
     "__init__.py", "main.py", "client.py", "system_info.py", "jobs.py",
