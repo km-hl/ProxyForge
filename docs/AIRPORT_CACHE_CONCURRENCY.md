@@ -38,7 +38,7 @@ Controller 目前按**一个进程、一个副本**运行。使用默认 `uvicor
 
 节点持久化缓存读取失败只记录固定中文描述与异常类型，例如 `读取节点持久化缓存失败（ConstructorError）`，不记录异常正文、traceback 或 YAML 内容。PyYAML 的未知标签错误会回显标签本身，不能直接把异常拼入日志；无效 UTF-8 和文件权限等错误也使用相同的脱敏边界。
 
-`load_cache_from_file()` 把文件读取 `OSError`、`ValueError`（含解码 `UnicodeError` 和 YAML 非法日期等标量构造错误）、`yaml.YAMLError` 及过深嵌套的 `RecursionError` 当作预期读取失败并返回空列表，保留原文件供排障。不能假定所有 PyYAML 输入错误都继承 `YAMLError`。缺失文件和非列表根节点仍返回空列表，空列表不会补齐缺失机场或替换已拉取的新节点。配置锁/模板恢复错误仍向外传给存储适配器；其余异常不再在这个读取函数内伪装成缓存损坏，进程退出和任务取消信号继续向外传播。上层请求/后台任务保留各自的故障边界。
+`load_cache_from_file()` 把文件读取 `OSError`、`ValueError`（含解码 `UnicodeError` 和 YAML 非法日期等标量构造错误）、`yaml.YAMLError`、`AttributeError`、`KeyError`、`IndexError` 及过深嵌套的 `RecursionError` 当作预期读取失败并返回空列表，保留原文件供排障。空数字、非法布尔/时间戳可能抛出后三种错误，不能假定所有 PyYAML 输入错误都继承 `YAMLError`。缺失文件和非列表根节点仍返回空列表，空列表不会补齐缺失机场或替换已拉取的新节点。配置锁/模板恢复错误仍向外传给存储适配器；其余异常不再在这个读取函数内伪装成缓存损坏，进程退出和任务取消信号继续向外传播。上层请求/后台任务保留各自的故障边界。
 
 `tests/test_airport_concurrency.py` 使用 Event/Barrier 确定线程交错，覆盖修改/导入后回填、删除后落盘、来源 A→B→A、后台与订阅竞争、共享对象、TTL、并发 cache miss、有界重试、磁盘失效失败和配置提交恢复。
 `tests/test_airport_cache.py` 直接加载隔离的生产应用，保留全失败/部分失败回退及错误日志脱敏测试。

@@ -223,7 +223,7 @@ def load_airports() -> List[str]:
         with open(AIRPORTS_PATH, "r", encoding="utf-8") as f:
             urls = yaml.safe_load(f)
             return urls if isinstance(urls, list) else []
-    except Exception as e:
+    except (OSError, ValueError, yaml.YAMLError, AttributeError, KeyError, IndexError, RecursionError) as e:
         logger.error("读取机场列表失败（%s）", type(e).__name__)
     return []
 
@@ -288,7 +288,7 @@ def load_manual_nodes() -> List[Dict[str, Any]]:
                         node["_airport_name"] = CUSTOM_NODES_SOURCE
                 return nodes
             return []
-    except Exception as e:
+    except (OSError, ValueError, yaml.YAMLError, AttributeError, KeyError, IndexError, RecursionError) as e:
         logger.error("读取自建节点文件失败（%s）", type(e).__name__)
     return []
 
