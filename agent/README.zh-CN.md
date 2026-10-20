@@ -109,3 +109,5 @@ python3 -m agent.main --config /tmp/pf-agent/config.json run --once
 token 从 stdin 输入。HTTP 仅允许显式开发选项；HTTPS 始终校验证书，跨域、同域和降级重定向均拒绝。生产使用可信 HTTPS 根地址。
 
 安装入口、参数和英文终端提示的逐项中文说明见[安装命令帮助](../docs/AGENT_INSTALL_HELP.md)。
+
+ProxyForge Agent 自有代码采用 [MIT](LICENSE)；最小包和当前源码安装保留此副本。中文条款说明及外部内核归属见[许可证说明](../docs/LICENSING.md)，外部组件继续使用各自许可。

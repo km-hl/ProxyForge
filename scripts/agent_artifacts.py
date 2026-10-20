@@ -23,15 +23,15 @@ AGENT_FILES = (
     "proxyforge-singbox.service", "README.md", "README.zh-CN.md",
     "runtime_client.py", "runtime_download.py", "runtime_engine.py",
     "runtime_helper.py", "runtime_spec.py", "singbox-release.json",
-    "system_info.py", "install-compatibility.json",
+    "system_info.py", "install-compatibility.json", "LICENSE",
 )
 DOC_FILES = (
     "AGENT_ARTIFACTS.md", "AGENT_INSTALL.md", "AGENT_INSTALL_HELP.md", "AGENT_INSTALL_DEBIAN_CI.md", "AGENT_B1.md", "AGENT_B2.md", "AGENT_B3.md",
     "AGENT_B4.md", "AGENT_B5_LANDING.md", "AGENT_B5_CHAIN.md",
     "RELEASE_ACCEPTANCE.md", "PYTHON_RUNTIME.md", "DEPENDENCIES.md",
-    "CONTAINER_PERMISSIONS.md",
+    "CONTAINER_PERMISSIONS.md", "LICENSING.md",
 )
-FILES = tuple(sorted(["agent/" + name for name in AGENT_FILES]
+FILES = tuple(sorted(["LICENSE"] + ["agent/" + name for name in AGENT_FILES]
                      + ["docs/" + name for name in DOC_FILES]))
 
 
@@ -65,7 +65,7 @@ def source_files(repo, commit):
     if git(repo, "cat-file", "-t", commit).strip() != b"commit":
         raise ValueError("Source identity is not a commit")
     entries = {}
-    for entry in git(repo, "ls-tree", "-rz", commit, "--", "agent", "docs").split(b"\0"):
+    for entry in git(repo, "ls-tree", "-rz", commit, "--", "LICENSE", "agent", "docs").split(b"\0"):
         if not entry:
             continue
         metadata, path = entry.split(b"\t", 1)

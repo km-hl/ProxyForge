@@ -186,3 +186,5 @@ updates, and reconciliation of remote state before resuming a restored Controlle
 The managed-nodes UI itself does not require an Agent upgrade.
 
 For Chinese descriptions of installer arguments and terminal messages, see [安装命令帮助](../docs/AGENT_INSTALL_HELP.md).
+
+ProxyForge Agent code uses the [MIT License](LICENSE). See the [Chinese licensing and third-party notices](../docs/LICENSING.md); optional external runtimes retain their own licenses.
