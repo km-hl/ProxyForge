@@ -171,7 +171,7 @@ Controller 支持范围与使用系统 Python 的 Agent 支持范围分别决定
 
 ### 16. 控制台直接提供 Agent 安装命令
 
-本批将固定来源推进至携带 MIT 许可的已合并提交，全部 236 个源码文件已逐字节对照 Git，其中 Agent 25 文件与当前候选相同。bootstrap 明确要求并保留 LICENSE，控制台/三份中文命令/受信任公网驱动同步固定完整提交与双层 SHA256。安装 CI 增加普通 Agent 和显式 helper 安装后的许可内容、root 所有权与不可由 Agent 写入检查；缺许可归档回归在旧代码失败、修复后通过。Agent 0.6.0/schema/能力和原既有模块匹配检查不变，已有安装继续拒绝覆盖。新来源的十二项真实安装 CI 须按本提交核对，尚不以历史矩阵代替；正式 Release、生产升级和暂缓的外部验收仍未完成。
+本批将固定来源推进至携带 MIT 许可的已合并提交，全部 236 个源码文件已逐字节对照 Git，其中 Agent 25 文件与当前候选相同。bootstrap 明确要求并保留 LICENSE，控制台/三份中文命令/受信任公网驱动同步固定完整提交与双层 SHA256。安装 CI 增加普通 Agent 和显式 helper 安装后的许可内容、root 所有权与不可由 Agent 写入检查；缺许可归档回归在旧代码失败、修复后通过。Agent 0.6.0/schema/能力和原既有模块匹配检查不变，已有安装继续拒绝覆盖。该固定来源已随 #70 完成十二项真实安装 CI，后续推进来源仍须重新核对矩阵，不能复用旧结果。正式 Release 与 Controller 生产升级现已完成，见[当前验收记录](releases/0.7.0-deployment.md)；暂缓的外部验收与实际 UI 复制命令完成安装的证据仍未齐备。
 
 目标流程：**添加服务器 → 显示并复制安装命令 → VPS 执行 → 隐藏输入一次性注册凭据 → 服务启动 → 控制台显示心跳**。
 不能只提示用户自行寻找安装程序。参考 [Komari 官方安装文档](https://www.komari.wiki/install/quick-start)、[Agent 自动发现文档](https://www.komari.wiki/install/agent-ad) 的命令入口与平台选择体验；其安装脚本支持指定版本，见 [官方源码](https://github.com/komari-monitor/komari-agent/blob/main/install.sh)。不直接移植其凭据传递或更新策略。
