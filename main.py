@@ -507,10 +507,8 @@ def get_subscription(
         )
     except HTTPException:
         raise
-    except Exception:
-        import traceback
-        error_msg = traceback.format_exc()
-        logger.error(f"Subscription Generation Error: {error_msg}")
+    except Exception as exc:
+        logger.error("订阅生成失败（%s）", type(exc).__name__)
         return PlainTextResponse(content="生成订阅时发生内部错误，请查看服务端日志。", status_code=500)
 
 # ================= 后台管理 API 接口 (需鉴权) =================
