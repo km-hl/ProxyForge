@@ -68,6 +68,8 @@ Controller 当前支持单进程、单副本运行，不启用多个 Uvicorn wor
 
 机场请求的 Session 隔离、DNS pinning 与显式 CA 配置见[机场 HTTP 请求说明](OUTBOUND_HTTP.md)；`security/outbound_budget.py` 管理单次截止时间、socket 中断和有界 DNS 等待，批次准入与退出边界见[出站时间预算](OUTBOUND_BUDGETS.md)。
 
+`GET /sub` 的通用异常仍返回原 500 中文纯文本响应；应用错误日志只记录固定提示“订阅生成失败”和异常类型，不格式化异常对象、不记录原始消息或 traceback。该边界覆盖构建、YAML 读取、Egern 转换及最终序列化，保留 `ConfigValidationError` 的 422/校验警告与 `HTTPException` 的原响应；退出/取消信号继续向外传播。此修复仅针对订阅通用错误日志，不代表 HTTP 访问日志或结构化校验警告已经全面脱敏。`tests/test_subscription_error_logs.py` 以临时目录、合成异常与实际 YAML 错误验证日志、响应、控制信号和两种正常导出，测试不请求真实上游。
+
 ## 4. 鉴权与模块依赖
 
 ```text
