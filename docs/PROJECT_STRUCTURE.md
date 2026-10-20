@@ -168,6 +168,14 @@ VMess 的 Base64/JSON/字段阶段保留 `ValueError`、`TypeError`、`Attribute
 
 JSON 元信息缓存将解码深度 `RecursionError` 与原 `OSError`、`ValueError`、`UnicodeError` 一样回退为空对象、仅记错误类型，不覆盖损坏文件。JSON 解码深度阈值依 Python/平台不同，能够解析但条目结构无效的深层对象仍沿用固定结构警告。网络元信息/逐来源和后台的合理顶层故障隔离继续保留。`tests/test_config_reader_errors.py` 验证实际坏标量/深度、文件错误、非预期故障传播、无写盘和默认/Egern 订阅意外失败返回原 500；旧日志专项的 RuntimeError 空结果断言已随有意收窄改为新传播回归。
 
+### 模板写入 YAML 的故障分类
+
+`validate_saved_template` 在解析保存、全局导入和历史恢复内容时，只将 `YAMLError`、`ValueError`、`AttributeError`、`KeyError`、`IndexError`、`RecursionError` 视为实际 YAML 语法、标量或深度错误，保留原管理接口 400 详情。其余解析运行故障改为固定中文 500，应用日志只记固定提示及异常类型；不格式化异常、不附带 traceback，避免把程序/资源故障误报为用户格式错误。退出/取消信号继续传播，1 MiB 限制、正常内容与后续 Mihomo 语义校验不变；失败不提交模板、历史或导入配置。
+
+`tests/test_template_yaml_errors.py` 验证真实坏标签/标量/深度、不可字符串化异常、运行/资源故障、三条实际管理写入路径及原文件/revision 不变。HTTP 500 是本次对非预期故障的明确分类变化，不能把旧行为中的 400 当作兼容承诺。已认证管理请求的实际 YAML 400 详情继续保留；这不授权将详情写入服务器日志。
+
+保留的广义边界各有独立作用：后台任务防止永久退出、逐机场/元信息隔离来源故障、可选缓存序列化/写入失败保留原结果、公开订阅/provider/规则资源映射固定 HTTP 错误。安全 HTTP 的捕获仅在检查预算后重新抛出，数据库捕获用于回滚后重新抛出。这些边界不机械收窄，也不吞掉 `BaseException` 控制信号；应用入口访问日志另由既有禁用配置约束。本说明不代表任意外部 Python 启动方式、第三方日志或公网验收已经全面验证。
+
 ### 节点管理 Router
 
 `nodes/api.py:create_node_router()` 显式装配四个管理接口：`POST /api/parse-links`、`GET /api/nodes`、`GET /api/proxies`、`POST /api/nodes`。导入及装配不创建全局 app、不读取文件/数据库或发起机场请求。`proxyforge/nodes/` 负责 HTTP 编排，`subscription/nodes.py` 继续只负责节点纯函数，两者职责不同。

@@ -511,8 +511,11 @@ def validate_saved_template(content, nodes, airports):
         raise HTTPException(status_code=413, detail="Template exceeds 1 MiB")
     try:
         config = yaml.safe_load(content)
-    except Exception as e:
+    except (yaml.YAMLError, ValueError, AttributeError, KeyError, IndexError, RecursionError) as e:
         raise HTTPException(status_code=400, detail=f"YAML 格式错误: {e}")
+    except Exception as exc:
+        logger.error("模板 YAML 校验失败（%s）", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="模板校验时发生内部错误，请查看服务端日志。") from None
     provider_names = [get_airport_name(item, index) for index, item in enumerate(airports)]
     custom_names = [
         proxy.get("name") for proxy in nodes
