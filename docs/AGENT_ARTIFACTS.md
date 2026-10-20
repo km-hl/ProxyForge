@@ -22,7 +22,7 @@ python3 scripts/agent_artifacts.py verify --commit "$commit" \
 
 接收别人提供的包时，使用同一个 `verify` 命令，但 `--commit` 与 `--manifest-sha256` 必须由可信发布记录提前固定，**不能自行对刚下载的清单算 hash 再当作可信输入**。命令要求调用者显式传入这两个值；校验器也必须通过可信渠道取得并固定版本。SHA256 用于检测与可信预期的偏差，不等于代码签名或来源认证。
 
-当前没有本功能的正式 Release 下载地址、签名或自动更新源。MIT 已由所有者选择，项目及第三方条款见[许可说明](LICENSING.md)；正式分发前仍需确认版本号，审查并发布完整提交与 manifest 的 SHA256；不能从任意镜像同时获取包和 hash 后宣称已认证来源。首次安装、恢复、升级与卸载见 [Agent 中文说明](../agent/README.zh-CN.md)；已有安装仍拒绝覆盖。
+正式 Release 下载地址及附件 hash 以[官方发布列表](https://github.com/km-hl/ProxyForge/releases)中对应版本的完整记录为准；未列出的版本不能视为已发布。本功能不提供代码签名或自动更新源。MIT 已由所有者选择，项目及第三方条款见[许可说明](LICENSING.md)；首个 Controller 正式版本号已确定为 v0.7.0；正式分发仍须审查并发布完整提交与 manifest 的 SHA256；不能从任意镜像同时获取包和 hash 后宣称已认证来源。首次安装、恢复、升级与卸载见 [Agent 中文说明](../agent/README.zh-CN.md)；已有安装仍拒绝覆盖。
 
 ## 产物契约（format 1）
 

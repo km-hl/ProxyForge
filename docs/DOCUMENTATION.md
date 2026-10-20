@@ -1,6 +1,6 @@
 # 中文说明索引与覆盖表
 
-核对日期：2026-10-08。范围为受 Git 跟踪的根 README、Agent README、docs 全部说明和 Mihomo 测试 README；不读取或发布本机 MEMORY.md、私有计划、运行数据与 .env。表中“中文正文”表示直接阅读原文件即可，不要求另建同名 zh-CN 副本。
+核对日期：2026-10-20。范围为受 Git 跟踪的根 README、Agent README、docs 全部说明和 Mihomo 测试 README；不读取或发布本机 MEMORY.md、私有计划、运行数据与 .env。表中“中文正文”表示直接阅读原文件即可，不要求另建同名 zh-CN 副本。
 
 本次将原英文为主的 B1/B2/B3、模板历史和 Mihomo 测试说明直接改为中文，保持原路径，涵盖原有协议、限制、测试、迁移和回滚内容。Agent 保留中英互链。协议字段、命令和第三方正式名称保留原文；固定安装产物中的英文帮助/输出另有完整中文对照，不为文字修改已审查的安装来源或 hash。
 
@@ -49,6 +49,8 @@
 | [LICENSING.md](LICENSING.md) | 中文正文 | 项目 MIT、Agent 许可副本、24 个锁定生产依赖及浏览器/内核的第三方许可边界 |
 | [RELEASE_AUTOMATION.md](RELEASE_AUTOMATION.md) | 中文正文 | 固定提交/版本/中文说明、隐私预检、五文件校验、只读准备工作流与正式发布边界 |
 | [RELEASE_NOTES_TEMPLATE.md](RELEASE_NOTES_TEMPLATE.md) | 中文模板 | 八项发布内容、明确未验收范围、升级与回滚；实际发布说明不得保留待填写 |
+
+| [releases/0.7.0.md](releases/0.7.0.md) | 中文发布说明 | 首个 Controller 正式版本号、能力与修复、升级/回滚、Agent 独立版本及暂缓验收边界 |
 
 ## 核验方式与持续维护
 
