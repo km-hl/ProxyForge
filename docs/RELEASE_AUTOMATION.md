@@ -1,6 +1,6 @@
 # 候选发布准备与正式发布
 
-`scripts/prepare_release.py` 与手动触发的 `Prepare candidate release` 工作流负责固定提交的候选文件准备、隐私预检及重复校验。它们不创建 tag、不上传 GitHub Release、不改变 Latest、不推进安装 pin、不部署生产。首次正式 Controller 版本仍由所有者决定；工具示例不代表已存在的发布版本。
+`scripts/prepare_release.py` 与手动触发的 `Prepare candidate release` 工作流负责固定提交的候选文件准备、隐私预检及重复校验。它们不创建 tag、不上传 GitHub Release、不改变 Latest、不推进安装 pin、不部署生产。所有者已确定首次 Controller 正式版本号 v0.7.0，工具参数使用 0.7.0；版本决定不等于 tag/Release 已创建，实际结果见[官方发布列表](https://github.com/km-hl/ProxyForge/releases)。Agent 仍独立为 0.6.0。
 
 ## 准备条件
 

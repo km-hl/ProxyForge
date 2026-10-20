@@ -16,9 +16,9 @@
 - 使用已升级 Controller 的可信公网 HTTPS 根地址；域名须为 ASCII 完整域名（国际化域名用 punycode），或公网 IP，允许显式端口。不要附加路径、凭据、query 或 fragment。域名的 DNS 与对外可达性需自行确认；安装器不会把一次地址格式检查当作公网验收。
 - 目标主机需能直连 `raw.githubusercontent.com` 和 `codeload.github.com`。下载不读取代理环境变量、不跟随重定向、保持系统 CA/TLS 验证。私有 CA Controller 使用[原手动注册流程](../agent/README.zh-CN.md)，不要关闭 TLS 验证。
 
-当前使用官方固定源码归档，未发布新的二进制/最小包 Release，也未选择正式 Controller tag。项目已由所有者选择 MIT，项目/第三方边界见[许可说明](LICENSING.md)。维护者的最小包构建与 manifest 契约见[安装产物说明](AGENT_ARTIFACTS.md)。
+当前使用官方固定源码归档。所有者已确定首个 Controller 正式版本号 v0.7.0，Agent 仍为 0.6.0；版本决定不表示 Release 已发布，实际发布及附件以[官方发布列表](https://github.com/km-hl/ProxyForge/releases)为准。项目已由所有者选择 MIT，项目/第三方边界见[许可说明](LICENSING.md)。维护者的最小包构建与 manifest 契约见[安装产物说明](AGENT_ARTIFACTS.md)。
 
-本次推进固定来源以携带许可，Agent 25 个文件与当前候选完全一致；Agent 软件版本、schema 与能力协议不变。普通安装和 helper 安装均保留 root 所有、不可由 Agent 写入的许可副本。已有安装仍不能重复运行首次安装；helper 对既有 Agent 的原模块一致性检查不因单独缺少 LICENSE 而拒绝，显式安装 helper 时复制该许可。新来源的实际安装、许可、心跳及 helper 结果由本提交完整 CI 核对，不能用旧来源的历史矩阵替代；所有者暂缓的外部公网/裸机/iOS 验收保持未验收。
+本次推进固定来源以携带许可，Agent 25 个文件与当前候选完全一致；Agent 软件版本、schema 与能力协议不变。普通安装和 helper 安装均保留 root 所有、不可由 Agent 写入的许可副本。已有安装仍不能重复运行首次安装；helper 对既有 Agent 的原模块一致性检查不因单独缺少 LICENSE 而拒绝，显式安装 helper 时复制该许可。新来源的实际安装、许可、心跳及 helper 已由 [PR #70](https://github.com/km-hl/ProxyForge/pull/70) 的 52 项 CI 核对，12 个安装组合重新通过，不能用旧来源的历史矩阵替代；所有者暂缓的外部公网/裸机/iOS 验收保持未验收。
 
 ## 控制台复制入口
 
