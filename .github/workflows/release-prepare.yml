@@ -1,0 +1,73 @@
+name: Prepare candidate release
+
+"on":
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: '已审查的 master 完整40位提交'
+        required: true
+        type: string
+      controller_version:
+        description: '所有者确认的 Controller SemVer，不带 v'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-prepare-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
+      CONTROLLER_VERSION: ${{ inputs.controller_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate inputs and selected master ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/master
+          python -S - <<'PY'
+          import os
+          from scripts.agent_artifacts import require_hex
+          from scripts.prepare_release import release_version
+          require_hex(os.environ['SOURCE_COMMIT'], 40)
+          release_version(os.environ['CONTROLLER_VERSION'])
+          PY
+          git merge-base --is-ancestor "$SOURCE_COMMIT" HEAD
+      - name: Exercise preparation and fixed artifact validation
+        run: |
+          python -S -m unittest discover -s tests -p test_agent_artifacts.py -v
+          python -S -m unittest discover -s tests -p test_controller_release_metadata.py -v
+          python -S -m unittest discover -s tests -p test_release_preparation.py -v
+      - name: Build and verify candidate files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -S scripts/prepare_release.py build --commit "$SOURCE_COMMIT" \
+            --version "$CONTROLLER_VERSION" --directory .local/release-candidate
+          digest=$(python -S -c 'import hashlib; print(hashlib.sha256(open(".local/release-candidate/release.json", "rb").read()).hexdigest())')
+          python -S scripts/prepare_release.py verify --commit "$SOURCE_COMMIT" \
+            --version "$CONTROLLER_VERSION" --directory .local/release-candidate \
+            --metadata-sha256 "$digest"
+          printf '候选提交：`%s`\n\nController 版本：`%s`\n\nrelease.json SHA256：`%s`\n\n仅准备候选文件；未创建 tag、发布 Release 或部署。\n' \
+            "$SOURCE_COMMIT" "$CONTROLLER_VERSION" "$digest" >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain only the five verified public candidate files
+        uses: actions/upload-artifact@v4
+        with:
+          name: proxyforge-release-${{ github.run_id }}
+          path: .local/release-candidate/*
+          if-no-files-found: error
+          retention-days: 14
