@@ -79,7 +79,7 @@ python scripts/check_repository_privacy.py
 
 已有迁移故障测试见 `test_deployments.py`、`test_landings.py`、`test_chains.py`；模板中断恢复见 `test_template_revisions.py`。CI 另跑固定 Mihomo 解析与真实 sing-box/systemd 的激活、端口冲突回滚、Reality TCP/UDP → SS2022 和移除。
 
-待目标环境执行的项目：当前候选的生产备份恢复演练、镜像构建与启动、真实公网入口/落地连通性及实际部署验证。隔离 CI 已覆盖 Ubuntu 22.04/24.04 × amd64/arm64 原生运行器、Debian 12/13 × amd64/arm64 原生 systemd 容器及完整 VM，共 12 个安装组合；每次固定来源推进须重新检查对应 CI，不能复用旧来源结论。实际来源、helper 及公网历史证据见[安装指南](AGENT_INSTALL.md)。所有者已暂缓独立网络、其他平台公网、裸机与 iOS Egern 验收，仍不得记为通过。依赖和镜像输入已锁定，仍不能称为镜像逐字节可复现；见[依赖锁说明](DEPENDENCIES.md)。
+v0.7.0 固定来源的生产镜像构建、完整冷备、真实数据隔离恢复/重启/旧镜像回滚演练及 Controller 切换后 HTTPS 验证已完成，见[发布与生产验收记录](releases/0.7.0-deployment.md)。该目标没有现存 Agent/部署，未执行生产 Agent 升级或真实代理部署；真实公网入口/落地连通性与代理握手继续单列。隔离 CI 已覆盖 Ubuntu 22.04/24.04 × amd64/arm64 原生运行器、Debian 12/13 × amd64/arm64 原生 systemd 容器及完整 VM，共 12 个安装组合；每次固定来源推进须重新检查对应 CI，不能复用旧来源结论。实际来源、helper 及公网历史证据见[安装指南](AGENT_INSTALL.md)。所有者已暂缓独立网络、其他平台公网、裸机与 iOS Egern 验收，仍不得记为通过。依赖和镜像输入已锁定，仍不能称为镜像逐字节可复现；见[依赖锁说明](DEPENDENCIES.md)。
 
 ## 9. Controller 上线操作
 
