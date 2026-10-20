@@ -41,7 +41,7 @@ ProxyForge/
 | `airports/api.py` | 三个机场管理接口的 Router 工厂、旧请求模型及共享 URL 校验 |
 | `airports/service.py` | 显式注入依赖，统一机场节点/元信息缓存与后台刷新协调 |
 | `airports/sources.py` | AirportSource / AirportSnapshot 内部快照，旧格式投影与来源身份比较 |
-| `airports/parser.py` | 纯 YAML / Base64 订阅解析，沿用分享链接解析，控制信号向外传播 |
+| `airports/parser.py` | 纯 YAML / Base64 订阅解析，格式失败回退，其他故障与控制信号向外传播 |
 | `control/agent_api.py`、`job_api.py`、`deployment_api.py` | 管理/Agent 路由、鉴权衔接、请求与响应 schema |
 | `control/control_store.py` | SQLite 连接、migration、注册、身份和心跳 |
 | `control/job_store.py` | 租约、重试、状态回报与任务保留 |
@@ -53,7 +53,7 @@ ProxyForge/
 | `security/api.py` | 登录/状态/退出与订阅密钥、管理密钥设置的管理 Router |
 | `security/network_security.py`、`auth_rate_limit.py` | 出站请求限制及登录限速 |
 | `subscription/api.py` | 默认/Egern 订阅、机场 provider 和 Egern 规则资源的公开 Router |
-| `subscription/links.py` | 分享链接解析，普通失败返回 None，控制信号向外传播 |
+| `subscription/links.py` | 分享链接解析，格式/字段失败返回 None，其他故障与控制信号向外传播 |
 | `subscription/nodes.py` | 来源命名、国旗名称、内部字段剥离及节点投影 |
 | `subscription/validation.py` | 节点与完整 Mihomo 配置校验 |
 | `subscription/builder.py` | 由显式输入构建订阅/provider，清理生成结果中的引用 |
@@ -130,7 +130,7 @@ YAML 节点缓存、JSON 元信息缓存、12 小时/24 小时 TTL、两次快�
 
 节点磁盘缓存读取捕获文件、Unicode 解码、YAML 解析/标量构造及过深嵌套的预期异常，日志只记固定描述及错误类型，返回空列表且不重写损坏文件。其余错误在此函数内不吞掉，配置锁/事务恢复失败仍由存储适配器处理；详见[读取异常与回退边界](AIRPORT_CACHE_CONCURRENCY.md#验证与边界)。这是第 11 项的独立兼容修复，不改变来源代次、缓存格式或正常订阅行为。
 
-订阅解析的五处裸 `except` 已独立收窄至 `except Exception`：机场 YAML/Base64 两层，以及分享链接 VMess、SS、其他协议三个分支。`KeyboardInterrupt`、`SystemExit`、`asyncio.CancelledError`、`GeneratorExit` 在直接解析、嵌套订阅和机场拉取线程池内实际抛出时向外传播，不转换为 `None`、空列表、部分节点或机场元信息错误。普通解析异常继续沿用原回退：先 YAML、后 Base64，普通无效分享链接仍跳过。`tests/test_parser_cancellation.py` 使用合成数据和模拟 HTTP 覆盖这些边界；按具体格式进一步区分预期异常仍需后续独立处理。现有停止事件、出站预算和后台线程关闭管理保持原契约，此修复不负责终止正在运行的线程。
+订阅解析的五处裸 `except` 已独立收窄至 `except Exception`：机场 YAML/Base64 两层，以及分享链接 VMess、SS、其他协议三个分支。`KeyboardInterrupt`、`SystemExit`、`asyncio.CancelledError`、`GeneratorExit` 在直接解析、嵌套订阅和机场拉取线程池内实际抛出时向外传播，不转换为 `None`、空列表、部分节点或机场元信息错误。普通解析异常继续沿用原回退：先 YAML、后 Base64，普通无效分享链接仍跳过。`tests/test_parser_cancellation.py` 使用合成数据和模拟 HTTP 覆盖这些边界；按具体格式进一步收窄的本批边界见下节，仍待独立审查合并。现有停止事件、出站预算和后台线程关闭管理保持原契约，此修复不负责终止正在运行的线程。
 
 ### 机场管理 Router 试点
 
@@ -143,6 +143,14 @@ YAML 节点缓存、JSON 元信息缓存、12 小时/24 小时 TTL、两次快�
 路径、请求/响应字段、operationId、管理与订阅身份边界、Cookie 同源校验和安全响应头保持兼容。机场保存仍在同一配置锁内校验 URL、清理移除的 provider 引用、失效缓存，再用 TemplateStore 一次提交来源/模板；409/413 交由应用原异常处理器，存储故障和元信息来源冲突沿用原 503。元信息网络工作保持不持配置锁。
 
 机场管理首先迁移三个接口，节点和模板管理随后独立提取，见下节。公开 `/provider/{airport_index}`、默认/Egern 订阅及 auth 路由继续由入口编排；后续按依赖评估逐批迁移，不一次搬动全部路由。`tests/test_airport_router.py` 覆盖依赖隔离、单一处理函数绑定、鉴权/同源和共享错误处理；原有事务、源代次、后台退出与模板恢复测试继续覆盖真实生产路径。
+
+### 纯解析异常边界
+
+`parse_airport_response` 的 YAML 阶段只将 `YAMLError`、`ValueError`、`TypeError`、`AttributeError`、`KeyError`、`IndexError`、`RecursionError` 作为格式/旧输入错误进入后续回退；包含 SafeLoader 非法日期、空整数/浮点、非法布尔/时间戳、深层嵌套及原非字符串输入的兼容行为；这些损坏标量并不都抛 YAMLError。Base64 解码阶段只捕获 `ValueError`、`TypeError`、`AttributeError`，保留无填充 Base64 与 UTF-8 失败回退；逐行分享链接解析位于解码 try 之外，其故障不得被误判为 Base64 损坏。
+
+VMess 的 Base64/JSON/字段阶段保留 `ValueError`、`TypeError`、`AttributeError`、`OverflowError`、`RecursionError` 的 `None` 回退，覆盖非对象 JSON、非法端口/alterId、无穷数及过深 JSON。SS 与其余 URI 只捕获 `ValueError`、`TypeError`，包含 Base64/Unicode、URL/端口和协议字段错误。正常解析顺序、节点字段、普通无效行跳过行为不变；其他错误不再伪装成空结果，取消/退出信号仍向外传播，多行故障不返回部分节点或继续后续行。
+
+纯函数不新增日志或 HTTP 策略，调用方继续使用既有逐来源、HTTP 和后台故障边界。机场逐来源仍可返回安全的空节点/元信息错误，不能因此断言底层解析器已经吞掉故障。`tests/test_parser_expected_errors.py` 覆盖真实格式错误与模拟运行故障，既有控制信号与各协议输出测试继续有效；入口两处配置读取的宽泛捕获仍需下一批独立评估。
 
 ### 节点管理 Router
 

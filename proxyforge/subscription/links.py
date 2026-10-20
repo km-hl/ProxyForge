@@ -1,4 +1,4 @@
-"""纯分享链接解析；普通解析失败返回 None，控制信号向外传播。"""
+"""纯分享链接解析；格式/字段错误返回 None，非预期故障和控制信号外传。"""
 import base64
 import ipaddress
 import json
@@ -114,7 +114,7 @@ def parse_share_link(link: str) -> dict:
             if data.get("sni"):
                 node["servername"] = data.get("sni")
             return node
-        except Exception:
+        except (ValueError, TypeError, AttributeError, OverflowError, RecursionError):
             return None
     elif link.lower().startswith("ss://"):
         try:
@@ -148,7 +148,7 @@ def parse_share_link(link: str) -> dict:
                 "password": password,
                 "udp": True
             }
-        except Exception:
+        except (ValueError, TypeError):
             return None
     elif any(link.lower().startswith(prefix) for prefix in [
         "vless://",
@@ -437,6 +437,6 @@ def parse_share_link(link: str) -> dict:
                 if dialer_proxy:
                     node["dialer-proxy"] = dialer_proxy
             return node
-        except Exception:
+        except (ValueError, TypeError):
             return None
     return None
