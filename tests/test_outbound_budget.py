@@ -9,6 +9,7 @@ import unittest
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from proxyforge.security import network_security as network
@@ -211,14 +212,17 @@ except OutboundTimeout:
     def test_redirects_share_one_absolute_budget(self):
         from test_outbound_session import response
         calls = []
+        now = [1000.0]
 
         def send(request, **kwargs):
             calls.append(kwargs["timeout"])
-            # Controlled transport delay represents headers, not a fresh budget.
-            threading.Event().wait(0.09)
+            # Advance only simulated header time: runner preemption before the
+            # first send must not consume this test's entire redirect budget.
+            now[0] += 0.09
             return response(request, 302, {"Location": "/next"})
 
-        with patch.object(network, "_resolved_addresses", return_value=("93.184.216.34",)), \
+        with patch.object(budgets, "time", SimpleNamespace(monotonic=lambda: now[0])), \
+                patch.object(network, "_resolved_addresses", return_value=("93.184.216.34",)), \
                 patch("requests.adapters.HTTPAdapter.send", side_effect=send):
             with self.assertRaises(budgets.OutboundTimeout):
                 network.safe_get("https://subscription.example/sub", total_timeout=0.22, max_redirects=10)
