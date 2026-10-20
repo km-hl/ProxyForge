@@ -125,6 +125,7 @@ jobs:
           python -S -m agent.main --help
           python -S -m unittest discover -s tests -p test_runtime_engine.py -v
           python -S -m unittest discover -s tests -p test_agent_artifacts.py -v
+          python -S -m unittest discover -s tests -p test_controller_release_metadata.py -v
           python -S -m unittest discover -s tests -p test_agent_bootstrap.py -v
           python -S -m unittest discover -s tests -p test_agent_install_command.py -v
       - name: Verify pinned official source and root staging guards
