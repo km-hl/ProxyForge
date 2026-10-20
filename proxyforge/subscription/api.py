@@ -149,7 +149,7 @@ def create_subscription_router(*, token_reader, template_reader, sources_reader,
 
             return PlainTextResponse(content=yaml_content, headers=headers)
         except ConfigValidationError as e:
-            logger.warning("订阅配置校验失败: %s", "; ".join(e.errors))
+            logger.warning("订阅配置校验失败（%s 项错误）", len(e.errors))
             return PlainTextResponse(
                 content="订阅配置校验失败:\n- " + "\n- ".join(e.errors),
                 status_code=422,
