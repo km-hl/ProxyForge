@@ -1,3 +1,4 @@
+from proxyforge.security.api import ConfigModel, AdminTokenModel, create_security_router
 from proxyforge.subscription.api import create_subscription_router
 from proxyforge.templates.api import (
     TemplateModel, TemplateSaveModel, TemplateRestoreModel, ImportModel, create_template_router,
@@ -451,95 +452,29 @@ def verify_api_token(request: Request, authorization: str = Header(None)):
 
     raise HTTPException(status_code=401, detail="Invalid management credentials")
 
-@app.post("/api/auth")
-def auth_login(
-    request: Request,
-    response: Response,
-    token: str = Body(..., embed=True),
-):
-    client_key = request.client.host if request.client else "unknown"
-    retry_after = LOGIN_RATE_LIMITER.retry_after(client_key)
-    if retry_after:
-        raise HTTPException(
-            status_code=429,
-            detail="登录失败次数过多，请稍后重试",
-            headers={"Retry-After": str(retry_after)},
-        )
-    if not RUNTIME_STORE.verify_admin_token(token):
-        LOGIN_RATE_LIMITER.record_failure(client_key)
-        raise HTTPException(status_code=401, detail="Invalid management credentials")
-    LOGIN_RATE_LIMITER.reset(client_key)
-    set_management_session(response, request)
-    return {"status": "ok"}
-
-
-@app.get("/api/auth", dependencies=[Depends(verify_api_token)])
-def auth_status():
-    return {"status": "ok"}
-
-
-@app.post("/api/logout", dependencies=[Depends(verify_api_token)])
-def auth_logout(response: Response):
-    response.delete_cookie(
-        key=SESSION_COOKIE_NAME,
-        path="/",
-        httponly=True,
-        samesite="strict",
-    )
-    return {"status": "ok"}
-
-@app.get("/api/config", dependencies=[Depends(verify_api_token)])
-def get_config():
-    return {
-        "SUBSCRIPTION_TOKEN": SUBSCRIPTION_TOKEN
-    }
-
-class ConfigModel(BaseModel):
-    SUBSCRIPTION_TOKEN: str
-
-@app.post("/api/config", dependencies=[Depends(verify_api_token)])
-def update_config(config: ConfigModel):
+def _apply_subscription_token(value):
+    """持久化成功后同步入口订阅密钥，供所有公开接口实时读取。"""
     global SUBSCRIPTION_TOKEN
-    new_token = config.SUBSCRIPTION_TOKEN.strip()
-    if len(new_token) < 16:
-        raise HTTPException(status_code=400, detail="订阅密钥至少需要 16 个字符")
-    if new_token in INSECURE_DEFAULT_TOKENS:
-        raise HTTPException(status_code=400, detail="不能使用公开的默认 Token")
-
-    try:
-        RUNTIME_STORE.update_subscription_token(new_token)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    SUBSCRIPTION_TOKEN = new_token
-
-    return {"status": "ok"}
+    SUBSCRIPTION_TOKEN = value
 
 
-class AdminTokenModel(BaseModel):
-    ADMIN_TOKEN: str
-
-
-@app.post("/api/admin-token", dependencies=[Depends(verify_api_token)])
-def update_admin_token(
-    request: Request,
-    response: Response,
-    config: AdminTokenModel,
-):
-    new_token = config.ADMIN_TOKEN.strip()
-    if len(new_token) < ADMIN_TOKEN_MIN_LENGTH:
-        raise HTTPException(
-            status_code=400,
-            detail=f"管理密钥至少需要 {ADMIN_TOKEN_MIN_LENGTH} 个字符",
-        )
-    if new_token in INSECURE_DEFAULT_TOKENS:
-        raise HTTPException(status_code=400, detail="不能使用公开的默认管理密钥")
-
-    try:
-        RUNTIME_STORE.update_admin_token(new_token)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    set_management_session(response, request)
-    return {"status": "ok"}
+security_api = create_security_router(
+    verify_management=verify_api_token, store_reader=lambda: RUNTIME_STORE,
+    limiter_reader=lambda: LOGIN_RATE_LIMITER,
+    session_writer=lambda response, request: set_management_session(response, request),
+    cookie_name_reader=lambda: SESSION_COOKIE_NAME,
+    subscription_token_reader=lambda: SUBSCRIPTION_TOKEN,
+    subscription_token_writer=_apply_subscription_token,
+    admin_minimum_reader=lambda: ADMIN_TOKEN_MIN_LENGTH,
+    insecure_tokens_reader=lambda: INSECURE_DEFAULT_TOKENS,
+)
+app.include_router(security_api.router)
+auth_login = security_api.auth_login
+auth_status = security_api.auth_status
+auth_logout = security_api.auth_logout
+get_config = security_api.get_config
+update_config = security_api.update_config
+update_admin_token = security_api.update_admin_token
 
 # Router 与订阅/后台共用同一个服务、配置锁及存储工厂。
 airport_api = create_airport_router(

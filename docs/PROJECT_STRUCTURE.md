@@ -50,6 +50,7 @@ ProxyForge/
 | `config/template_store.py` | 文件锁、原子提交、事务恢复和模板历史 |
 | `config/network_config.py`、`mihomo_compat.py` | DNS/TUN 纯校验与固定兼容基线 |
 | `security/runtime_security.py` | 持久化凭据、管理密钥验证与会话 |
+| `security/api.py` | 登录/状态/退出与订阅密钥、管理密钥设置的管理 Router |
 | `security/network_security.py`、`auth_rate_limit.py` | 出站请求限制及登录限速 |
 | `subscription/api.py` | 默认/Egern 订阅、机场 provider 和 Egern 规则资源的公开 Router |
 | `subscription/links.py` | 分享链接解析，普通失败返回 None，控制信号向外传播 |
@@ -77,6 +78,7 @@ Controller 当前支持单进程、单副本运行，不启用多个 Uvicorn wor
 
 ```text
 main.py → airports.api / airports.service / nodes.api / templates.api / control / config / security / subscription
+security.api → FastAPI / Pydantic + 入口注入的鉴权、存储、限速和会话回调
 nodes.api → config.template_store / subscription.links / nodes / validation / builder
 templates.api → airports.service / config.network_config / template_store / subscription.nodes / validation
 airports.api → airports.service / config.template_store / security.network_security / subscription.builder / nodes
@@ -91,6 +93,14 @@ agent → 标准库及自身模块（不依赖 Controller 包）
 ```
 
 控制面与订阅算法不能反向导入 `main.py`。纯订阅算法模块只能使用显式参数；公开 Router 通过显式回调复用文件、网络、运行密钥和资源函数，不创建它们的副本。管理身份、Agent 凭据和订阅 token 的边界保持原样。
+
+### 管理鉴权 Router
+
+`security.api.create_security_router` 返回 `SecurityApi(router, auth_login, auth_status, auth_logout, get_config, update_config, update_admin_token)`；六个原接口为 `POST/GET /api/auth`、`POST /api/logout`、`GET/POST /api/config` 和 `POST /api/admin-token`。`ConfigModel`、`AdminTokenModel` 定义迁入该模块，入口保留同一模型和实际处理函数绑定。只有首页静态文件响应、中间件、应用异常处理器和启动/停止装配继续直接位于入口，各业务 API 归属对应 Router。
+
+九项依赖为 `verify_management`、`store_reader`、`limiter_reader`、`session_writer`、`cookie_name_reader`、`subscription_token_reader`、`subscription_token_writer`、`admin_minimum_reader`、`insecure_tokens_reader`。入口的管理鉴权、同源判断和 Cookie 写入辅助函数未迁移或改写，继续被所有管理 Router 共享。工厂装配不读取/创建运行配置、会话或限速器；运行时读取同一存储和限速状态，保留按客户端来源限速与 429/Retry-After。
+
+订阅密钥仍先完成持久化，再经入口 `_apply_subscription_token` 更新实时全局值，公开三个接口的 token 回调立即读取新值；失败不得提前切换。管理密钥轮换仍由原存储撤销旧会话，再写入新会话 Cookie。退出接口保留原来的 Cookie 删除行为，不额外改变服务端会话撤销语义。原管理/订阅身份隔离、Cookie 写操作同源校验、Bearer 行为、400/401/403/422/429 与存储失败响应均保持。`tests/test_security_router.py` 覆盖隔离装配、动态依赖、持久化/切换顺序、会话轮换与真实公开接口的密钥生效；该结构批次不变更鉴权协议或新增 schema。
 
 ### 公开订阅 Router
 
