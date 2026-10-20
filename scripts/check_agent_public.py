@@ -338,16 +338,7 @@ def main():
             with (work / 'qemu.log').open('wb') as log:
                 vm = subprocess.Popen(qemu, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
                 try:
-                    deadline = time.monotonic() + 240
-                    while time.monotonic() < deadline:
-                        if vm.poll() is not None:
-                            raise RuntimeError('QEMU exited before SSH readiness')
-                        ready = subprocess.run([*ssh, 'true'], capture_output=True, timeout=15)
-                        if ready.returncode == 0:
-                            break
-                        time.sleep(5)
-                    else:
-                        raise TimeoutError('VM SSH readiness exceeded its budget')
+                    vm_tools.wait_ssh_ready(ssh, vm, budget=240)
                     vm_tools.wait_cloud_init(ssh, vm)
                     evidence = json.loads(quiet([*ssh, 'sudo /usr/bin/python3 -I -c ' + shlex.quote(vm_tools.PROBE)]))
                     vm_tools.verify_guest(evidence, '12', 'amd64', identity, platform.release())

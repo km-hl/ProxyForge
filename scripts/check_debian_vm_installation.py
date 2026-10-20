@@ -127,6 +127,26 @@ def verify_guest(evidence, version, arch, identity, host_kernel):
           evidence['virtualization'], flush=True)
 
 
+def wait_ssh_ready(ssh, vm, *, budget=480):
+    """Wait for the read-only SSH probe within the original overall boot budget."""
+    deadline = time.monotonic() + budget
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('VM SSH readiness exceeded its budget')
+        if vm.poll() is not None:
+            raise RuntimeError('QEMU exited before SSH readiness')
+        try:
+            ready = subprocess.run([*ssh, 'true'], capture_output=True, timeout=min(15, remaining))
+        except subprocess.TimeoutExpired:
+            # Booting guests can accept TCP before completing the SSH handshake.
+            pass
+        else:
+            if ready.returncode == 0:
+                return
+        time.sleep(min(5, max(0, deadline - time.monotonic())))
+
+
 def wait_cloud_init(ssh, vm):
     """Retry only the read-only wait when initial SSH service setup resets transport."""
     deadline = time.monotonic() + 180
@@ -195,16 +215,7 @@ def main():
             vm = subprocess.Popen(qemu_command(work, args.expected_arch, port), stdout=log, stderr=log,
                                   stdin=subprocess.DEVNULL)
             try:
-                deadline = time.monotonic() + 480
-                while time.monotonic() < deadline:
-                    if vm.poll() is not None:
-                        raise RuntimeError('QEMU exited before SSH readiness')
-                    ready = subprocess.run([*ssh, 'true'], capture_output=True, timeout=15)
-                    if ready.returncode == 0:
-                        break
-                    time.sleep(5)
-                else:
-                    raise TimeoutError('Full Debian VM SSH readiness exceeded its budget')
+                wait_ssh_ready(ssh, vm)
                 wait_cloud_init(ssh, vm)
                 result = subprocess.check_output([*ssh, 'sudo /usr/bin/python3 -I -c ' + shlex.quote(PROBE)],
                                                  text=True, timeout=30)
