@@ -4,6 +4,7 @@ import importlib.util
 import io
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -14,6 +15,76 @@ SPEC.loader.exec_module(VM)
 
 
 class DebianVMInstallationTests(unittest.TestCase):
+    def ssh_clock(self):
+        clock = SimpleNamespace(now=0)
+
+        def advance(seconds):
+            clock.now += seconds
+
+        return clock, SimpleNamespace(monotonic=lambda: clock.now, sleep=Mock(side_effect=advance))
+
+    def test_ssh_probe_retries_timeout_and_nonzero_before_success(self):
+        clock, timer = self.ssh_clock()
+        ssh = ['ssh', '-o', 'StrictHostKeyChecking=yes', 'ci@127.0.0.1']
+        vm = Mock()
+        vm.poll.return_value = None
+
+        def probe(command, **kwargs):
+            self.assertEqual(command, [*ssh, 'true'])
+            self.assertEqual(kwargs, {'capture_output': True, 'timeout': 15})
+            if clock.now == 0:
+                clock.now += 15
+                raise VM.subprocess.TimeoutExpired(command, 15)
+            return Mock(returncode=255 if clock.now == 20 else 0)
+
+        with patch.object(VM, 'time', timer), patch.object(VM.subprocess, 'run', side_effect=probe) as run:
+            VM.wait_ssh_ready(ssh, vm)
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(clock.now, 25)
+
+    def test_ssh_timeouts_remain_within_original_deadline(self):
+        clock, timer = self.ssh_clock()
+        vm = Mock()
+        vm.poll.return_value = None
+
+        def timeout(command, **kwargs):
+            clock.now += kwargs['timeout']
+            raise VM.subprocess.TimeoutExpired(command, kwargs['timeout'])
+
+        with patch.object(VM, 'time', timer), patch.object(VM.subprocess, 'run', side_effect=timeout) as run:
+            with self.assertRaisesRegex(TimeoutError, 'SSH readiness exceeded'):
+                VM.wait_ssh_ready(['ssh'], vm, budget=31)
+        self.assertEqual([call.kwargs['timeout'] for call in run.call_args_list], [15, 11])
+        self.assertEqual(clock.now, 31)
+
+    def test_ssh_failure_never_becomes_ready_at_budget_expiry(self):
+        clock, timer = self.ssh_clock()
+        vm = Mock()
+        vm.poll.return_value = None
+        with patch.object(VM, 'time', timer), patch.object(VM.subprocess, 'run', return_value=Mock(returncode=255)) as run:
+            with self.assertRaises(TimeoutError):
+                VM.wait_ssh_ready(['ssh'], vm, budget=7)
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(clock.now, 7)
+
+    def test_ssh_wait_stops_if_qemu_exits(self):
+        vm = Mock()
+        vm.poll.return_value = 1
+        with patch.object(VM.subprocess, 'run') as run:
+            with self.assertRaisesRegex(RuntimeError, 'QEMU exited'):
+                VM.wait_ssh_ready(['ssh'], vm)
+            run.assert_not_called()
+
+    def test_ssh_wait_does_not_swallow_other_failures_or_control_signals(self):
+        vm = Mock()
+        vm.poll.return_value = None
+        for error in (OSError, RuntimeError, KeyboardInterrupt, SystemExit):
+            with self.subTest(error=error), patch.object(VM.subprocess, 'run', side_effect=error), \
+                    patch.object(VM.time, 'sleep') as sleep:
+                with self.assertRaises(error):
+                    VM.wait_ssh_ready(['ssh'], vm)
+                sleep.assert_not_called()
+
     def test_wrong_platform_or_non_ci_refuses_before_host_operations(self):
         for system, machine, ci in [('Windows', 'x86_64', 'true'), ('Linux', 'aarch64', 'true'),
                                     ('Linux', 'x86_64', 'false')]:
