@@ -8,6 +8,7 @@ ProxyForge/
 ├── proxyforge/                # Controller 内部 Python 包
 │   ├── airports/              # 机场解析、拉取、缓存与刷新协调
 │   ├── nodes/                 # 节点管理 Router，显式复用存储和只读边界
+│   ├── templates/             # 模板管理 Router，显式复用版本校验和配置事务
 │   ├── control/               # Agent/Job/Deployment/Chain API 与 SQLite 存储
 │   ├── config/                # 模板事务与历史、DNS/TUN 校验、Mihomo 基线
 │   ├── security/              # 管理凭据/会话、登录限速、安全出站请求
@@ -36,6 +37,7 @@ ProxyForge/
 | 位置 | 职责 |
 | --- | --- |
 | `nodes/api.py` | 分享链接解析、节点读写与代理聚合的管理 Router |
+| `templates/api.py` | 模板校验、保存、历史、恢复与全局导入的管理 Router |
 | `airports/api.py` | 三个机场管理接口的 Router 工厂、旧请求模型及共享 URL 校验 |
 | `airports/service.py` | 显式注入依赖，统一机场节点/元信息缓存与后台刷新协调 |
 | `airports/sources.py` | AirportSource / AirportSnapshot 内部快照，旧格式投影与来源身份比较 |
@@ -69,8 +71,9 @@ Controller 当前支持单进程、单副本运行，不启用多个 Uvicorn wor
 ## 4. 鉴权与模块依赖
 
 ```text
-main.py → airports.api / airports.service / nodes.api / control / config / security / subscription
+main.py → airports.api / airports.service / nodes.api / templates.api / control / config / security / subscription
 nodes.api → config.template_store / subscription.links / nodes / validation / builder
+templates.api → airports.service / config.network_config / template_store / subscription.nodes / validation
 airports.api → airports.service / config.template_store / security.network_security / subscription.builder / nodes
 airports.service → airports.sources / airports.parser / config.template_store / security.outbound_budget
 airports.sources → subscription.nodes
@@ -115,7 +118,7 @@ YAML 节点缓存、JSON 元信息缓存、12 小时/24 小时 TTL、两次快�
 
 路径、请求/响应字段、operationId、管理与订阅身份边界、Cookie 同源校验和安全响应头保持兼容。机场保存仍在同一配置锁内校验 URL、清理移除的 provider 引用、失效缓存，再用 TemplateStore 一次提交来源/模板；409/413 交由应用原异常处理器，存储故障和元信息来源冲突沿用原 503。元信息网络工作保持不持配置锁。
 
-机场管理首先迁移三个接口，节点管理在下一批独立提取，见下节。公开 `/provider/{airport_index}`、默认/Egern 订阅及 templates/auth 路由继续由入口编排；后续按依赖评估逐批迁移，不一次搬动全部路由。`tests/test_airport_router.py` 覆盖依赖隔离、单一处理函数绑定、鉴权/同源和共享错误处理；原有事务、源代次、后台退出与模板恢复测试继续覆盖真实生产路径。
+机场管理首先迁移三个接口，节点和模板管理随后独立提取，见下节。公开 `/provider/{airport_index}`、默认/Egern 订阅及 auth 路由继续由入口编排；后续按依赖评估逐批迁移，不一次搬动全部路由。`tests/test_airport_router.py` 覆盖依赖隔离、单一处理函数绑定、鉴权/同源和共享错误处理；原有事务、源代次、后台退出与模板恢复测试继续覆盖真实生产路径。
 
 ### 节点管理 Router
 
@@ -127,7 +130,29 @@ YAML 节点缓存、JSON 元信息缓存、12 小时/24 小时 TTL、两次快�
 
 GET 节点继续返回手动与可发布的托管节点，GET 代理继续按原顺序追加机场缓存节点。POST 节点仍先在配置锁内用 `manual_input` 跳过原样托管节点、拒绝其修改/伪装，然后校验手动节点、按原手动名称清理引用，再在一次 TemplateStore 提交中写入手动节点和必要的模板更新。托管数据库、成功发布条件和清单读取仍在原入口/控制面；空手动列表不能删除托管节点。节点解析只返回完整成功结果或原错误，不开始存储事务。
 
-`tests/test_node_router.py` 验证独立装配/应用隔离、处理函数绑定、管理与 Cookie 边界、托管节点原样回传/禁止修改、失败不写盘、解析与存储独立，以及节点+模板提交中断后下一次读取同时恢复；既有部署/链路的真实 SQLite 只读节点回归、模板版本冲突和默认/Egern 订阅继续执行。整个第 9 项仍未完成，后续再评估模板、订阅与鉴权路由的依赖。
+`tests/test_node_router.py` 验证独立装配/应用隔离、处理函数绑定、管理与 Cookie 边界、托管节点原样回传/禁止修改、失败不写盘、解析与存储独立，以及节点+模板提交中断后下一次读取同时恢复；既有部署/链路的真实 SQLite 只读节点回归、模板版本冲突和默认/Egern 订阅继续执行。整个第 9 项仍未完成，模板管理另见下节，后续继续评估订阅与鉴权路由的依赖。
+
+### 模板管理 Router
+
+`templates/api.py:create_template_router()` 装配七个管理接口：模板 `GET/POST /api/template`、`POST /api/template/validate`、`GET /api/template/history`、`GET /api/template/history/{entry_id}`、`POST /api/template/history/{entry_id}/restore` 和 `POST /api/template/import`。导入/装配无文件、数据库或网络操作，不创建全局 app、存储、锁或第二个机场服务。
+
+入口显式注入以下依赖，读取/存储/校验回调动态引用当前入口配置：
+
+| 边界 | 注入名称 |
+| --- | --- |
+| 管理身份与可恢复配置锁 | `verify_management`、`configuration_lock` |
+| 模板存储、版本校验与保存 | `template_store`、`revision_required`、`template_writer` |
+| 手动/组合/托管清单、托管名称与旧来源 | `manual_nodes_reader`、`nodes_reader`、`managed_nodes_reader`、`managed_names_reader`、`sources_reader` |
+| 托管只读过滤、模板与来源校验 | `manual_input`、`validate_saved`、`validate_sources` |
+| 共享缓存失效 | `airport_service` |
+
+返回 `TemplateApi(router, get_template, validate_template, update_template, template_history, template_history_entry, restore_template, import_template)`。入口只 include 一次并绑定同一组实际处理函数；四个原请求模型 `TemplateModel`、`TemplateSaveModel`、`TemplateRestoreModel`、`ImportModel` 在新模块定义，入口保留导入名称。`require_revision`、`validate_saved_template`、模板初始化/读写、手动/托管清单等原工具入口保留，由回调复用；不反向导入 main 或复制库存。
+
+模板读取、保存、恢复和全局导入继续持有原外层配置锁；保存/恢复/导入从版本检查、读取及校验直到提交均在同一把锁内，不能把 `expect` 和 `commit` 的单次方法锁当作完整比较并保存。全局导入继续先过滤托管节点、校验手动节点和来源/模板，再按完整旧来源值失效同一机场服务的缓存，通过一次 TemplateStore 提交模板、手动节点、机场来源三份文件。失效在提交前发生，提交故障后缓存可能已清除；持久事务中断仍由下一次受锁读取恢复，不拆成三个单文件写入。
+
+路径、模型、operationId、正常响应与 400/401/403/404/409/413/422/428 等错误状态保持兼容。管理身份、四个 POST 的 Cookie 同源校验、应用级冲突/大小处理器与安全响应头保持；配置锁映射的存储故障仍 503，两项历史 GET 的直接存储故障仍沿用原 500。已有 YAML 错误正文等异常处理行为本批保留，后续按第 11 项独立修复，不混入结构搬迁。
+
+`tests/test_template_router.py` 覆盖装配无 IO、两个应用隔离、实际处理函数/模型绑定、七接口管理鉴权、四个 POST 同源、校验/冲突无写、历史恢复、托管只读、来源扩展字段失效、三文件中断恢复和 Event 控制的并发保存。原模板跨进程 CAS、部署/链路 SQLite、机场并发及默认/Egern 回归继续执行。升级/回滚使用完整 Controller 代码或镜像并保留运行数据，无 schema、文件格式或 Agent/helper 变更；本批不包含生产部署。
 
 ## 5. Agent 协议与分发
 
