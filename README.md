@@ -218,6 +218,8 @@ Agent 已支持直连 VLESS Reality 的配置生成、失败回滚和自动客�
 
 开发与维护请先阅读[项目目录、模块职责及依赖边界](docs/PROJECT_STRUCTURE.md)。升级到完整控制面前，请按[发布验收与恢复流程](docs/RELEASE_ACCEPTANCE.md)完成冷备、隔离恢复演练和分阶段上线；代码验收与生产部署分别记录。
 
+维护者可按[候选发布准备](docs/RELEASE_AUTOMATION.md)固定 Controller 版本、同提交中文说明和五文件校验清单；只读准备工作流不自动创建 tag、发布或部署。正式版本及未验收项目仍须按计划确认。
+
 **迁移步骤：**
 
 1. 按[发布验收与恢复](docs/RELEASE_ACCEPTANCE.md)停止旧服务写入，记录固定提交、镜像、Compose/覆盖配置；制作完整一致冷备并校验。不能让新旧 Controller 同时向同一批 Agent 下发任务。
