@@ -39,7 +39,7 @@ ProxyForge/
 | `airports/api.py` | 三个机场管理接口的 Router 工厂、旧请求模型及共享 URL 校验 |
 | `airports/service.py` | 显式注入依赖，统一机场节点/元信息缓存与后台刷新协调 |
 | `airports/sources.py` | AirportSource / AirportSnapshot 内部快照，旧格式投影与来源身份比较 |
-| `airports/parser.py` | 纯 YAML / Base64 订阅解析，沿用分享链接解析 |
+| `airports/parser.py` | 纯 YAML / Base64 订阅解析，沿用分享链接解析，控制信号向外传播 |
 | `control/agent_api.py`、`job_api.py`、`deployment_api.py` | 管理/Agent 路由、鉴权衔接、请求与响应 schema |
 | `control/control_store.py` | SQLite 连接、migration、注册、身份和心跳 |
 | `control/job_store.py` | 租约、重试、状态回报与任务保留 |
@@ -49,7 +49,7 @@ ProxyForge/
 | `config/network_config.py`、`mihomo_compat.py` | DNS/TUN 纯校验与固定兼容基线 |
 | `security/runtime_security.py` | 持久化凭据、管理密钥验证与会话 |
 | `security/network_security.py`、`auth_rate_limit.py` | 出站请求限制及登录限速 |
-| `subscription/links.py` | 分享链接解析 |
+| `subscription/links.py` | 分享链接解析，普通失败返回 None，控制信号向外传播 |
 | `subscription/nodes.py` | 来源命名、国旗名称、内部字段剥离及节点投影 |
 | `subscription/validation.py` | 节点与完整 Mihomo 配置校验 |
 | `subscription/builder.py` | 由显式输入构建订阅/provider，清理生成结果中的引用 |
@@ -102,6 +102,8 @@ agent → 标准库及自身模块（不依赖 Controller 包）
 YAML 节点缓存、JSON 元信息缓存、12 小时/24 小时 TTL、两次快照尝试、5 个并发请求和 180 秒批次预算保持兼容。`tests/test_airport_service.py` 直接装配独立服务验证依赖、实例隔离、旧来源扩展字段、时钟、解析及错误边界；原有并发/原子写/预算/生命周期测试继续覆盖实际生产服务，HTTP 测试保留鉴权、provider 和默认/Egern 订阅。
 
 节点磁盘缓存读取捕获文件、Unicode 解码、YAML 解析/标量构造及过深嵌套的预期异常，日志只记固定描述及错误类型，返回空列表且不重写损坏文件。其余错误在此函数内不吞掉，配置锁/事务恢复失败仍由存储适配器处理；详见[读取异常与回退边界](AIRPORT_CACHE_CONCURRENCY.md#验证与边界)。这是第 11 项的独立兼容修复，不改变来源代次、缓存格式或正常订阅行为。
+
+订阅解析的五处裸 `except` 已独立收窄至 `except Exception`：机场 YAML/Base64 两层，以及分享链接 VMess、SS、其他协议三个分支。`KeyboardInterrupt`、`SystemExit`、`asyncio.CancelledError`、`GeneratorExit` 在直接解析、嵌套订阅和机场拉取线程池内实际抛出时向外传播，不转换为 `None`、空列表、部分节点或机场元信息错误。普通解析异常继续沿用原回退：先 YAML、后 Base64，普通无效分享链接仍跳过。`tests/test_parser_cancellation.py` 使用合成数据和模拟 HTTP 覆盖这些边界；按具体格式进一步区分预期异常仍需后续独立处理。现有停止事件、出站预算和后台线程关闭管理保持原契约，此修复不负责终止正在运行的线程。
 
 ### 机场管理 Router 试点
 
