@@ -12,7 +12,7 @@ ProxyForge/
 │   ├── control/               # Agent/Job/Deployment/Chain API 与 SQLite 存储
 │   ├── config/                # 模板事务与历史、DNS/TUN 校验、Mihomo 基线
 │   ├── security/              # 管理凭据/会话、登录限速、安全出站请求
-│   └── subscription/          # 纯函数：分享链接、节点投影、校验与生成
+│   └── subscription/          # 公开订阅 Router 与分享链接、节点投影、校验和生成
 ├── agent/                     # 独立 Agent、协议规格、runtime helper 与安装资源
 ├── static/                    # 浏览器 HTML/CSS/JS，既有 URL 保持兼容
 ├── scripts/                   # 开发/CI 工具；不在生产请求中执行
@@ -51,6 +51,7 @@ ProxyForge/
 | `config/network_config.py`、`mihomo_compat.py` | DNS/TUN 纯校验与固定兼容基线 |
 | `security/runtime_security.py` | 持久化凭据、管理密钥验证与会话 |
 | `security/network_security.py`、`auth_rate_limit.py` | 出站请求限制及登录限速 |
+| `subscription/api.py` | 默认/Egern 订阅、机场 provider 和 Egern 规则资源的公开 Router |
 | `subscription/links.py` | 分享链接解析，普通失败返回 None，控制信号向外传播 |
 | `subscription/nodes.py` | 来源命名、国旗名称、内部字段剥离及节点投影 |
 | `subscription/validation.py` | 节点与完整 Mihomo 配置校验 |
@@ -83,12 +84,21 @@ airports.service → airports.sources / airports.parser / config.template_store 
 airports.sources → subscription.nodes
 airports.parser → subscription.links
 subscription.builder → subscription.validation / nodes
+subscription.api → subscription.builder / nodes / validation + FastAPI
 subscription.validation → config.network_config
 control → agent 协议规格 + security
 agent → 标准库及自身模块（不依赖 Controller 包）
 ```
 
-控制面与订阅算法不能反向导入 `main.py`。纯订阅模块只能使用显式参数；文件、网络和请求鉴权仍由入口及对应存储/安全模块负责。管理身份、Agent 凭据和订阅 token 的边界保持原样。
+控制面与订阅算法不能反向导入 `main.py`。纯订阅算法模块只能使用显式参数；公开 Router 通过显式回调复用文件、网络、运行密钥和资源函数，不创建它们的副本。管理身份、Agent 凭据和订阅 token 的边界保持原样。
+
+### 公开订阅 Router
+
+`subscription.api.create_subscription_router` 返回 `SubscriptionApi`，包含 router 与三个实际处理函数：`get_egern_rule_set`、`get_airport_provider`、`get_subscription`。入口只挂载一次并将同名 Python 名称绑定到这些函数；`GET /egern/ruleset/{kind}`、`GET /provider/{airport_index}`、`GET /sub` 的 Query、operationId、状态、响应头和正文保持一致。
+
+十五项依赖显式注入：`token_reader`、`template_reader`、`sources_reader`、`nodes_reader`、`managed_names_reader`、`references_cleaner`、`subscription_reader`、`airport_service`、`service_errors`、`rule_loader`、`config_builder`、`provider_resolver`、`egern_builder`、`ca_bundle_reader`、`logger`。密钥和 CA 逐请求回调读取，不能在装配时捕获旧字符串。回调动态引用入口的当前工具与路径，工厂不读取配置、创建机场服务或持有第二份缓存，也不导入/重载 Egern 资源模块。
+
+保留 `Request.base_url` 和 root_path 构造链接、Unicode 订阅头、默认/Egern 分支、机场顺序和 provider 索引、缓存回退的来源名称匹配、内部字段剥离及导出前引用清理。复用同一 AirportService 与原错误适配器；规则资源继续使用原有缓存、并发槽位、DNS pinning 和预算。三个接口只接受实时订阅密钥，不接受管理身份；不能给它们附加管理 Cookie 同源校验。既有 400/401/404/422/500/502/503 响应和退出/取消信号边界不在结构迁移中修改。`tests/test_subscription_router.py` 验证隔离、动态依赖和原错误/导出契约，已有真实生成与日志回归继续覆盖实际装配。
 
 ### AirportService 装配约定
 
