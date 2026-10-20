@@ -116,7 +116,7 @@ def initialize_template_storage() -> str:
             logger.info(f"已从{description}初始化持久化模板: {TEMPLATE_PATH}")
             return TEMPLATE_PATH
         except OSError as e:
-            logger.error(f"初始化持久化模板失败: {e}")
+            logger.error("初始化持久化模板失败（%s）", type(e).__name__)
             return ""
     logger.error(
         f"找不到模板来源，需要 {TEMPLATE_PATH}、{LEGACY_TEMPLATE_PATH} "
@@ -140,7 +140,7 @@ def initialize_custom_nodes_storage() -> str:
         logger.info(f"已迁移旧版自建节点文件: {CUSTOM_NODES_PATH}")
         return CUSTOM_NODES_PATH
     except OSError as e:
-        logger.error(f"迁移自建节点文件失败: {e}")
+        logger.error("迁移自建节点文件失败（%s）", type(e).__name__)
         return ""
 
 initialize_custom_nodes_storage()
@@ -222,7 +222,7 @@ def load_airports() -> List[str]:
             urls = yaml.safe_load(f)
             return urls if isinstance(urls, list) else []
     except Exception as e:
-        logger.error(f"读取机场列表失败: {e}")
+        logger.error("读取机场列表失败（%s）", type(e).__name__)
     return []
 
 @configuration_locked
@@ -287,7 +287,7 @@ def load_manual_nodes() -> List[Dict[str, Any]]:
                 return nodes
             return []
     except Exception as e:
-        logger.error(f"读取自建节点文件失败: {e}")
+        logger.error("读取自建节点文件失败（%s）", type(e).__name__)
     return []
 
 def managed_nodes():
@@ -350,7 +350,7 @@ def cleanup_runtime_template_references() -> Dict[str, Any]:
     try:
         config = yaml.safe_load(content) or {}
     except yaml.YAMLError as e:
-        logger.error(f"无法清理模板引用，YAML 格式错误: {e}")
+        logger.error("无法清理模板引用，YAML 格式错误（%s）", type(e).__name__)
         return {"proxyReferences": [], "providerReferences": [], "total": 0}
 
     custom_names = [
