@@ -33,13 +33,38 @@ python3 scripts/agent_artifacts.py verify --commit "$commit" \
 | `format` | 安装清单格式，当前为 1；与 Agent 协议版本无关 |
 | `source_commit` | Agent 来源的完整提交 |
 | `agent_version` | 从该提交 `agent/__init__.py` 的字面值读取；当前 0.6.0 |
-| `controller_release_version` | 当前为 `null`，尚未指定正式 Controller release tag |
+| `controller_release_version` | 默认 `null`；构建时可显式指定独立的 Controller SemVer，校验时须独立提供同一预期值；不表示已创建 tag/Release |
 | `controller_source_commit` | 配套 Controller 来源提交，与 Agent 同提交；不是允许任意旧 Controller 的兼容承诺 |
 | `compatibility` | Python 3.9+、systemd、OS/架构允许列表、Controller schema 基线 5，以及清单/任务/runtime/部署/落地/链路各自协议版本 1 |
 | `archive` | 规范文件名、字节数、完整 tar 的 SHA256 |
 | `files` | 每个成员的路径、字节数、SHA256 和规范模式 `0644` |
 
 `agent/install-compatibility.json` 是受审查的安装兼容契约；变更平台、协议或 schema 基线时需同步构建校验器及测试。helper 默认关闭，包内包含其代码不代表安装、启动或宣告能力。先升级 Controller，再逐台升级 Agent/helper；数据库 schema 不是 Agent 软件版本。
+
+### 为候选发布固定 Controller 版本
+
+所有者确定版本后，构建和校验均可传入 `--controller-release-version`。采用 [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html)，值为不带 `v` 的版本号；支持预发布标识和构建元信息，最长 128 个 ASCII 字符。主/次/补丁号以及纯数字预发布标识不得有前导零；构建元信息允许前导零。未来 tag 可使用 `v` 前缀，但传给工具的值不含它。
+
+以下 Bash 命令会交互读取所有者已决定的版本，不预设首个版本。它只创建本地候选包和清单，不创建 tag、不上传 Release，也不推进安装来源。
+
+```bash
+set -euo pipefail
+read -r -p '输入已确认的 Controller SemVer（不带 v）：' controller_version
+commit=$(git rev-parse HEAD)
+output=$(python3 -c 'import tempfile; print(tempfile.mkdtemp(prefix="proxyforge-release-"))')/artifacts
+python3 scripts/agent_artifacts.py build --commit "$commit" --output-dir "$output" \
+  --controller-release-version "$controller_version"
+manifest="$output/proxyforge-agent-$commit.manifest.json"
+archive="$output/proxyforge-agent-$commit.tar"
+manifest_sha256=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$manifest")
+python3 scripts/agent_artifacts.py verify --commit "$commit" \
+  --controller-release-version "$controller_version" \
+  --manifest-sha256 "$manifest_sha256" --manifest "$manifest" --archive "$archive"
+```
+
+这仍是本地自检；接收外部产物时，完整提交、manifest SHA256 和 Controller 版本均须来自可信发布记录，不能从下载的清单自动读取版本后传回校验器。遗漏、不同版本或显式版本与 `null` 互换均拒绝，即使调用方重新计算了清单 hash，也不能跳过元数据一致性检查。
+
+同一源码的 Agent tar 不因 Controller 版本标签而变化，manifest 的版本字段及 SHA256 会变化；同一提交与同一版本可重复构建。Agent 软件版本仍从 Agent 源码读取，schema/能力协议仍按原兼容契约校验。旧的无版本命令、format 1 及 `null` 清单行为保持；带版本的新清单须使用本功能版本的校验器，旧工具会拒绝它。接受一个候选版本标签不证明对应 tag 存在、CI 通过、正式发布或已部署，这些门禁仍见[发布验收](RELEASE_ACCEPTANCE.md)。
 
 所有成员按路径排序，时间戳为 0，uid/gid 为 0，用户名/组名为空。使用不压缩 tar 避免 gzip 时间戳和压缩库差异，同一提交的包与清单可重复比较；这不代表 Controller 容器镜像逐字节可复现。归档元数据中的 uid 0 **不证明磁盘文件实际由 root 控制**。
 
@@ -55,6 +80,7 @@ python3 scripts/agent_artifacts.py verify --commit "$commit" \
 
 ```bash
 python3 -S -m unittest discover -s tests -p test_agent_artifacts.py -v
+python3 -S -m unittest discover -s tests -p test_controller_release_metadata.py -v
 ```
 
 测试覆盖重复构建、工作树污染隔离、Git 链接/缺失文件拒绝、manifest 固定、篡改及恶意归档；从包中还原的临时副本执行 `python -S -m agent.main --help`，检查模块齐全。CI 在 Python 3.9–3.13 执行这些测试，并从本次 CI 的完整提交实际构建、自检；PR 的临时合并提交只用于验证，不自动成为发布版本。

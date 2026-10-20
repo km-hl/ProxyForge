@@ -45,6 +45,22 @@ def require_hex(value, length):
     return value
 
 
+def require_controller_release_version(value):
+    """Optional SemVer label, independently fixed by the builder/verifier."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or len(value) > 128:
+        raise ValueError("Invalid Controller release version")
+    core = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    match = re.fullmatch(core + r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+                         r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?", value)
+    if match is None or (match[4] is not None and any(
+            part.isdigit() and len(part) > 1 and part.startswith('0')
+            for part in match[4].split('.'))):
+        raise ValueError("Invalid Controller release version")
+    return value
+
+
 def read_bounded(path, limit):
     with Path(path).open("rb") as source:
         data = source.read(limit + 1)
@@ -130,11 +146,12 @@ def archive_bytes(files):
     return result
 
 
-def manifest_for(commit, files, archive):
+def manifest_for(commit, files, archive, *, controller_release_version=None):
+    controller_release_version = require_controller_release_version(controller_release_version)
     version, compatibility = package_metadata(files)
     return {
         "format": 1, "source_commit": commit,
-        "agent_version": version, "controller_release_version": None,
+        "agent_version": version, "controller_release_version": controller_release_version,
         "controller_source_commit": commit, "compatibility": compatibility,
         "archive": {"name": "proxyforge-agent-" + commit + ".tar",
                     "size": len(archive), "sha256": sha256(archive)},
@@ -143,10 +160,11 @@ def manifest_for(commit, files, archive):
     }
 
 
-def build(repo, commit, destination):
+def build(repo, commit, destination, *, controller_release_version=None):
+    controller_release_version = require_controller_release_version(controller_release_version)
     files = source_files(repo, commit)
     archive = archive_bytes(files)
-    manifest = manifest_for(commit, files, archive)
+    manifest = manifest_for(commit, files, archive, controller_release_version=controller_release_version)
     encoded = canonical_json(manifest)
     # A new directory is required: never replace another build or installation.
     destination = Path(destination)
@@ -160,7 +178,8 @@ def build(repo, commit, destination):
     return archive_path, manifest_path, sha256(encoded)
 
 
-def verify(archive_path, manifest_path, commit, manifest_sha256):
+def verify(archive_path, manifest_path, commit, manifest_sha256, *, controller_release_version=None):
+    controller_release_version = require_controller_release_version(controller_release_version)
     require_hex(commit, 40)
     require_hex(manifest_sha256, 64)
     encoded = read_bounded(manifest_path, MAX_MANIFEST)
@@ -193,7 +212,8 @@ def verify(archive_path, manifest_path, commit, manifest_sha256):
     # end padding. This also rejects hidden extension headers/trailing payloads.
     if archive_bytes(files) != archive:
         raise ValueError("Noncanonical archive")
-    expected = canonical_json(manifest_for(commit, files, archive))
+    expected = canonical_json(manifest_for(commit, files, archive,
+                                         controller_release_version=controller_release_version))
     if expected != encoded:
         raise ValueError("Manifest metadata or member checksums mismatch")
     return manifest
@@ -205,20 +225,24 @@ def main():
     builder = commands.add_parser("build", help="Build exclusively from Git objects")
     builder.add_argument("--commit", required=True)
     builder.add_argument("--output-dir", required=True, type=Path)
+    builder.add_argument("--controller-release-version", help="Explicit Controller SemVer; does not create a release")
     verifier = commands.add_parser("verify", help="Verify only; does not extract or install")
     verifier.add_argument("--commit", required=True)
     verifier.add_argument("--manifest-sha256", required=True)
     verifier.add_argument("--archive", required=True, type=Path)
     verifier.add_argument("--manifest", required=True, type=Path)
+    verifier.add_argument("--controller-release-version", help="Independently expected Controller SemVer")
     args = parser.parse_args()
     try:
         if args.command == "build":
-            archive, manifest, digest = build(ROOT, args.commit, args.output_dir)
+            archive, manifest, digest = build(ROOT, args.commit, args.output_dir,
+                                             controller_release_version=args.controller_release_version)
             print("Archive:", archive)
             print("Manifest:", manifest)
             print("Manifest SHA256:", digest)
         else:
-            manifest = verify(args.archive, args.manifest, args.commit, args.manifest_sha256)
+            manifest = verify(args.archive, args.manifest, args.commit, args.manifest_sha256,
+                              controller_release_version=args.controller_release_version)
             print("Verified Agent", manifest["agent_version"], "commit", manifest["source_commit"])
     except (ValueError, OSError, SyntaxError, tarfile.TarError, subprocess.SubprocessError):
         # Do not echo arbitrary JSON, tar member names or external command errors.

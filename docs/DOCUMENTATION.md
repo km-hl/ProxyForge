@@ -19,7 +19,7 @@
 | [README.md](../README.md) | 中文正文 | 修复过期冲突描述、零延迟/更新绝对安全承诺、旧迁移路径；链接到冷备和非 root 权限流程 |
 | [agent/README.md](../agent/README.md) | 顶部链接中文版本，英文保留 | 安装、凭据、可选 helper、心跳、任务、开发、卸载、历史升级与当前恢复 |
 | [agent/README.zh-CN.md](../agent/README.zh-CN.md) | 完整中文，与英文互链 | 保留相同能力和恢复边界，修正“控制台入口未完成”的旧状态 |
-| [AGENT_ARTIFACTS.md](AGENT_ARTIFACTS.md) | 中文正文 | Git 固定产物、manifest/hash、工具用法与分发边界；新增帮助加入固定文档清单 |
+| [AGENT_ARTIFACTS.md](AGENT_ARTIFACTS.md) | 中文正文 | Git 固定产物、独立 Controller SemVer/Agent/schema、manifest/hash、工具用法与分发边界；帮助加入固定文档清单 |
 | [AGENT_INSTALL.md](AGENT_INSTALL.md) | 中文正文 | 三份完整固定命令、可信地址配置、API、失败恢复与实测矩阵 |
 | [AGENT_INSTALL_HELP.md](AGENT_INSTALL_HELP.md) | 新增中文对照 | 脚本/Agent 参数、隐藏凭据、全部安装固定提示及 wrapper 错误 |
 | [AGENT_B1.md](AGENT_B1.md) | 本次补齐中文正文 | 清单表、API、鉴权、状态、备份/回滚；schema 1 为历史 |
