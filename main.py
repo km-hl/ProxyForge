@@ -1,3 +1,6 @@
+from proxyforge.templates.api import (
+    TemplateModel, TemplateSaveModel, TemplateRestoreModel, ImportModel, create_template_router,
+)
 from proxyforge.nodes.api import NodesModel, ParseLinksModel, create_node_router
 from proxyforge.airports.service import AirportService, AirportSourcesChanged
 from proxyforge.airports.api import AirportsModel, check_airport_urls, create_airport_router
@@ -684,56 +687,6 @@ get_nodes = node_api.get_nodes
 get_all_proxies = node_api.get_all_proxies
 update_nodes = node_api.update_nodes
 
-@app.get("/api/template", dependencies=[Depends(verify_api_token)])
-@configuration_locked
-def get_template():
-    return template_store().snapshot()
-
-class TemplateModel(BaseModel):
-    content: str
-
-
-class TemplateSaveModel(TemplateModel):
-    expected_revision: str = None
-
-
-class TemplateRestoreModel(BaseModel):
-    expected_revision: str = None
-
-
-class ImportModel(TemplateSaveModel):
-    nodes: List[Dict[str, Any]]
-    urls: List[Any]
-
-
-@app.post("/api/template/validate", dependencies=[Depends(verify_api_token)])
-def validate_template(data: TemplateModel):
-    try:
-        config = yaml.safe_load(data.content)
-    except yaml.YAMLError:
-        return {"errors": [{"code": "yaml_syntax", "path": "", "message": "YAML 语法错误，请检查缩进和字段"}],
-                "warnings": [], "info": [], "status": "error"}
-    result = validate_network_config(config)
-    errors = validate_mihomo_config(
-        config,
-        external_proxy_names=[node.get("name") for node in load_manual_nodes() if isinstance(node, dict)] + managed_node_names(),
-        external_provider_names=[get_airport_name(item, index) for index, item in enumerate(load_airports())],
-        allow_internal_sources=True,
-    )
-    network_errors = set(network_error_messages(result))
-    result["errors"].extend({"code": "template_invalid", "path": "", "message": message}
-                            for message in errors if message not in network_errors)
-    if result["errors"]:
-        result["status"] = "error"
-    return result
-
-@app.post("/api/template", dependencies=[Depends(verify_api_token)])
-@configuration_locked
-def update_template(data: TemplateSaveModel):
-    require_revision(data.expected_revision)
-    validate_saved_template(data.content, load_custom_nodes(), load_airports())
-    return {"status": "ok", **save_template_content(data.content)}
-
 
 def validate_saved_template(content, nodes, airports):
     if len(content.encode("utf-8")) > MAX_TEMPLATE_BYTES:
@@ -757,47 +710,25 @@ def validate_saved_template(content, nodes, airports):
         raise HTTPException(status_code=400, detail={"message": "Mihomo 配置校验失败", "errors": errors})
 
 
-@app.get("/api/template/history", dependencies=[Depends(verify_api_token)])
-def template_history():
-    return {"entries": template_store().list_history()}
-
-
-@app.get("/api/template/history/{entry_id}", dependencies=[Depends(verify_api_token)])
-def template_history_entry(entry_id: str):
-    try:
-        return template_store().history_entry(entry_id)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="History entry not found")
-
-
-@app.post("/api/template/history/{entry_id}/restore", dependencies=[Depends(verify_api_token)])
-@configuration_locked
-def restore_template(entry_id: str, data: TemplateRestoreModel):
-    require_revision(data.expected_revision)
-    entry = template_history_entry(entry_id)
-    validate_saved_template(entry["content"], load_custom_nodes(), load_airports())
-    return {"status": "ok", **template_store().commit(
-        {"template.yaml": entry["content"]}, source="restore")}
-
-
-@app.post("/api/template/import", dependencies=[Depends(verify_api_token)])
-@configuration_locked
-def import_template(data: ImportModel):
-    require_revision(data.expected_revision)
-    data.nodes = manual_node_input(data.nodes)
-    errors = validate_proxy_nodes(data.nodes, location="nodes")
-    if errors:
-        raise HTTPException(status_code=400, detail={"message": "节点配置校验失败", "errors": errors})
-    check_airport_urls(data.urls)
-    validate_saved_template(data.content, data.nodes + managed_nodes(), data.urls)
-    airport_service.invalidate_airport_cache(clear_disk=(load_airports() != data.urls))
-    snapshot = template_store().commit({
-        "template.yaml": data.content,
-        "custom_nodes.yaml": yaml.safe_dump([strip_internal_proxy_fields(n) for n in data.nodes],
-                                            allow_unicode=True, sort_keys=False),
-        "airports.yaml": yaml.safe_dump(data.urls, allow_unicode=True, sort_keys=False),
-    }, source="import")
-    return {"status": "ok", **snapshot}
+template_api = create_template_router(
+    verify_management=verify_api_token, configuration_lock=configuration_lock,
+    template_store=lambda: template_store(), revision_required=lambda value: require_revision(value),
+    template_writer=lambda content: save_template_content(content),
+    manual_nodes_reader=lambda: load_manual_nodes(), nodes_reader=lambda: load_custom_nodes(),
+    managed_nodes_reader=lambda: managed_nodes(), managed_names_reader=lambda: managed_node_names(),
+    sources_reader=lambda: load_airports(), manual_input=lambda nodes: manual_node_input(nodes),
+    validate_saved=lambda content, nodes, airports: validate_saved_template(content, nodes, airports),
+    validate_sources=lambda urls: check_airport_urls(urls), airport_service=airport_service,
+)
+app.include_router(template_api.router)
+# 保留同一处理函数及请求模型的原 Python 名称。
+get_template = template_api.get_template
+validate_template = template_api.validate_template
+update_template = template_api.update_template
+template_history = template_api.template_history
+template_history_entry = template_api.template_history_entry
+restore_template = template_api.restore_template
+import_template = template_api.import_template
 
 
 import asyncio
