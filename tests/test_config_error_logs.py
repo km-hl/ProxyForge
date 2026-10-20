@@ -55,10 +55,10 @@ class ConfigErrorLogsTest(unittest.TestCase):
                     self.assertEqual(self.snapshot(), before)
         self.network.assert_not_called()
 
-    def test_reader_io_and_unexpected_errors_preserve_current_fallback(self):
+    def test_reader_io_errors_preserve_current_fallback(self):
         for reader, label in [(self.app.load_airports, '读取机场列表失败'),
                               (self.app.load_manual_nodes, '读取自建节点文件失败')]:
-            for kind in [PermissionError, RuntimeError]:
+            for kind in [PermissionError]:
                 with self.subTest(reader=reader.__name__, kind=kind.__name__):
                     before = self.snapshot()
                     with patch.object(self.app, 'open', create=True,

@@ -72,7 +72,7 @@ Controller 当前支持单进程、单副本运行，不启用多个 Uvicorn wor
 
 `GET /sub` 的通用异常仍返回原 500 中文纯文本响应；应用错误日志只记录固定提示“订阅生成失败”和异常类型，不格式化异常对象、不记录原始消息或 traceback。该边界覆盖构建、YAML 读取、Egern 转换及最终序列化，保留 `ConfigValidationError` 的 422/校验警告与 `HTTPException` 的原响应；退出/取消信号继续向外传播。此修复仅针对订阅通用错误日志，不代表 HTTP 访问日志或结构化校验警告已经全面脱敏。`tests/test_subscription_error_logs.py` 以临时目录、合成异常与实际 YAML 错误验证日志、响应、控制信号和两种正常导出，测试不请求真实上游。
 
-配置辅助函数的五处异常日志也仅记录固定提示及异常类型：模板初始化、自建节点迁移、机场列表读取、手动节点读取和模板引用清理。原异常捕获范围保持不变，读失败仍返回空列表，迁移失败仍返回空路径，YAML 清理失败仍返回空引用结果；不重写损坏文件，不新增网络请求。`tests/test_config_error_logs.py` 直接验证真实文件与默认/Egern 订阅调用链，保证上游辅助日志与通用错误日志都不回显这些异常的消息或片段。初始化成功的路径提示、校验警告及访问日志不属于此异常日志修复；按格式收窄捕获仍需独立兼容验证。
+配置辅助函数的五处异常日志也仅记录固定提示及异常类型：模板初始化、自建节点迁移、机场列表读取、手动节点读取和模板引用清理。日志脱敏批次保留了当时的捕获范围；文件读取的后续预期异常类别见下文。格式/文件错误仍返回空列表，迁移失败仍返回空路径，YAML 清理失败仍返回空引用结果；不重写损坏文件，不新增网络请求。`tests/test_config_error_logs.py` 直接验证真实文件与默认/Egern 订阅调用链，保证这些错误日志不回显异常消息或片段。初始化成功的路径提示、校验警告及访问日志不属于此异常日志修复。
 
 ## 4. 鉴权与模块依赖
 
@@ -150,7 +150,13 @@ YAML 节点缓存、JSON 元信息缓存、12 小时/24 小时 TTL、两次快�
 
 VMess 的 Base64/JSON/字段阶段保留 `ValueError`、`TypeError`、`AttributeError`、`OverflowError`、`RecursionError` 的 `None` 回退，覆盖非对象 JSON、非法端口/alterId、无穷数及过深 JSON。SS 与其余 URI 只捕获 `ValueError`、`TypeError`，包含 Base64/Unicode、URL/端口和协议字段错误。正常解析顺序、节点字段、普通无效行跳过行为不变；其他错误不再伪装成空结果，取消/退出信号仍向外传播，多行故障不返回部分节点或继续后续行。
 
-纯函数不新增日志或 HTTP 策略，调用方继续使用既有逐来源、HTTP 和后台故障边界。机场逐来源仍可返回安全的空节点/元信息错误，不能因此断言底层解析器已经吞掉故障。`tests/test_parser_expected_errors.py` 覆盖真实格式错误与模拟运行故障，既有控制信号与各协议输出测试继续有效；入口两处配置读取的宽泛捕获仍需下一批独立评估。
+纯函数不新增日志或 HTTP 策略，调用方继续使用既有逐来源、HTTP 和后台故障边界。机场逐来源仍可返回安全的空节点/元信息错误，不能因此断言底层解析器已经吞掉故障。`tests/test_parser_expected_errors.py` 覆盖真实格式错误与模拟运行故障，既有控制信号与各协议输出测试继续有效；入口文件读取的后续分类见下文。
+
+### 配置与缓存读取异常边界
+
+`load_airports`、`load_manual_nodes` 和 AirportService 的 `load_cache_from_file` 将 `OSError`、`ValueError`、`YAMLError`、`AttributeError`、`KeyError`、`IndexError`、`RecursionError` 作为文件/实际 YAML 数据错误，保留只读空列表回退和固定提示加类型的日志。空整数/浮点、非法布尔或时间戳并不都抛 YAMLError；其余 `RuntimeError`、`MemoryError`、`AssertionError`、`TypeError` 等读取故障继续向调用方报告，不能伪装为空配置。受锁恢复/来源身份与正常节点字段处理未改。
+
+JSON 元信息缓存将解码深度 `RecursionError` 与原 `OSError`、`ValueError`、`UnicodeError` 一样回退为空对象、仅记错误类型，不覆盖损坏文件。JSON 解码深度阈值依 Python/平台不同，能够解析但条目结构无效的深层对象仍沿用固定结构警告。网络元信息/逐来源和后台的合理顶层故障隔离继续保留。`tests/test_config_reader_errors.py` 验证实际坏标量/深度、文件错误、非预期故障传播、无写盘和默认/Egern 订阅意外失败返回原 500；旧日志专项的 RuntimeError 空结果断言已随有意收窄改为新传播回归。
 
 ### 节点管理 Router
 

@@ -120,7 +120,7 @@ class AirportService:
             with open(self.cache_path, "r", encoding="utf-8") as f:
                 nodes = yaml.safe_load(f)
                 return nodes if isinstance(nodes, list) else []
-        except (OSError, ValueError, yaml.YAMLError, RecursionError) as exc:
+        except (OSError, ValueError, yaml.YAMLError, AttributeError, KeyError, IndexError, RecursionError) as exc:
             self.logger.error("读取节点持久化缓存失败（%s）", type(exc).__name__)
         return []
 
@@ -270,7 +270,7 @@ class AirportService:
                 data = json.load(stream)
         except FileNotFoundError:
             return {}
-        except (OSError, ValueError, UnicodeError) as exc:
+        except (OSError, ValueError, UnicodeError, RecursionError) as exc:
             self.logger.warning("读取机场信息缓存失败（%s）", type(exc).__name__)
             return {}
         if not isinstance(data, dict):
