@@ -94,7 +94,8 @@ class AirportCacheFallbackTest(unittest.TestCase):
 
         self.assertEqual(proxies, [])
         combined_logs = "\n".join(messages)
-        self.assertIn("airport.invalid", combined_logs)
+        self.assertIn("机场来源 #1", combined_logs)
+        self.assertNotIn("airport.invalid", combined_logs)
         self.assertNotIn(secret_url, combined_logs)
         self.assertNotIn("test-token", combined_logs)
         self.assertNotIn("private-user", combined_logs)

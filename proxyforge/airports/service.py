@@ -156,8 +156,9 @@ class AirportService:
             return []
 
         airport_name = source.name
+        source_number = source.index + 1 if type(source.index) is int and source.index >= 0 else 0
         headers = {"User-Agent": "clash-verge/v1.6.0 clash-meta/1.18.3"}
-        self.logger.info(f"正在从 {airport_name} 拉取节点")
+        self.logger.info(f"正在拉取机场来源 #{source_number} 的节点")
         try:
             check_outbound_deadline(deadline, stop_event)
             response = self.http_get(url, headers=headers, timeout=30, ca_bundle=self.ca_bundle,
@@ -169,11 +170,11 @@ class AirportService:
                 for proxy in proxies:
                     if isinstance(proxy, dict):
                         proxy["_airport_name"] = airport_name
-                self.logger.info(f"成功从 {airport_name} 拉取到 {len(proxies)} 个节点")
+                self.logger.info(f"机场来源 #{source_number} 已拉取 {len(proxies)} 个节点")
                 return proxies
-            self.logger.warning(f"{airport_name} 订阅内容解析成功，但未找到代理节点")
+            self.logger.warning(f"机场来源 #{source_number} 订阅内容解析成功，但未找到代理节点")
         except Exception as e:
-            self.logger.error(f"拉取 {airport_name} 订阅失败（{type(e).__name__}）")
+            self.logger.error(f"机场来源 #{source_number} 拉取失败（{type(e).__name__}）")
         return []
 
     def fetch_airport_proxies(self, sources=None, stop_event=None) -> List[Dict[str, Any]]:
