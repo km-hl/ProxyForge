@@ -255,10 +255,12 @@ async function refreshAgents() {
         if (!agents.length) { target.textContent = '尚无 Agent。点击「添加服务器」获取安装命令，在目标机器执行。'; return; }
         const table = document.createElement('table'); table.className = 'agent-table';
         const headings = document.createElement('tr');
-        for (const name of ['名称 / 主机', '连接来源 IP', '系统 / 架构', 'Agent / sing-box', '状态 / 角色', '最后在线', '操作']) {
-            const cell = document.createElement('th'); cell.textContent = name; headings.append(cell);
+        const labels = ['名称 / 主机', '连接来源 IP', '系统 / 架构', 'Agent / sing-box', '状态 / 角色', '最后在线', '操作'];
+        for (const name of labels) {
+            const cell = document.createElement('th'); cell.textContent = name; cell.setAttribute('scope', 'col'); headings.append(cell);
         }
-        table.append(headings);
+        const head = document.createElement('thead'); head.append(headings); table.append(head);
+        const body = document.createElement('tbody'); table.append(body);
         for (const agent of agents) {
             const row = document.createElement('tr');
             const m = agent.metadata;
@@ -267,15 +269,16 @@ async function refreshAgents() {
                 m.agent_version + ' / ' + (m.singbox.installed ? (m.singbox.running ? '运行中' : '未运行') : '未安装'),
                 agentStatusLabel(agent) + ' / ' + agent.role,
                 agent.last_seen ? new Date(agent.last_seen * 1000).toLocaleString() : '—']) {
-                const cell = document.createElement('td'); cell.textContent = value; row.append(cell);
+                const cell = document.createElement('td'); cell.textContent = value; cell.setAttribute('data-label', labels[row.children.length]); row.append(cell);
             }
             const actions = document.createElement('td');
+            actions.setAttribute('data-label', labels[6]);
             for (const [label, action] of [['详情', 'details'], ['任务', 'jobs'], ['部署', 'deployment'], ['链路', 'chain'], ['编辑', 'edit'], ['撤销', 'revoke'], ['移除', 'remove']]) {
                 const button = document.createElement('button'); button.textContent = label; button.className = 'btn';
                 button.onclick = () => agentAction(agent, action).catch(error => showToast(error.message, 'error'));
                 actions.append(button);
             }
-            row.append(actions); table.append(row);
+            row.append(actions); body.append(row);
         }
         target.append(table);
     } catch (error) { target.textContent = '读取 Agent 失败：' + error.message; }
