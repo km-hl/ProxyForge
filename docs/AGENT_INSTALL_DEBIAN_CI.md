@@ -72,13 +72,13 @@ SSH 就绪探测仅执行只读 `true`，共享等待函数在单次 SSH 超时�
 sudo apt-get install --no-install-recommends --no-upgrade qemu-system-x86 qemu-utils cloud-image-utils openssh-client
 ```
 
-先独立核对 `docker inspect` 的 Controller 镜像 ID 和安装来源；下列摘要占位符必须替换为已核验的完整值。`--expected-source-commit` 只能选驱动内已审查的三个来源：本批携带 MIT 许可的 `2b8ea5873c7932b12b092a4321e92429ecdc9c19`，或历史 `da2550a923f3a64a7d1e932a56090a34966f6ab7`、`977b16b41e0d5332d933df007e7a683189c1fdc8`。API 返回的 bootstrap/hash/完整命令必须与对应可信锚点逐字一致，不能由 API 自行选择任意 root 执行代码。新增来源不代表生产已更新；外部验收按所有者要求暂缓，下面历史实测记录保持原来源。
+先独立核对 `docker inspect` 的 Controller 镜像 ID 和安装来源；下列摘要占位符必须替换为已核验的完整值。`--expected-source-commit` 只能选驱动内已审查的四个来源：当前包含首次就绪及租约保护修复的 `9738da476fbc3bf6702d335a9b7424192902add5`，或历史 `2b8ea5873c7932b12b092a4321e92429ecdc9c19`、`da2550a923f3a64a7d1e932a56090a34966f6ab7`、`977b16b41e0d5332d933df007e7a683189c1fdc8`。API 返回的 bootstrap/hash/完整命令必须与对应可信锚点逐字一致，不能由 API 自行选择任意 root 执行代码。必须选择实际部署的 Controller 所返回的来源，不能强令旧部署满足新锚点。新增来源不代表生产已更新；外部验收按所有者要求暂缓，下面历史实测记录保持原来源。
 
 ```bash
 sudo python3 scripts/check_agent_public.py --disposable-vm \
   --controller-url https://your-controller.example \
   --expected-controller-image 'sha256:<已核验的64位镜像摘要>' \
-  --expected-source-commit 2b8ea5873c7932b12b092a4321e92429ecdc9c19 \
+  --expected-source-commit 9738da476fbc3bf6702d335a9b7424192902add5 \
   --output-dir /root/proxyforge-public-acceptance-YYYYMMDD-unique
 ```
 
