@@ -38,6 +38,7 @@ import uvicorn
 from proxyforge.control.agent_api import attach_agent_routes
 from proxyforge.control.control_store import ControlStore
 from scripts.installation_diagnostics import helper_failure_summary
+from scripts.installation_heartbeat import wait_for_helper_heartbeat
 
 HOST = 'proxyforge-install-ci.example'
 CA_PATH = Path('/usr/local/share/ca-certificates/proxyforge-install-ci.crt')
@@ -216,14 +217,7 @@ def check_helper(command, client, headers, agent_id):
     assert CONFIG.read_bytes() == before
     status, _, sent = command_pty(command)
     assert status != 0 and not sent, 'Repeated helper installation was accepted'
-    deadline = time.monotonic() + 45
-    while time.monotonic() < deadline:
-        metadata = client.get('/api/agents', headers=headers).json()['agents'][0]['metadata']
-        if metadata.get('runtime_protocol_version') == 1 and metadata['singbox']['running']:
-            break
-        time.sleep(0.25)
-    else:
-        raise AssertionError('No helper capability/runtime heartbeat received')
+    metadata = wait_for_helper_heartbeat(client, headers, agent_id)
     assert all(metadata[name] == 1 for name in ('deployment_protocol_version', 'landing_protocol_version',
                                                'chain_protocol_version'))
     assert client.get('/api/agents', headers=headers).json()['agents'][0]['id'] == agent_id
