@@ -3,6 +3,39 @@ const assert = require('node:assert/strict');
 const network = require('../static/network-settings.js');
 const cases = require('./fixtures/network_config_cases.json');
 
+test('overview collapses advice but retains errors, facts and full editor diagnostics', async () => {
+    class Element {
+        constructor(tag) { this.tag = tag; this.children = []; this.textContent = ''; }
+        append(...items) { this.children.push(...items); }
+        prepend(item) { this.children.unshift(item); }
+        replaceChildren() { this.children = []; }
+        addEventListener() {}
+        get childElementCount() { return this.children.length; }
+    }
+    const overview = new Element('div'), check = new Element('div'), editor = new Element('div');
+    editor.querySelector = () => check;
+    const previous = global.document;
+    global.document = { createElement: tag => new Element(tag), getElementById: id => id === 'network-overview' ? overview : editor };
+    const report = { status: 'error', errors: [{path: 'dns', message: '必须修复'}],
+        warnings: [{path: 'geosite:<img>', message: '依赖客户端 geodata'}], info: [{message: '未检测连通性'}],
+        effective: {dns: {enable: true, 'enhanced-mode': 'fake-ip', ipv6: false}, tun: {enable: true, 'dns-hijack': ['any:53'], 'strict-route': true, 'auto-route': true}} };
+    try {
+        network.init({validate: async () => report, dump: () => '{}'});
+        await network.renderOverview({});
+        assert.ok(overview.children.some(e => e.tag === 'ul' && e.className.includes('errors')));
+        const advice = overview.children.find(e => e.tag === 'details' && e.children[0].textContent.startsWith('配置建议'));
+        assert.ok(advice);
+        assert.equal(advice.open, undefined);
+        assert.equal(advice.children[1].children[0].textContent, 'geosite:<img>：依赖客户端 geodata');
+        const facts = overview.children.find(e => e.tag === 'dl');
+        assert.equal(facts.children.length, 6);
+        assert.ok(facts.children.some(e => e.children[1].textContent === 'fake-ip'));
+        await network.validate();
+        assert.ok(check.children.some(e => e.tag === 'ul' && e.className.includes('warnings')));
+        assert.ok(check.children.some(e => e.tag === 'ul' && e.className.includes('info')));
+    } finally { if (previous === undefined) delete global.document; else global.document = previous; }
+});
+
 test('Bootstrap shortcuts only generate IP-host endpoints without changing regular choices', () => {
     assert.equal(network.providerOptions('AliDNS').DoH, 'https://dns.alidns.com/dns-query');
     assert.deepEqual(network.providerOptions('AliDNS', true), { UDP: '223.5.5.5' });

@@ -41,6 +41,10 @@
 .network-yaml { white-space: pre-wrap; overflow-wrap: anywhere; background: #f5f7fa; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px; font-size: .8rem; }
 #panel-network details, #network-overview details { margin-top: 14px; }
 #panel-network summary, #network-overview summary { cursor: pointer; padding: 8px 0; }
+.network-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+.network-summary > div { min-width: 0; padding: 10px 12px; background: #f5f7fc; border-radius: var(--radius-sm); }
+.network-summary dt { color: var(--text-secondary); font-size: .75rem; }
+.network-summary dd { margin-top: 4px; font-size: .85rem; overflow-wrap: anywhere; }
 #panel-network input[type="checkbox"] { accent-color: var(--primary); }
 .btn:disabled { opacity: .55; cursor: not-allowed; }
 .toast-warning { background: #936300; }
@@ -99,6 +103,7 @@ body {
     gap: 8px;
     flex-wrap: wrap;
 }
+.mobile-label { display: none; }
 .btn {
     padding: 8px 16px;
     border: 1px solid var(--border);
@@ -652,10 +657,15 @@ img.emoji {
 
 /* Phone and tablet: labelled navigation, full-width forms and reachable actions. */
 @media (max-width: 768px) {
-    .header { padding: calc(12px + env(safe-area-inset-top)) 16px 12px; gap: 12px; flex-wrap: wrap; }
+    .header { padding: calc(10px + env(safe-area-inset-top)) 12px 10px; gap: 8px; flex-wrap: wrap; }
     .header .logo { font-size: 1.15rem; }
     .header-actions { width: 100%; display: grid; grid-template-columns: 1.4fr 1fr auto; gap: 6px; }
     .header-actions .btn { justify-content: center; padding: 8px; font-size: .8rem; }
+    .header .desktop-label { display: none; }
+    .header .mobile-label { display: inline; }
+    .network-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    #network-overview > details { border-top: 1px solid var(--border); padding-top: 4px; }
+    #network-overview summary { min-height: 44px; font-size: .85rem; }
     .main-container { flex-direction: column; }
     .sidebar {
         width: 100%; flex-direction: row; gap: 4px; padding: 6px 12px;
