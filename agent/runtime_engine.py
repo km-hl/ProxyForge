@@ -17,6 +17,18 @@ from .chain_spec import CHAIN_ACTIONS, runtime_config as chain_config
 
 UNIT = 'proxyforge-singbox.service'
 EMPTY_CONFIG = {'log': {'level': 'warn'}, 'inbounds': [], 'outbounds': [{'type': 'direct', 'tag': 'direct'}]}
+STARTUP_HEALTH_TIMEOUT = 20.0
+HEALTH_POLL_INTERVAL = 0.5
+HEALTH_SAMPLES = 3
+
+
+def _probe_timeout(maximum, deadline):
+    if deadline is None:
+        return maximum
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError('Runtime readiness deadline exceeded')
+    return min(maximum, remaining)
 
 
 class RuntimeCancelled(Exception):
@@ -73,15 +85,16 @@ class SystemBackend:
         if result.returncode or first != 'sing-box version ' + expected:
             raise ValueError('Runtime version check failed')
 
-    def active(self):
+    def active(self, *, deadline=None):
         return subprocess.run(['/usr/bin/systemctl', 'is-active', '--quiet', UNIT],
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5).returncode == 0
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              timeout=_probe_timeout(5, deadline)).returncode == 0
 
-    def matches(self, release):
-        if not self.active():
+    def matches(self, release, *, deadline=None):
+        if not self.active(deadline=deadline):
             return False
         value = subprocess.run(['/usr/bin/systemctl', 'show', '--property=MainPID', '--value', UNIT],
-                               capture_output=True, text=True, timeout=5)
+                               capture_output=True, text=True, timeout=_probe_timeout(5, deadline))
         pid = value.stdout.strip()
         if value.returncode or not pid.isdigit() or int(pid) <= 1:
             return False
@@ -90,7 +103,8 @@ class SystemBackend:
                 return False
             config = json.loads((release / 'config.json').read_text())
             for inbound in config.get('inbounds', []):
-                with socket.create_connection(('::1', inbound['listen_port']), timeout=1):
+                with socket.create_connection(('::1', inbound['listen_port']),
+                                              timeout=_probe_timeout(1, deadline)):
                     pass
             return True
         except (OSError, ValueError, KeyError):
@@ -110,10 +124,27 @@ class SystemBackend:
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(['/usr/bin/systemctl', 'restart', UNIT], check=True, timeout=30,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for _ in range(3):
-            time.sleep(0.5)
-            if not self.matches(release):
+        # Type=simple can report started before exec and listener readiness.
+        # Allow one bounded initial grace, then keep the existing stable checks.
+        deadline = time.monotonic() + STARTUP_HEALTH_TIMEOUT
+        healthy = 0
+        while healthy < HEALTH_SAMPLES:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 raise ValueError('Runtime failed health verification')
+            time.sleep(min(HEALTH_POLL_INTERVAL, remaining))
+            try:
+                matched = self.matches(release, deadline=deadline)
+            except subprocess.TimeoutExpired:
+                if healthy:
+                    raise ValueError('Runtime failed health verification') from None
+                continue
+            except TimeoutError:
+                raise ValueError('Runtime failed health verification') from None
+            if time.monotonic() >= deadline or (healthy and not matched):
+                raise ValueError('Runtime failed health verification')
+            if matched:
+                healthy += 1
 
 
 class RuntimeEngine:
@@ -160,10 +191,12 @@ class RuntimeEngine:
         version = json.loads((self.root / current / 'release.json').read_text())['version']
         return {'installed': True, 'running': running, 'version': version, 'status': 'running' if running else 'stopped'}
 
-    def finish(self, transaction):
+    def finish(self, transaction, guard=lambda: None):
         output = self.status()
         if not output['installed'] or output['running'] != transaction['running']:
             raise ValueError('Runtime lost health before commit')
+        # Health reads may also wait: fence immediately before commit mutations.
+        guard()
         self.set_pointer('previous', transaction['old'] if transaction['new'] != transaction['old'] else transaction['previous'])
         result = {'status': 'success', 'output': output, 'error': None}
         receipts = self.receipts()
@@ -291,7 +324,7 @@ class RuntimeEngine:
                     self.backend.activate(self.root / new)
             else:
                 self.backend.stop()
-            return self.finish(transaction)
+            return self.finish(transaction, guard)
         except Exception:
             # If the receipt is durable, commit has happened; do not undo a successful action.
             if job['id'] not in self.receipts():
