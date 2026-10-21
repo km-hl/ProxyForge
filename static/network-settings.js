@@ -171,7 +171,7 @@
         if (value.status === 'neutral') return '未启用网络配置或高级字段尚未完整验证';
         return '在本次静态检查范围内未发现配置问题';
     }
-    function diagnostics(target, value, failure) {
+    function diagnostics(target, value, failure, compact = false) {
         if (!target) return;
         target.replaceChildren();
         const status = document.createElement('p');
@@ -187,7 +187,13 @@
                 li.textContent = `${item.path ? item.path + '：' : ''}${item.message}`;
                 list.append(li);
             }
-            if (list.childElementCount) target.append(list);
+            if (list.childElementCount) {
+                if (compact && level !== 'errors') {
+                    const details = document.createElement('details'), title = document.createElement('summary');
+                    title.textContent = `${level === 'warnings' ? '配置建议' : '检查说明'}（${list.childElementCount} 项）`;
+                    details.append(title, list); target.append(details);
+                } else target.append(list);
+            }
         }
         const details = document.createElement('details'), title = document.createElement('summary');
         title.textContent = 'DNS 加密地址统计与默认值'; details.append(title);
@@ -392,12 +398,25 @@
         try {
             const result = await hooks.validate(dump(config));
             if (id !== overviewRevision) return;
-            diagnostics(target, result);
+            diagnostics(target, result, null, true);
             const effective = result.effective;
             if (effective) {
-                const summary = document.createElement('p'), h = hijackState(effective.tun['dns-hijack']);
+                const summary = document.createElement('dl'), h = hijackState(effective.tun['dns-hijack']);
                 const active = effective.dns.enable === true && effective.tun.enable === true;
-                summary.textContent = `DNS ${effective.dns.enable === true ? '已启用' : '未启用'} · ${effective.dns['enhanced-mode']} · TUN ${effective.tun.enable === true ? '已启用' : '未启用'} · Hijack ${h.udp ? 'UDP' : ''} ${h.tcp ? 'TCP' : ''}${active ? '（配置）' : '（未满足启用条件）'} · Strict Route ${effective.tun['strict-route'] === true && effective.tun['auto-route'] === true && effective.tun.enable === true ? '已配置' : '未启用'} · IPv6 DNS ${effective.dns.ipv6 === true ? '开启' : '关闭'}`;
+                summary.className = 'network-summary';
+                const values = [
+                    ['DNS', effective.dns.enable === true ? '已启用' : '未启用'],
+                    ['DNS 模式', effective.dns['enhanced-mode']],
+                    ['TUN', effective.tun.enable === true ? '已启用' : '未启用'],
+                    ['DNS 劫持', `${h.udp ? 'UDP' : ''} ${h.tcp ? 'TCP' : ''}${active ? '（配置）' : '（未满足启用条件）'}`],
+                    ['严格路由', effective.tun['strict-route'] === true && effective.tun['auto-route'] === true && effective.tun.enable === true ? '已配置' : '未启用'],
+                    ['IPv6 DNS', effective.dns.ipv6 === true ? '开启' : '关闭'],
+                ];
+                for (const [label, value] of values) {
+                    const item = document.createElement('div'), name = document.createElement('dt'), text = document.createElement('dd');
+                    name.textContent = label; text.textContent = value;
+                    item.append(name, text); summary.append(item);
+                }
                 target.prepend(summary);
             }
         } catch (e) { if (id === overviewRevision) diagnostics(target, null, `检查未完成：${e.message}`); }

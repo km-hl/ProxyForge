@@ -162,6 +162,9 @@ async def security_headers(request: Request, call_next):
         response.headers["Strict-Transport-Security"] = "max-age=31536000"
     if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
+    elif request.url.path == "/" or request.url.path.startswith("/static/"):
+        # Revalidate the console as a whole so deployments cannot mix old CSS/JS.
+        response.headers["Cache-Control"] = "no-cache"
     return response
 
 # ================= 核心读写逻辑 =================
