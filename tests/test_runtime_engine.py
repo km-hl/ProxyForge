@@ -153,6 +153,27 @@ class RuntimeEngineTest(unittest.TestCase):
         self.engine.recover()
         self.assertFalse((self.root / 'transaction.json').exists())
 
+    def test_lease_loss_during_activation_rolls_back_before_receipt_commit(self):
+        self.engine.apply(job())
+        before = self.engine.pointer('current')
+        change = job('singbox.restart')
+        lost = False
+        activate = self.backend.activate
+        def activate_then_lose_lease(release):
+            nonlocal lost
+            activate(release)
+            lost = True
+        def guard():
+            if lost:
+                raise RuntimeCancelled()
+        with patch.object(self.backend, 'activate', side_effect=activate_then_lose_lease):
+            with self.assertRaises(RuntimeCancelled):
+                self.engine.apply(change, guard)
+        self.assertEqual(self.engine.pointer('current'), before)
+        self.assertTrue(self.backend.matches(self.root / before))
+        self.assertNotIn(change['id'], self.engine.receipts())
+        self.assertFalse((self.root / 'transaction.json').exists())
+
     def test_changed_revision_and_outside_pointer_are_rejected(self):
         value = job()
         value['payload']['version'] = 'unreviewed'

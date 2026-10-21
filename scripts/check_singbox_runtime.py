@@ -3,6 +3,7 @@ import argparse
 import os
 from pathlib import Path
 import pwd
+import shlex
 import shutil
 import socket
 import subprocess
@@ -123,7 +124,15 @@ def main():
         subprocess.run(['useradd', '--system', '--no-create-home', '--shell', '/usr/sbin/nologin', 'proxyforge-singbox'], check=True)
         try:
             unit = (Path(__file__).resolve().parents[1] / 'agent/proxyforge-singbox.service').read_text()
-            unit_path.write_text(unit.replace('/var/lib/proxyforge-runtime', str(root)))
+            unit = unit.replace('/var/lib/proxyforge-runtime', str(root))
+            # Hold the real Type=simple child before exec until the first actual
+            # readiness miss. No long sleep or fake health result is required.
+            gate = root / 'exec-ready'
+            wrapper = root / 'gated-start'
+            wrapper.write_text('#!/bin/sh\nwhile [ ! -e ' + shlex.quote(str(gate))
+                               + ' ]; do /usr/bin/sleep 0.05; done\nexec "$@"\n')
+            wrapper.chmod(0o755)
+            unit_path.write_text(unit.replace('ExecStart=', 'ExecStart=' + str(wrapper) + ' ', 1))
             subprocess.run(['systemctl', 'daemon-reload'], check=True)
             def cached_download(directory, arch, guard):
                 guard()
@@ -131,7 +140,24 @@ def main():
             backend = SystemBackend()
             engine = RuntimeEngine(root, backend, 'amd64', cached_download)
             initial = job('singbox.install')
-            assert engine.apply(initial)['output']['running']
+            matches = backend.matches
+            samples = []
+            def observe_startup(release, **options):
+                matched = matches(release, **options)
+                if options.get('deadline') is not None:
+                    samples.append(matched)
+                    if not matched and not gate.exists():
+                        gate.write_text('ready\n')
+                return matched
+            backend.matches = observe_startup
+            try:
+                assert engine.apply(initial)['output']['running']
+                assert samples[0] is False and samples[-3:] == [True, True, True]
+            finally:
+                backend.matches = matches
+            unit_path.write_text(unit)
+            subprocess.run(['systemctl', 'daemon-reload'], check=True)
+            print('Startup grace: real pre-exec miss, exact release readiness and three stable checks passed')
             first = engine.pointer('current')
             engine.apply(initial)
             assert engine.pointer('current') == first
