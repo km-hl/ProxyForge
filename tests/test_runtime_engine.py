@@ -174,6 +174,29 @@ class RuntimeEngineTest(unittest.TestCase):
         self.assertNotIn(change['id'], self.engine.receipts())
         self.assertFalse((self.root / 'transaction.json').exists())
 
+    def test_lease_loss_during_final_health_read_cannot_commit_success(self):
+        self.engine.apply(job())
+        before = self.engine.pointer('current')
+        change = job('singbox.restart')
+        lost = False
+        matches = self.backend.matches
+        def health_then_lose_lease(release):
+            nonlocal lost
+            matched = matches(release)
+            if matched and release != self.root / before:
+                lost = True
+            return matched
+        def guard():
+            if lost:
+                raise RuntimeCancelled()
+        with patch.object(self.backend, 'matches', side_effect=health_then_lose_lease):
+            with self.assertRaises(RuntimeCancelled):
+                self.engine.apply(change, guard)
+        self.assertEqual(self.engine.pointer('current'), before)
+        self.assertTrue(self.backend.matches(self.root / before))
+        self.assertNotIn(change['id'], self.engine.receipts())
+        self.assertFalse((self.root / 'transaction.json').exists())
+
     def test_changed_revision_and_outside_pointer_are_rejected(self):
         value = job()
         value['payload']['version'] = 'unreviewed'

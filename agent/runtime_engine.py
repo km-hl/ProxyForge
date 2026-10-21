@@ -191,10 +191,12 @@ class RuntimeEngine:
         version = json.loads((self.root / current / 'release.json').read_text())['version']
         return {'installed': True, 'running': running, 'version': version, 'status': 'running' if running else 'stopped'}
 
-    def finish(self, transaction):
+    def finish(self, transaction, guard=lambda: None):
         output = self.status()
         if not output['installed'] or output['running'] != transaction['running']:
             raise ValueError('Runtime lost health before commit')
+        # Health reads may also wait: fence immediately before commit mutations.
+        guard()
         self.set_pointer('previous', transaction['old'] if transaction['new'] != transaction['old'] else transaction['previous'])
         result = {'status': 'success', 'output': output, 'error': None}
         receipts = self.receipts()
@@ -322,9 +324,7 @@ class RuntimeEngine:
                     self.backend.activate(self.root / new)
             else:
                 self.backend.stop()
-            # Readiness may take time; do not commit after the caller lost its lease.
-            guard()
-            return self.finish(transaction)
+            return self.finish(transaction, guard)
         except Exception:
             # If the receipt is durable, commit has happened; do not undo a successful action.
             if job['id'] not in self.receipts():
