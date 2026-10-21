@@ -20,9 +20,9 @@ import urllib.parse
 import urllib.request
 
 
-# Fixed MIT-licensed source, including the helper UID capability fix.
-SOURCE_COMMIT = "2b8ea5873c7932b12b092a4321e92429ecdc9c19"
-SOURCE_SHA256 = "71b96112d1d6ef167815de464b6d29602e46fe9910e0f770748a67da1e9c10f6"
+# Fixed reviewed source: MIT, helper UID capability, startup grace and lease commit guard.
+SOURCE_COMMIT = "9738da476fbc3bf6702d335a9b7424192902add5"
+SOURCE_SHA256 = "cce629df9a55d3237f43c0b30ed001d0bb2ba11dc846e9da33edb0262068891f"
 SOURCE_URL = "https://codeload.github.com/km-hl/ProxyForge/tar.gz/" + SOURCE_COMMIT
 PREFIX = "ProxyForge-" + SOURCE_COMMIT
 MAX_DOWNLOAD = 8 * 1024 * 1024
