@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>ProxyForge - 专属订阅中心</title>
     <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"
             integrity="sha384-+pxiN6T7yvpryuJmE1gM9PX7yQit15auDb+ZwwvJOd/4be2Cie5/IuVXgQb/S9du"
@@ -22,7 +22,7 @@
                 ProxyForge
             </h2>
             <p style="color: var(--text-secondary); margin-bottom: 20px; font-size: 0.9rem;">安全访问拦截系统</p>
-            <input type="password" id="token-input" placeholder="请输入管理密钥" autocomplete="current-password">
+            <input type="password" aria-label="管理密钥" id="token-input" placeholder="请输入管理密钥" autocomplete="current-password">
             <button class="btn btn-primary" id="login-btn">验证身份</button>
             <p id="login-error" style="color: var(--danger); font-size: 0.85rem; margin-top: 15px; display: none;">密码错误，请重试</p>
         </div>
@@ -45,35 +45,35 @@
         <!-- Main Container -->
         <div class="main-container">
             <!-- Sidebar -->
-            <nav class="sidebar" id="sidebar">
-                <div class="sidebar-item active" data-panel="panel-overview">
+            <nav class="sidebar" id="sidebar" aria-label="控制台导航">
+                <button type="button" class="sidebar-item active" data-panel="panel-overview" aria-controls="panel-overview" aria-current="page">
                     ⚙️ <span>概览设置</span>
-                </div>
-                <div class="sidebar-item" data-panel="panel-airports">
+                </button>
+                <button type="button" class="sidebar-item" data-panel="panel-airports" aria-controls="panel-airports">
                     ✈️ <span>机场订阅</span>
-                </div>
-                <div class="sidebar-item" data-panel="panel-groups">
+                </button>
+                <button type="button" class="sidebar-item" data-panel="panel-groups" aria-controls="panel-groups">
                     📁 <span>代理组</span>
-                </div>
-                <div class="sidebar-item" data-panel="panel-nodes">
+                </button>
+                <button type="button" class="sidebar-item" data-panel="panel-nodes" aria-controls="panel-nodes">
                     🌐 <span>自建节点</span>
-                </div>
-                <div class="sidebar-item" data-panel="panel-rules">
+                </button>
+                <button type="button" class="sidebar-item" data-panel="panel-rules" aria-controls="panel-rules">
                     📏 <span>路由规则</span>
-                </div>
-                <div class="sidebar-item" data-panel="panel-network">
+                </button>
+                <button type="button" class="sidebar-item" data-panel="panel-network" aria-controls="panel-network">
                     🛡️ <span>DNS 与网络</span>
-                </div>
-                <div class="sidebar-item" data-panel="panel-raw">
+                </button>
+                <button type="button" class="sidebar-item" data-panel="panel-raw" aria-controls="panel-raw">
                     🛠️ <span>底层配置兜底</span>
-                </div>
-                <div class="sidebar-item" data-panel="panel-agents">
+                </button>
+                <button type="button" class="sidebar-item" data-panel="panel-agents" aria-controls="panel-agents">
                     🖥️ <span>Agent 服务器</span>
-                </div>
-                <div class="sidebar-item" data-panel="panel-preview">
+                </button>
+                <button type="button" class="sidebar-item" data-panel="panel-preview" aria-controls="panel-preview">
                     👁️ <span>最终订阅预览</span>
-                </div>
-                <small class="hint" style="margin-top: auto; padding: 12px 20px;">
+                </button>
+                <small class="hint sidebar-attribution" style="margin-top: auto; padding: 12px 20px;">
                     图形：<a href="https://github.com/jdecked/twemoji" target="_blank" rel="noopener noreferrer">Twemoji</a>
                     · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>
                 </small>
@@ -97,8 +97,8 @@
                                     <option value="clash">Clash / Mihomo</option>
                                     <option value="egern">Egern</option>
                                 </select>
-                                <div style="display: flex; gap: 10px; margin-bottom: 8px;">
-                                    <input type="text" id="sub-name" placeholder="订阅名称 (例如: ProxyForge)" value="ProxyForge" style="width: 250px;">
+                                <div class="field-row" style="margin-bottom: 8px;">
+                                    <input type="text" id="sub-name" placeholder="订阅名称 (例如: ProxyForge)" value="ProxyForge">
                                     <input type="text" id="sub-link" readonly style="flex-grow: 1; background: #eef1ff; color: var(--primary); font-weight: 500;">
                                 </div>
                                 <span class="hint" id="sub-format-hint">请将此链接复制并添加到您的 Clash / Mihomo 客户端中。修改名称后链接会自动更新。</span>
@@ -111,7 +111,7 @@
                         <div class="form-grid">
                             <div class="form-group full-width">
                                 <label>客户端订阅密钥</label>
-                                <div style="display: flex; gap: 10px;">
+                                <div class="field-row">
                                     <input type="text" id="secret-token" minlength="16" autocomplete="new-password" style="flex: 1;">
                                     <button id="save-config-btn" class="btn btn-primary">保存订阅密钥</button>
                                 </div>
@@ -119,7 +119,7 @@
                             </div>
                             <div class="form-group full-width">
                                 <label>更换 Web 控制台管理密钥</label>
-                                <div style="display: flex; gap: 10px;">
+                                <div class="field-row">
                                     <input type="password" id="new-admin-token" minlength="16" autocomplete="new-password" placeholder="输入新的管理密钥" style="flex: 1;">
                                     <button id="save-admin-token-btn" class="btn btn-primary">更换管理密钥</button>
                                 </div>
@@ -139,7 +139,7 @@
                             <h2 style="font-size:1.2rem; font-weight:600;">✈️ 机场订阅管理</h2>
                             <span style="font-size:0.8rem; color:#888;">(勾选左侧选框可配合上方红色按钮批量删除)</span>
                         </div>
-                        <div style="margin-top:8px;">
+                        <div class="panel-actions" style="margin-top:8px;">
                             <button class="btn btn-sm" id="btn-refresh-airports" style="margin-right:15px; border:1px solid #ddd; background:#fff;">🔄 强制刷新</button>
                             <button class="btn btn-danger" id="btn-bulk-delete-airports">🗑️ 批量删除</button>
                             <button class="btn btn-primary" id="btn-add-airport" style="margin-left:8px;">➕ 添加机场</button>
@@ -158,7 +158,7 @@
                             <h2 style="font-size:1.2rem; font-weight:600;">📁 代理组管理 (Proxy Groups)</h2>
                             <span style="font-size:0.8rem; color:#888;">(勾选左侧选框可批量删除)</span>
                         </div>
-                        <div style="margin-top:8px;">
+                        <div class="panel-actions" style="margin-top:8px;">
                             <button class="btn btn-danger" id="btn-bulk-delete-groups">🗑️ 批量删除</button>
                             <button class="btn" id="btn-bulk-smart-filter" style="margin-left:8px;">✨ 批量智能筛选</button>
                             <button class="btn" id="btn-bulk-add-nodes" style="margin-left:8px;">📦 批量加入节点/组</button>
@@ -178,7 +178,7 @@
                             <h2 style="font-size:1.2rem; font-weight:600;">🌐 自建节点管理</h2>
                             <span style="font-size:0.8rem; color:#888;">手工节点可编辑；Agent 托管节点通过部署管理。</span>
                         </div>
-                        <div style="margin-top:8px;">
+                        <div class="panel-actions" style="margin-top:8px;">
                             <button class="btn btn-danger" id="btn-bulk-delete-nodes" style="margin-right:8px;">🗑️ 批量删除</button>
                             <button class="btn btn-primary" id="btn-add-node" style="margin-right:8px;">➕ 添加节点</button>
                             <button class="btn btn-success" id="btn-import-nodes">📥 YAML导入</button>
@@ -214,7 +214,7 @@
                                 <h2 style="font-size:1.1rem; font-weight:600; color:var(--primary);">📦 规则集 (Rule Providers)</h2>
                                 <span style="font-size:0.8rem; color:#888;">(用于动态下载和管理大批量远程分流规则)</span>
                             </div>
-                            <div style="margin-top:8px;">
+                            <div class="panel-actions" style="margin-top:8px;">
                                 <button class="btn btn-primary" id="btn-add-rule-provider">➕ 添加规则集</button>
                             </div>
                         </div>
@@ -233,7 +233,7 @@
                                 <h2 style="font-size:1.1rem; font-weight:600; color:var(--primary);">📏 分流规则 (Rules)</h2>
                                 <span style="font-size:0.8rem; color:#888;">(支持拖拽排序，从上到下按顺序匹配)</span>
                             </div>
-                            <div style="margin-top:8px;">
+                            <div class="panel-actions" style="margin-top:8px;">
                                 <button class="btn btn-danger" id="btn-bulk-delete-rules" style="margin-right:8px;">🗑️ 批量删除</button>
                                 <button class="btn btn-primary" id="btn-add-rule" style="margin-right:8px;">➕ 添加规则</button>
                                 <button class="btn btn-success" id="btn-import-rules">📥 批量导入</button>
@@ -258,7 +258,7 @@
                         <div class="form-group" style="flex: 1;">
                             <label>包含不被可视化界面直接支持的高级/冷门字段。修改这里会直接影响整个系统的运作，保存时会自动格式化可视化面板中已有的配置。</label>
                             <textarea id="rules-editor" spellcheck="false" style="min-height: 600px; font-family: monospace;"></textarea>
-                            <div style="margin-top: 10px; text-align: right;">
+                            <div class="panel-actions" style="margin-top: 10px; justify-content: flex-end;">
                                 <button id="discard-raw-btn" class="btn">放弃修改</button>
                                 <button id="template-history-btn" class="btn">历史版本</button>
                                 <button id="save-rules-btn" class="btn btn-primary">覆盖保存</button>
@@ -285,7 +285,7 @@
                         <div class="form-group" style="flex: 1;">
                             <label>这里显示的是经过后端处理、注入节点、智能聚合后，您的客户端最终拉取到的真实配置文件内容（只读）。</label>
                             <textarea id="preview-editor" readonly spellcheck="false" style="min-height: 600px; font-family: monospace; background-color: #f8f9fa; cursor: not-allowed;"></textarea>
-                            <div style="margin-top: 10px; text-align: right;">
+                            <div class="panel-actions" style="margin-top: 10px; justify-content: flex-end;">
                                 <button id="refresh-preview-btn" class="btn btn-success">刷新预览</button>
                             </div>
                         </div>
@@ -301,10 +301,10 @@
 
     <!-- Generic Modal Container -->
     <div class="modal-overlay" id="modal-overlay">
-        <div class="modal">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
             <div class="modal-header">
                 <span id="modal-title">标题</span>
-                <span class="modal-close" id="modal-close">&times;</span>
+                <button type="button" class="modal-close" id="modal-close" aria-label="关闭弹窗">&times;</button>
             </div>
             <div class="modal-body" id="modal-body">
                 <!-- Injected via JS -->

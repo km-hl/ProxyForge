@@ -264,9 +264,14 @@ fetch(`${API_BASE}/auth`, { credentials: 'same-origin' }).then(res => {
 // === Navigation ===
 sidebarItems.forEach(item => {
     item.addEventListener('click', () => {
-        sidebarItems.forEach(i => i.classList.remove('active'));
+        sidebarItems.forEach(i => {
+            i.classList.remove('active');
+            i.removeAttribute('aria-current');
+        });
         sectionPanels.forEach(p => p.classList.remove('active'));
         item.classList.add('active');
+        item.setAttribute('aria-current', 'page');
+        item.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         document.getElementById(item.getAttribute('data-panel')).classList.add('active');
     });
 });
