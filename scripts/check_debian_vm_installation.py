@@ -182,6 +182,41 @@ print(json.dumps({'os': platform.freedesktop_os_release(), 'machine': platform.m
 """
 
 
+def prepare_guest(ssh, *, budget=900):
+    """Keep security updates, venv and locked wheels inside one measured budget."""
+    if not 0 < budget <= 900:
+        raise ValueError('Guest preparation budget must be within 900 seconds')
+    steps = (
+        ('system-packages',
+         'sudo env DEBIAN_FRONTEND=noninteractive apt-get update && '
+         'sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends '
+         'python3-venv ca-certificates sudo'),
+        ('controller-venv', 'sudo python3 -m venv /opt/controller-test'),
+        ('locked-wheels',
+         'sudo /opt/controller-test/bin/python -m pip --isolated install '
+         '--index-url https://pypi.org/simple --require-hashes --only-binary=:all: '
+         '-r source/requirements-dev.txt && sudo /opt/controller-test/bin/python -m pip check'),
+    )
+    started = time.monotonic()
+    deadline = started + budget
+    for name, command in steps:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('Guest preparation deadline exceeded')
+        phase_started = time.monotonic()
+        print('Guest preparation phase started:', name, flush=True)
+        try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError('Guest preparation deadline exceeded')
+            subprocess.run([*ssh, command], check=True, timeout=remaining)
+        finally:
+            print('Guest preparation phase elapsed:', name, round(time.monotonic() - phase_started, 3),
+                  'total:', round(time.monotonic() - started, 3), flush=True)
+        if time.monotonic() > deadline:
+            raise TimeoutError('Guest preparation deadline exceeded')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--disposable-system-test', action='store_true', required=True)
@@ -222,14 +257,7 @@ def main():
                 verify_guest(json.loads(result), args.expected_debian, args.expected_arch, identity, platform.release())
                 subprocess.run([*ssh, 'mkdir -m 700 source && tar -xzf - -C source'],
                                input=(work / 'source.tar.gz').read_bytes(), check=True, timeout=90)
-                setup = ('sudo env DEBIAN_FRONTEND=noninteractive apt-get update && '
-                         'sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends '
-                         'python3-venv ca-certificates sudo && '
-                         'sudo python3 -m venv /opt/controller-test && '
-                         'sudo /opt/controller-test/bin/python -m pip --isolated install '
-                         '--index-url https://pypi.org/simple --require-hashes --only-binary=:all: '
-                         '-r source/requirements-dev.txt && sudo /opt/controller-test/bin/python -m pip check')
-                subprocess.run([*ssh, setup], check=True, timeout=600)
+                prepare_guest(ssh)
                 subprocess.run([*ssh, 'cd source && sudo env GITHUB_ACTIONS=true '
                                 '/opt/controller-test/bin/python scripts/check_agent_installation.py '
                                 '--disposable-system-test --check-helper --expected-debian ' + args.expected_debian
