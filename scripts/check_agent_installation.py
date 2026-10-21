@@ -37,6 +37,7 @@ import uvicorn
 
 from proxyforge.control.agent_api import attach_agent_routes
 from proxyforge.control.control_store import ControlStore
+from scripts.installation_diagnostics import helper_failure_summary
 
 HOST = 'proxyforge-install-ci.example'
 CA_PATH = Path('/usr/local/share/ca-certificates/proxyforge-install-ci.crt')
@@ -202,7 +203,7 @@ def check_helper(command, client, headers, agent_id):
     for action in ('singbox.install', 'singbox.restart', 'singbox.rollback', 'singbox.stop', 'singbox.start'):
         result = request(action)
         if result['status'] != 'success' or result['error'] is not None:
-            print(subprocess.check_output(['journalctl', '-u', 'proxyforge-runtime', '--no-pager'], text=True)[-4096:], flush=True)
+            helper_failure_summary(action, result)
             raise AssertionError('Real helper action failed: ' + action)
         state = result['output']
         assert state['installed'] and state['running'] == (action != 'singbox.stop')
