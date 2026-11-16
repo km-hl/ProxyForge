@@ -276,7 +276,7 @@ class Phase2GostDataPlaneTest(unittest.TestCase):
         fresh = ControlStore(self.root / 'fresh_v7.db')
         with fresh.connection() as db:
             self.assertEqual(db.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0], CURRENT_SCHEMA)
-            self.assertEqual(CURRENT_SCHEMA, 7)
+            self.assertEqual(CURRENT_SCHEMA, 8)
 
 
 if __name__ == '__main__':

@@ -154,7 +154,7 @@ class DeploymentStoreTest(unittest.TestCase):
 
     def test_v2_migration_and_atomic_failure(self):
         path = self.root / 'v2.db'
-        with patch('proxyforge.control.control_store.migrate_deployments'), patch('proxyforge.control.control_store.migrate_landings'), patch('proxyforge.control.control_store.migrate_chains'), patch('proxyforge.control.control_store.migrate_adoptions'), patch('proxyforge.control.control_store.migrate_phase2_dataplane'):
+        with patch('proxyforge.control.control_store.migrate_deployments'), patch('proxyforge.control.control_store.migrate_landings'), patch('proxyforge.control.control_store.migrate_chains'), patch('proxyforge.control.control_store.migrate_adoptions'), patch('proxyforge.control.control_store.migrate_phase2_dataplane'), patch('proxyforge.control.control_store.migrate_sub_users'):
             old = ControlStore(path)
         registered = old.register(old.issue_registration('old')['registration_token'], capable(), '')
         def broken(db):

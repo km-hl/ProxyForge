@@ -115,7 +115,7 @@ def package_metadata(files):
     # This contract describes the current installer, not a promise about future
     # or older Controllers. Changing support requires reviewing this verifier.
     expected = {
-        "python_minimum": "3.9", "controller_schema_baseline": 7,
+        "python_minimum": "3.9", "controller_schema_baseline": 8,
         "protocols": {name: 1 for name in ("inventory", "jobs", "runtime", "deployment", "landing", "chain", "gost")},
         "platforms": {"debian": ["12", "13"], "ubuntu": ["22.04", "24.04"]},
         "architectures": ["amd64", "arm64"], "service_manager": "systemd",

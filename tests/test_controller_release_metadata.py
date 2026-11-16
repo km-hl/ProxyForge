@@ -34,7 +34,7 @@ class ControllerReleaseMetadataTest(unittest.TestCase):
                 self.assertEqual(self.verify(manifest, version), manifest)
                 self.assertEqual(manifest['controller_release_version'], version)
                 self.assertEqual(manifest['agent_version'], '0.6.0')
-                self.assertEqual(manifest['compatibility']['controller_schema_baseline'], 7)
+                self.assertEqual(manifest['compatibility']['controller_schema_baseline'], 8)
                 self.assertEqual(manifest['controller_source_commit'], self.commit)
                 repeated = artifacts.manifest_for(self.commit, self.files, self.archive,
                                                  controller_release_version=version)

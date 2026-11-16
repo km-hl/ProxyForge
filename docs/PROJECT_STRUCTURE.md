@@ -43,7 +43,7 @@ ProxyForge/
 | `airports/sources.py` | AirportSource / AirportSnapshot 内部快照，旧格式投影与来源身份比较 |
 | `airports/parser.py` | 纯 YAML / Base64 订阅解析，格式失败回退，其他故障与控制信号向外传播 |
 | `control/agent_api.py`、`job_api.py`、`deployment_api.py`、`gost_api.py` | 管理/Agent 路由、鉴权衔接、转发/链/Best-Exit 与流量批次上传 schema |
-| `control/control_store.py` | SQLite 连接、migration（当前 schema 7）、注册、身份和心跳 |
+| `control/control_store.py` | SQLite 连接、migration（当前 schema 8）、注册、身份和心跳 |
 | `control/job_store.py` | 租约、重试、状态回报、探针/接管扫描入库与任务保留 |
 | `control/deployment_store.py`、`chain_store.py`、`gost_store.py` | 加密期望配置（落地、链路、go-gost 转发/多跳/Best-Exit）、流量计数器累加及并发/端口冲突控制 |
 | `control/managed_inventory.py` | 不读取秘密的节点与接管资产管理清单 |
@@ -52,13 +52,15 @@ ProxyForge/
 | `security/runtime_security.py` | 持久化凭据、管理密钥验证与会话 |
 | `security/api.py` | 登录/状态/退出与订阅密钥、管理密钥设置的管理 Router |
 | `security/network_security.py`、`auth_rate_limit.py` | 出站请求限制及登录限速 |
-| `subscription/api.py` | 默认/Egern 订阅、机场 provider 和 Egern 规则资源的公开 Router |
-| `subscription/links.py` | 分享链接解析，格式/字段失败返回 None，其他故障与控制信号向外传播 |
-| `subscription/nodes.py` | 来源命名、国旗名称、内部字段剥离及节点投影 |
+| `subscription/api.py` | Mihomo/Egern/Sing-box/Surge/URI 多目标订阅、`prefer_relay`、`/sub/{token}` 与 `Subscription-Userinfo` 公开 Router |
+| `subscription/users.py` | 多用户订阅 token、流量配额/到期管控与超限自动停用对应转发端口 |
+| `subscription/singbox.py`、`surge.py`、`egern.py` | Sing-box JSON、Surge INI 与 Egern 原生配置渲染 |
+| `subscription/links.py` | 分享链接双向解析与标准化 URI 导出（支持 `uri`/Base64 输出） |
+| `subscription/nodes.py` | 来源命名、国旗名称、`apply_prefer_relay` 中转重写与内部字段剥离 |
 | `subscription/validation.py` | 节点与完整 Mihomo 配置校验 |
-| `subscription/builder.py` | 由显式输入构建订阅/provider，清理生成结果中的引用 |
+| `subscription/builder.py` | 由显式输入构建订阅/provider，按 `allowed_groups` 裁剪与清理引用 |
 
-表中路径相对于 `proxyforge/`。数据库当前为 schema 7（含 `adopted_nodes` 与 Phase 2 `forward_rules`/`tunnel_chains`/`best_exit_groups`/`gost_agent_states`/`traffic_counters`/`traffic_batches`）；运行文件仍使用 `data/`。
+表中路径相对于 `proxyforge/`。数据库当前为 schema 8（含 `adopted_nodes`、Phase 2 数据面与 `sub_users`/`sub_user_counter_baselines`）；运行文件仍使用 `data/`。
 
 `agent/` 下新增 Phase 0–2 纯标准库多服务、落地接管与数据面组件：`runtime_engine.py`（`RuntimeCoordinator` 与跨服务端口冲突编排）、`acme_manager.py`（HTTP-01 / DNS-01 证书与脱敏凭据）、`caddy_manager.py`（站点伪装与 TLS 终止 `Caddyfile` 托管）、`caddy-release.json` / `proxyforge-caddy.service`、`adoption.py`（`sing-box` / `xray` / `caddy` 存量扫描与 `adopt_scan` 上报）、`gost_manager.py`（`go-gost` TCP/UDP 转发、多跳 Chain 与 `Best Exit` 防抖优选）、`traffic_collector.py`（loopback Prometheus `/metrics` 与 `nftables` 计数器防重启回退增量采集）以及 `gost-release.json` / `proxyforge-gost.service`。控制面新增 `/api/agents/deployments/generate-keys`、`/api/agents/deployments/protocols`、`/api/agent/adoptions`、`/api/agents/{agent_id}/adopt-scan`、`/api/agents/{agent_id}/forwards`、`/api/agents/tunnels/chains`、`/api/agents/{agent_id}/best-exits`、`/api/agent/best-exit`、`/api/agent/traffic` 与 `/api/agents/traffic/summary` 接口。
 

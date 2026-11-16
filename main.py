@@ -1,5 +1,6 @@
 from proxyforge.security.api import ConfigModel, AdminTokenModel, create_security_router
 from proxyforge.subscription.api import create_subscription_router
+from proxyforge.subscription.users import create_sub_user_router
 from proxyforge.templates.api import (
     TemplateModel, TemplateSaveModel, TemplateRestoreModel, ImportModel, create_template_router,
 )
@@ -394,6 +395,8 @@ subscription_api = create_subscription_router(
     provider_resolver=lambda *args, **kwargs: resolve_provider_nodes(*args, **kwargs),
     egern_builder=lambda *args: build_egern_config(*args),
     ca_bundle_reader=lambda: AIRPORT_CA_BUNDLE, logger=logger,
+    sub_users_resolver=lambda tok: control_store().authorize_sub_token(tok),
+    relay_resolver=lambda: control_store().list_active_relays(),
 )
 app.include_router(subscription_api.router)
 get_egern_rule_set = subscription_api.get_egern_rule_set
@@ -564,6 +567,7 @@ def control_store():
 
 
 attach_agent_routes(app, verify_api_token, control_store)
+app.include_router(create_sub_user_router(verify_management=verify_api_token, store_provider=control_store))
 
 # ================= 后台定时刷新任务 =================
 

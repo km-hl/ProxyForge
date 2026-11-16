@@ -698,10 +698,14 @@ class GostStoreMixin:
 
             now = self.clock()
             accepted = 0
+            touched_rules = set()
             for item in items:
                 rx_delta = max(0, int(item['rx_delta']))
                 tx_delta = max(0, int(item['tx_delta']))
                 total_delta = rx_delta + tx_delta
+                fwd_rule_id = item.get('forward_rule_id', '')
+                if fwd_rule_id:
+                    touched_rules.add(fwd_rule_id)
                 db.execute(
                     '''INSERT INTO traffic_counters(
                            id,agent_id,resource_key,forward_rule_id,rx_bytes,tx_bytes,total_bytes,
@@ -717,7 +721,7 @@ class GostStoreMixin:
                            last_epoch=excluded.last_epoch,
                            updated_at=excluded.updated_at''',
                     (
-                        uuid.uuid4().hex, agent_id, item['resource_key'], item.get('forward_rule_id', ''),
+                        uuid.uuid4().hex, agent_id, item['resource_key'], fwd_rule_id,
                         rx_delta, tx_delta, total_delta,
                         max(0, int(item['raw_rx'])), max(0, int(item['raw_tx'])), item.get('epoch', ''), now,
                     ),
@@ -733,6 +737,8 @@ class GostStoreMixin:
                    )''',
                 (agent_id, agent_id),
             )
+            if touched_rules and hasattr(self, '_sync_user_forward_usage'):
+                self._sync_user_forward_usage(db, touched_rules)
             return {'status': 'ok', 'deduplicated': False, 'accepted': accepted}
 
     def get_agent_traffic(self, agent_id):

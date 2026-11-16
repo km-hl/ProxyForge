@@ -15,8 +15,9 @@ from proxyforge.control.deployment_store import DeploymentStoreMixin, migrate_de
 from proxyforge.control.chain_store import ChainStoreMixin, migrate_chains
 from proxyforge.control.managed_inventory import ManagedInventoryMixin, migrate_adoptions
 from proxyforge.control.gost_store import GostStoreMixin, migrate_phase2_dataplane
+from proxyforge.subscription.users import SubUserStoreMixin, migrate_sub_users
 
-CURRENT_SCHEMA = 7
+CURRENT_SCHEMA = 8
 PROTOCOL_VERSION = 1
 ONLINE_SECONDS = 90
 OFFLINE_SECONDS = 300
@@ -47,7 +48,7 @@ def online_status(last_seen, now):
     return "online" if age < ONLINE_SECONDS else "degraded" if age < OFFLINE_SECONDS else "offline"
 
 
-class ControlStore(GostStoreMixin, ManagedInventoryMixin, ChainStoreMixin, DeploymentStoreMixin, JobStoreMixin):
+class ControlStore(SubUserStoreMixin, GostStoreMixin, ManagedInventoryMixin, ChainStoreMixin, DeploymentStoreMixin, JobStoreMixin):
     def __init__(self, path, clock=time.time):
         self.path = Path(path).resolve()
         self.clock = clock
@@ -94,6 +95,8 @@ class ControlStore(GostStoreMixin, ManagedInventoryMixin, ChainStoreMixin, Deplo
                 migrate_adoptions(db)
             if version < 7:
                 migrate_phase2_dataplane(db)
+            if version < 8:
+                migrate_sub_users(db)
             db.commit()
 
     @contextlib.contextmanager

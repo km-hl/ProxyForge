@@ -1,5 +1,7 @@
 """Pure source naming and node projection helpers."""
-from typing import Any, Dict, List
+import copy
+import ipaddress
+from typing import Any, Dict, List, Tuple
 import urllib.parse
 
 CUSTOM_NODES_SOURCE = "_custom_nodes_"
@@ -86,3 +88,95 @@ def decorate_proxy_names(proxies: List[Dict[str, Any]]):
         cleaned_proxy["name"] = output_name
         output.append(cleaned_proxy)
     return output, name_map
+
+
+def _normalize_host_port(host: Any, port: Any) -> Tuple[str, int]:
+    text = str(host or "").strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1]
+    try:
+        text = str(ipaddress.ip_address(text))
+    except ValueError:
+        text = text.lower()
+    try:
+        port_num = int(port)
+    except (TypeError, ValueError):
+        port_num = 0
+    return text, port_num
+
+
+def _split_addr_str(addr: str) -> Tuple[str, int]:
+    text = str(addr or "").strip()
+    if text.startswith("[") and "]:" in text:
+        host, port_s = text[1:].split("]:", 1)
+        return _normalize_host_port(host, port_s)
+    if text.count(":") == 1:
+        host, port_s = text.rsplit(":", 1)
+        return _normalize_host_port(host, port_s)
+    return _normalize_host_port(text, 0)
+
+
+def apply_prefer_relay(
+    proxies: List[Dict[str, Any]],
+    relays: List[Dict[str, Any]],
+    *,
+    prefer_relay: bool = False,
+    include_direct: bool = False,
+) -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]]:
+    """Rewrite backend nodes matching active relays to dial relay entry host/port."""
+    if not prefer_relay or not relays:
+        return [copy.deepcopy(p) for p in proxies if isinstance(p, dict)], {}
+
+    by_target: Dict[Tuple[str, int], List[Dict[str, Any]]] = {}
+    for relay in relays:
+        if not isinstance(relay, dict):
+            continue
+        listen_host = str(relay.get("listen_host") or "").strip()
+        try:
+            listen_port = int(relay.get("listen_port") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not listen_host or not 1 <= listen_port <= 65535:
+            continue
+        for target in relay.get("targets") or []:
+            addr = target.get("addr") if isinstance(target, dict) else target
+            key = _split_addr_str(str(addr or ""))
+            if key[0] and 1 <= key[1] <= 65535:
+                by_target.setdefault(key, []).append(relay)
+
+    if not by_target:
+        return [copy.deepcopy(p) for p in proxies if isinstance(p, dict)], {}
+
+    rewritten: List[Dict[str, Any]] = []
+    name_expansions: Dict[str, List[str]] = {}
+    for proxy in proxies:
+        if not isinstance(proxy, dict):
+            continue
+        key = _normalize_host_port(proxy.get("server"), proxy.get("port"))
+        matched = by_target.get(key, [])
+        if not matched:
+            rewritten.append(copy.deepcopy(proxy))
+            continue
+
+        orig_name = str(proxy.get("name") or "")
+        clones_for_name: List[str] = []
+        if include_direct:
+            rewritten.append(copy.deepcopy(proxy))
+            if orig_name:
+                clones_for_name.append(orig_name)
+
+        multiple = len(matched) > 1 or include_direct
+        for relay in matched:
+            clone = copy.deepcopy(proxy)
+            clone["server"] = str(relay["listen_host"]).strip()
+            clone["port"] = int(relay["listen_port"])
+            if orig_name:
+                relay_label = str(relay.get("name") or relay["listen_port"])
+                new_name = f"{orig_name} [中转 {relay_label}]" if multiple else orig_name
+                clone["name"] = new_name
+                clone["_relay_source_name"] = orig_name
+                clones_for_name.append(new_name)
+            rewritten.append(clone)
+        if orig_name and clones_for_name:
+            name_expansions[orig_name] = clones_for_name
+    return rewritten, name_expansions

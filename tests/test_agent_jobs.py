@@ -165,7 +165,8 @@ class QueueTest(unittest.TestCase):
 
     def test_v1_migration_preserves_credentials_and_inventory(self):
         with self.store.connection() as db:
-            for tbl in ('traffic_batches', 'traffic_counters', 'gost_agent_states',
+            for tbl in ('sub_user_counter_baselines', 'sub_users',
+                        'traffic_batches', 'traffic_counters', 'gost_agent_states',
                         'forward_rules', 'best_exit_groups', 'tunnel_chains',
                         'adopted_nodes'):
                 db.execute('DROP TABLE IF EXISTS ' + tbl)
@@ -182,7 +183,8 @@ class QueueTest(unittest.TestCase):
 
     def test_migration_failure_rolls_back_schema(self):
         with self.store.connection() as db:
-            for tbl in ('traffic_batches', 'traffic_counters', 'gost_agent_states',
+            for tbl in ('sub_user_counter_baselines', 'sub_users',
+                        'traffic_batches', 'traffic_counters', 'gost_agent_states',
                         'forward_rules', 'best_exit_groups', 'tunnel_chains',
                         'adopted_nodes'):
                 db.execute('DROP TABLE IF EXISTS ' + tbl)

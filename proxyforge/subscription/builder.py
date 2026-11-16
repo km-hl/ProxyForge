@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 
 import yaml
 
-from .nodes import CUSTOM_NODES_SOURCE, get_airport_name, decorate_proxy_names
+from .nodes import CUSTOM_NODES_SOURCE, apply_prefer_relay, get_airport_name, decorate_proxy_names
 from .validation import ConfigValidationError, assert_valid_mihomo_config
 
 
@@ -150,6 +150,50 @@ def cleanup_proxy_group_references(
     return result
 
 
+def filter_config_by_groups(config: Dict[str, Any], allowed_groups: List[str]) -> Dict[str, Any]:
+    """Restrict proxy-groups and rules to groups authorized for a specific subscription user."""
+    if not allowed_groups:
+        return config
+    allowed = {str(g).strip() for g in allowed_groups if str(g).strip()}
+    if not allowed:
+        return config
+    groups = config.get("proxy-groups", [])
+    if isinstance(groups, list):
+        group_map = {g.get("name"): g for g in groups if isinstance(g, dict) and g.get("name")}
+        expanded = set(allowed) & set(group_map)
+        # Keep nested referenced groups transitively so group references remain valid.
+        queue = list(expanded)
+        while queue:
+            cur = queue.pop(0)
+            for ref in group_map[cur].get("proxies") or []:
+                if ref in group_map and ref not in expanded:
+                    expanded.add(ref)
+                    queue.append(ref)
+        kept_groups = [g for g in groups if isinstance(g, dict) and g.get("name") in expanded]
+        config["proxy-groups"] = kept_groups
+        valid_targets = {"DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE"} | expanded
+        rules = config.get("rules", [])
+        if isinstance(rules, list):
+            kept_rules = []
+            for rule in rules:
+                if not isinstance(rule, str):
+                    continue
+                parts = rule.split(",")
+                kind = parts[0].strip().upper() if parts else ""
+                idx = 1 if kind == "MATCH" else 2
+                if len(parts) > idx:
+                    target = parts[idx].strip()
+                    if target not in valid_targets:
+                        if kind == "MATCH":
+                            parts[idx] = next(iter(expanded), "DIRECT")
+                            kept_rules.append(",".join(parts))
+                        continue
+                kept_rules.append(rule)
+            config["rules"] = kept_rules
+    cleanup_proxy_group_references(config)
+    return config
+
+
 def build_subscription_config(
     template_config: Dict[str, Any],
     custom_proxies: List[Dict[str, Any]],
@@ -157,25 +201,41 @@ def build_subscription_config(
     base_url: str,
     token: str,
     managed_references=(),
+    *,
+    relays: Any = None,
+    prefer_relay: bool = False,
+    allowed_groups: Any = None,
 ) -> Dict[str, Any]:
     config = copy.deepcopy(template_config)
     if not isinstance(config, dict):
         raise ConfigValidationError(["模板根节点必须是 YAML 对象"])
 
+    effective_custom, relay_expansions = apply_prefer_relay(
+        custom_proxies,
+        list(relays or []),
+        prefer_relay=prefer_relay,
+    )
+    valid_names_raw = [
+        proxy.get("name") for proxy in custom_proxies
+        if isinstance(proxy, dict) and proxy.get("name")
+    ] + [
+        proxy.get("name") for proxy in effective_custom
+        if isinstance(proxy, dict) and proxy.get("name")
+    ] + list(managed_references)
     unpublished_managed = set(managed_references) - {
-        proxy.get('name') for proxy in custom_proxies if isinstance(proxy, dict)}
+        proxy.get('name') for proxy in custom_proxies if isinstance(proxy, dict)} - set(relay_expansions)
     cleanup_proxy_group_references(
         config,
-        valid_proxy_names=[
-            proxy.get("name") for proxy in custom_proxies
-            if isinstance(proxy, dict) and proxy.get("name")
-        ] + list(managed_references),
+        valid_proxy_names=valid_names_raw,
         valid_provider_names=[
             get_airport_name(item, index) for index, item in enumerate(airports)
         ],
     )
 
-    output_proxies, proxy_name_map = decorate_proxy_names(custom_proxies)
+    output_proxies, proxy_name_map = decorate_proxy_names(effective_custom)
+    for orig_name, cloned_names in relay_expansions.items():
+        if orig_name not in proxy_name_map and cloned_names:
+            proxy_name_map[orig_name] = proxy_name_map.get(cloned_names[0], cloned_names[0])
     # Resolve withheld managed targets only in this output, never in the saved template.
     # Falling back to DIRECT here would bypass the user's selected proxy route.
     proxy_name_map.update({name: 'REJECT' for name in unpublished_managed})
@@ -192,7 +252,7 @@ def build_subscription_config(
         config.pop("proxy-providers", None)
 
     all_airport_provider_names = list(airport_providers)
-    custom_names = {proxy.get("name") for proxy in custom_proxies if isinstance(proxy, dict)}
+    custom_names = {proxy.get("name") for proxy in effective_custom if isinstance(proxy, dict)}
     groups = config.get("proxy-groups", [])
     if isinstance(groups, list):
         for group in groups:
@@ -227,9 +287,15 @@ def build_subscription_config(
 
             final_refs = []
             for ref in existing_refs:
-                mapped_ref = proxy_name_map.get(ref, ref)
-                if mapped_ref not in final_refs:
-                    final_refs.append(mapped_ref)
+                if ref in relay_expansions:
+                    for cloned in relay_expansions[ref]:
+                        mapped_clone = proxy_name_map.get(cloned, cloned)
+                        if mapped_clone not in final_refs:
+                            final_refs.append(mapped_clone)
+                else:
+                    mapped_ref = proxy_name_map.get(ref, ref)
+                    if mapped_ref not in final_refs:
+                        final_refs.append(mapped_ref)
 
             if include_custom:
                 compiled_filter = None
@@ -240,11 +306,12 @@ def build_subscription_config(
                         raise ConfigValidationError([
                             f"代理组 [{group.get('name', '未命名')}] 的 filter 正则无效: {e}"
                         ])
-                for proxy in custom_proxies:
+                for proxy in effective_custom:
                     original_name = proxy.get("name") if isinstance(proxy, dict) else None
                     if not original_name or original_name not in custom_names:
                         continue
-                    if compiled_filter and not compiled_filter.search(str(original_name)):
+                    match_name = proxy.get("_relay_source_name", original_name)
+                    if compiled_filter and not (compiled_filter.search(str(original_name)) or compiled_filter.search(str(match_name))):
                         continue
                     output_name = proxy_name_map.get(original_name, original_name)
                     if output_name not in final_refs:
@@ -287,6 +354,9 @@ def build_subscription_config(
                     parts[target_index] = parts[target_index].replace(target, proxy_name_map[target], 1)
             rewritten_rules.append(",".join(parts))
         config["rules"] = rewritten_rules
+
+    if allowed_groups:
+        filter_config_by_groups(config, list(allowed_groups))
 
     assert_valid_mihomo_config(config)
     # Verify that the emitted YAML survives a dump/load round trip as the final

@@ -120,7 +120,7 @@ def check():
     with store.connection() as db:
         require(db.execute('PRAGMA integrity_check').fetchone()[0] == 'ok', 'SQLite corruption')
         require(not db.execute('PRAGMA foreign_key_check').fetchall(), 'SQLite foreign key violation')
-        require(db.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0] == 7,
+        require(db.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0] == 8,
                 'Unexpected schema version')
     require(TemplateStore(DATA / 'template.yaml').list_history() == manifest['history'],
             'Template history changed')

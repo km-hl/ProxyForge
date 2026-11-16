@@ -440,3 +440,169 @@ def parse_share_link(link: str) -> dict:
         except (ValueError, TypeError):
             return None
     return None
+
+
+def _uri_host(server: str) -> str:
+    text = str(server or "").strip()
+    if ":" in text and not text.startswith("["):
+        return f"[{text}]"
+    return text
+
+
+def render_proxy_uri(proxy: dict) -> str:
+    """Serialize a normalized Mihomo proxy dictionary into a standard share URI."""
+    if not isinstance(proxy, dict):
+        return ""
+    kind = str(proxy.get("type") or "").lower()
+    name = urllib.parse.quote(str(proxy.get("name") or "node"), safe="")
+    server = _uri_host(str(proxy.get("server") or ""))
+    try:
+        port = int(proxy.get("port") or 0)
+    except (TypeError, ValueError):
+        return ""
+    if not server or not 1 <= port <= 65535:
+        return ""
+
+    if kind == "ss":
+        userinfo = f"{proxy.get('cipher', '')}:{proxy.get('password', '')}".encode("utf-8")
+        encoded = base64.urlsafe_b64encode(userinfo).decode("ascii").rstrip("=")
+        return f"ss://{encoded}@{server}:{port}#{name}"
+
+    if kind == "vless":
+        uuid_val = urllib.parse.quote(str(proxy.get("uuid") or ""), safe="")
+        params = {}
+        reality = proxy.get("reality-opts")
+        if isinstance(reality, dict) and reality.get("public-key"):
+            params["security"] = "reality"
+            params["pbk"] = reality["public-key"]
+            if reality.get("short-id"):
+                params["sid"] = reality["short-id"]
+            if reality.get("spider-x"):
+                params["spx"] = reality["spider-x"]
+        else:
+            params["security"] = "tls" if proxy.get("tls") else "none"
+        if proxy.get("servername") or proxy.get("sni"):
+            params["sni"] = proxy.get("servername") or proxy.get("sni")
+        if proxy.get("client-fingerprint") or proxy.get("fingerprint"):
+            params["fp"] = proxy.get("client-fingerprint") or proxy.get("fingerprint")
+        if proxy.get("flow"):
+            params["flow"] = proxy["flow"]
+        network = str(proxy.get("network") or "tcp").lower()
+        params["type"] = network
+        if network == "ws":
+            opts = proxy.get("ws-opts") or {}
+            params["path"] = opts.get("path", "/")
+            host = (opts.get("headers") or {}).get("Host")
+            if host:
+                params["host"] = host
+        elif network == "grpc":
+            svc = (proxy.get("grpc-opts") or {}).get("grpc-service-name")
+            if svc:
+                params["serviceName"] = svc
+        if proxy.get("skip-cert-verify"):
+            params["allowInsecure"] = "1"
+        qs = urllib.parse.urlencode(params)
+        return f"vless://{uuid_val}@{server}:{port}?{qs}#{name}"
+
+    if kind == "trojan":
+        pwd = urllib.parse.quote(str(proxy.get("password") or ""), safe="")
+        params = {}
+        if proxy.get("sni") or proxy.get("servername"):
+            params["sni"] = proxy.get("sni") or proxy.get("servername")
+        network = str(proxy.get("network") or "tcp").lower()
+        if network != "tcp":
+            params["type"] = network
+        if network == "ws":
+            opts = proxy.get("ws-opts") or {}
+            params["path"] = opts.get("path", "/")
+            host = (opts.get("headers") or {}).get("Host")
+            if host:
+                params["host"] = host
+        if proxy.get("skip-cert-verify"):
+            params["allowInsecure"] = "1"
+        qs = f"?{urllib.parse.urlencode(params)}" if params else ""
+        return f"trojan://{pwd}@{server}:{port}{qs}#{name}"
+
+    if kind == "hysteria2":
+        pwd = urllib.parse.quote(str(proxy.get("password") or ""), safe="")
+        params = {}
+        if proxy.get("sni"):
+            params["sni"] = proxy["sni"]
+        if proxy.get("obfs"):
+            params["obfs"] = proxy["obfs"]
+        if proxy.get("obfs-password"):
+            params["obfs-password"] = proxy["obfs-password"]
+        if proxy.get("skip-cert-verify"):
+            params["insecure"] = "1"
+        port_part = str(proxy["ports"]) if proxy.get("ports") else str(port)
+        qs = f"?{urllib.parse.urlencode(params)}" if params else ""
+        return f"hysteria2://{pwd}@{server}:{port_part}{qs}#{name}"
+
+    if kind == "vmess":
+        payload = {
+            "v": "2",
+            "ps": str(proxy.get("name") or "vmess"),
+            "add": str(proxy.get("server") or ""),
+            "port": port,
+            "id": str(proxy.get("uuid") or ""),
+            "aid": int(proxy.get("alterId") or 0),
+            "scy": str(proxy.get("cipher") or "auto"),
+            "net": str(proxy.get("network") or "tcp"),
+            "tls": "tls" if proxy.get("tls") else "",
+        }
+        if proxy.get("servername") or proxy.get("sni"):
+            payload["sni"] = proxy.get("servername") or proxy.get("sni")
+        if payload["net"] == "ws":
+            opts = proxy.get("ws-opts") or {}
+            payload["path"] = opts.get("path", "/")
+            payload["host"] = (opts.get("headers") or {}).get("Host", "")
+        raw_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        return "vmess://" + base64.b64encode(raw_json).decode("ascii")
+
+    if kind == "tuic":
+        auth = f"{urllib.parse.quote(str(proxy.get('uuid') or ''), safe='')}:{urllib.parse.quote(str(proxy.get('password') or ''), safe='')}"
+        params = {}
+        if proxy.get("sni"):
+            params["sni"] = proxy["sni"]
+        if proxy.get("congestion-controller"):
+            params["congestion_control"] = proxy["congestion-controller"]
+        if proxy.get("skip-cert-verify"):
+            params["allow_insecure"] = "1"
+        qs = f"?{urllib.parse.urlencode(params)}" if params else ""
+        return f"tuic://{auth}@{server}:{port}{qs}#{name}"
+
+    if kind == "anytls":
+        pwd = urllib.parse.quote(str(proxy.get("password") or ""), safe="")
+        params = {}
+        if proxy.get("sni"):
+            params["sni"] = proxy["sni"]
+        if proxy.get("skip-cert-verify"):
+            params["insecure"] = "1"
+        qs = f"?{urllib.parse.urlencode(params)}" if params else ""
+        return f"anytls://{pwd}@{server}:{port}{qs}#{name}"
+
+    if kind in ("socks5", "socks", "http"):
+        scheme = "socks5" if kind in ("socks5", "socks") else ("https" if proxy.get("tls") else "http")
+        if proxy.get("username") or proxy.get("password"):
+            auth = f"{urllib.parse.quote(str(proxy.get('username') or ''), safe='')}:{urllib.parse.quote(str(proxy.get('password') or ''), safe='')}@"
+        else:
+            auth = ""
+        return f"{scheme}://{auth}{server}:{port}#{name}"
+
+    return ""
+
+
+def render_uri_subscription(proxies: list, *, encode_base64: bool = True) -> tuple:
+    """Render proxy list to standard Base64 or plain URI lines, returning `(text, skipped)`."""
+    uris = []
+    skipped = 0
+    for proxy in proxies:
+        uri = render_proxy_uri(proxy)
+        if uri:
+            uris.append(uri)
+        else:
+            skipped += 1
+    plain = "\n".join(uris)
+    if encode_base64:
+        return base64.b64encode(plain.encode("utf-8")).decode("ascii"), skipped
+    return (plain + "\n" if plain else ""), skipped

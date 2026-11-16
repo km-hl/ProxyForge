@@ -74,7 +74,7 @@ class ReleasePreparationTest(unittest.TestCase):
         self.assertEqual(metadata['controller_version'], VERSION)
         self.assertEqual(metadata['source_commit'], self.commit)
         self.assertEqual(metadata['agent_version'], '0.6.0')
-        self.assertEqual(metadata['compatibility']['controller_schema_baseline'], 7)
+        self.assertEqual(metadata['compatibility']['controller_schema_baseline'], 8)
         self.assertEqual((self.output / 'RELEASE_NOTES.zh-CN.md').read_bytes(), notes())
         self.assertEqual(len(list(self.output.iterdir())), 5)
         with self.assertRaises(FileExistsError):
