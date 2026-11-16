@@ -9,6 +9,7 @@ let state = {
     airportsInfo: [],
     nodes: [],
     allProxies: [], // Contains all custom and airport proxies
+    subUsers: [],
     templateRaw: '',
     templateObj: {}
 };
@@ -37,6 +38,9 @@ let modalConfirmAction = null;
 const subLink = document.getElementById('sub-link');
 const copyBtn = document.getElementById('copy-btn');
 const subscriptionFormat = document.getElementById('sub-format');
+const preferRelayCheck = document.getElementById('sub-prefer-relay');
+const subQrBtn = document.getElementById('sub-qr-btn');
+const subFormatHint = document.getElementById('sub-format-hint');
 const secretToken = document.getElementById('secret-token');
 const saveConfigBtn = document.getElementById('save-config-btn');
 const newAdminToken = document.getElementById('new-admin-token');
@@ -132,6 +136,63 @@ function showToast(msg, type = 'success') {
     toast.textContent = msg;
     toast.className = `toast toast-${type} active`;
     setTimeout(() => { toast.classList.remove('active'); }, 3000);
+}
+
+async function copyTextToClipboard(text, successMsg = '链接已复制到剪贴板') {
+    const value = String(text || '');
+    if (!value) { showToast('没有可复制的内容', 'warning'); return; }
+    try {
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            await navigator.clipboard.writeText(value);
+            showToast(successMsg);
+            return;
+        }
+    } catch {}
+    const helper = document.createElement('textarea');
+    helper.value = value;
+    helper.setAttribute('readonly', '');
+    helper.style.position = 'fixed';
+    helper.style.opacity = '0';
+    document.body.appendChild(helper);
+    helper.select();
+    try {
+        document.execCommand('copy');
+        showToast(successMsg);
+    } finally {
+        helper.remove();
+    }
+}
+
+function openSubscriptionQrModal(url, label = '订阅二维码') {
+    openModal('订阅二维码', '<div class="qr-preview-box" id="qr-preview-box"></div>', closeModal);
+    modalConfirm.textContent = '关闭';
+    const box = document.getElementById('qr-preview-box');
+    const titleEl = document.createElement('div');
+    titleEl.style.fontWeight = '600';
+    titleEl.textContent = label || '订阅二维码';
+    box.appendChild(titleEl);
+    const svgWrap = document.createElement('div');
+    try {
+        svgWrap.innerHTML = ProxyForgeSubscription.renderQrSvg(url);
+    } catch (e) {
+        const msg = document.createElement('p');
+        msg.className = 'hint';
+        msg.textContent = `无法生成二维码（${e.message || '内容过长'}），请直接复制下方链接。`;
+        svgWrap.appendChild(msg);
+    }
+    box.appendChild(svgWrap);
+    const urlInput = document.createElement('input');
+    urlInput.type = 'text';
+    urlInput.readOnly = true;
+    urlInput.value = url;
+    urlInput.style.width = '100%';
+    box.appendChild(urlInput);
+    const qrCopyBtn = document.createElement('button');
+    qrCopyBtn.type = 'button';
+    qrCopyBtn.className = 'btn btn-primary btn-sm';
+    qrCopyBtn.textContent = '复制订阅链接';
+    qrCopyBtn.addEventListener('click', () => copyTextToClipboard(url, '链接已复制到剪贴板'));
+    box.appendChild(qrCopyBtn);
 }
 
 // === Modal Logic ===
@@ -277,18 +338,44 @@ sidebarItems.forEach(item => {
 });
 
 // === Data Loading & Rendering ===
+const SUB_FORMAT_HINTS = {
+    clash: '请将此链接复制并添加到您的 Clash / Mihomo 客户端中。修改名称或中转开关后链接会自动更新。',
+    egern: 'Egern 原生配置：保留节点、代理组和分流。跳过不兼容节点并在预览中提示；空组使用 REJECT。DNS/TUN 请在 Egern 中设置。',
+    singbox: 'Sing-box 客户端 JSON：自动渲染 outbounds、route 与 DNS；兼容原生 Sing-box / v2rayN / Nekobox。',
+    surge: 'Surge INI 配置：输出 [Proxy] / [Proxy Group] / [Rule] 段落，可直接导入 Surge / Surfboard。',
+    uri: '通用 URI / Base64：输出兼容节点的标准分享链接（Base64 编码），适合 v2rayN / Shadowrocket 等轻量客户端。',
+};
+
+function subscriptionOptions() {
+    return { preferRelay: Boolean(preferRelayCheck && preferRelayCheck.checked) };
+}
+
 function updateSubLink() {
-    subLink.value = ProxyForgeSubscription.buildUrl(window.location.origin,
-        state.config.SUBSCRIPTION_TOKEN, document.getElementById('sub-name').value, subscriptionFormat.value);
-    document.getElementById('sub-format-hint').textContent = subscriptionFormat.value === 'egern'
-        ? 'Egern 原生配置：保留节点、代理组和分流。跳过不兼容节点并在预览中提示；空组使用 REJECT。DNS/TUN 请在 Egern 中设置。'
-        : '请将此链接复制并添加到您的 Clash / Mihomo 客户端中。修改名称后链接会自动更新。';
+    subLink.value = ProxyForgeSubscription.buildUrl(
+        window.location.origin,
+        state.config.SUBSCRIPTION_TOKEN,
+        document.getElementById('sub-name').value,
+        subscriptionFormat.value,
+        subscriptionOptions(),
+    );
+    if (subFormatHint) subFormatHint.textContent = SUB_FORMAT_HINTS[subscriptionFormat.value] || SUB_FORMAT_HINTS.clash;
 }
 document.getElementById('sub-name').addEventListener('input', updateSubLink);
 subscriptionFormat.addEventListener('change', () => {
     updateSubLink();
     if (document.getElementById('panel-preview').classList.contains('active')) loadFinalPreview();
 });
+if (preferRelayCheck) {
+    preferRelayCheck.addEventListener('change', () => {
+        updateSubLink();
+        if (document.getElementById('panel-preview').classList.contains('active')) loadFinalPreview();
+    });
+}
+if (subQrBtn) {
+    subQrBtn.addEventListener('click', () => {
+        openSubscriptionQrModal(subLink.value, document.getElementById('sub-name').value || 'ProxyForge');
+    });
+}
 
 async function loadData() {
     try {
@@ -310,6 +397,7 @@ async function loadData() {
         renderAirports();
         renderNodes();
         if (typeof ProxyForgeManagedNodes !== 'undefined') ProxyForgeManagedNodes.refresh();
+        loadSubUsers();
         // Reauthentication must not erase an unsaved draft.
         if (!rawIsDirty() && !ProxyForgeNetwork.isDirty()) installTemplate(await readTemplate());
 
@@ -323,6 +411,308 @@ async function loadData() {
         console.error("Failed to load data", e);
     }
 }
+
+// === Multi-User Subscriptions & Quota ===
+function formatExpireAt(expireAt) {
+    if (!expireAt || Number(expireAt) <= 0) return '永不过期';
+    const d = new Date(Number(expireAt) * 1000);
+    return Number.isNaN(d.getTime()) ? '永不过期' : d.toLocaleString();
+}
+
+function toLocalDatetimeInputValue(unixSeconds) {
+    if (!unixSeconds || Number(unixSeconds) <= 0) return '';
+    const d = new Date(Number(unixSeconds) * 1000);
+    if (Number.isNaN(d.getTime())) return '';
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function buildUserSubUrlForCurrentFormat(token, user) {
+    const baseName = (document.getElementById('sub-name')?.value || '').trim() || 'ProxyForge';
+    const name = user?.username ? `${baseName}-${user.username}` : baseName;
+    const opts = { preferRelay: Boolean(preferRelayCheck?.checked || user?.prefer_relay) };
+    return ProxyForgeSubscription.buildUserUrl(window.location.origin, token, name, subscriptionFormat.value, opts);
+}
+
+async function fetchUserTokenAndAct(user, mode) {
+    const res = await fetchAuth(`/sub-users/${encodeURIComponent(user.id)}/token`);
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+    const data = await res.json();
+    const url = buildUserSubUrlForCurrentFormat(data.token, user);
+    if (mode === 'qr') openSubscriptionQrModal(url, `${user.username} 订阅二维码`);
+    else await copyTextToClipboard(url, `已复制 ${user.username} 的订阅链接`);
+}
+
+function renderSubUsers() {
+    const container = document.getElementById('sub-users-list');
+    if (!container) return;
+    container.replaceChildren();
+    const users = Array.isArray(state.subUsers) ? state.subUsers : [];
+    if (!users.length) {
+        const empty = document.createElement('div');
+        empty.className = 'empty-state';
+        empty.textContent = '暂无订阅用户，点击右上角「新建订阅用户」分配独立配额与订阅 Token。';
+        container.appendChild(empty);
+        return;
+    }
+
+    const grid = document.createElement('div');
+    grid.className = 'sub-users-grid';
+    for (const user of users) {
+        const card = document.createElement('div');
+        card.className = 'sub-user-card';
+
+        const header = document.createElement('div');
+        header.className = 'sub-user-header';
+        const titleWrap = document.createElement('div');
+        const nameEl = document.createElement('strong');
+        nameEl.textContent = user.username;
+        titleWrap.appendChild(nameEl);
+        const prefixEl = document.createElement('span');
+        prefixEl.className = 'hint';
+        prefixEl.style.marginLeft = '8px';
+        prefixEl.textContent = `Token: ${user.token_prefix || ''}…`;
+        titleWrap.appendChild(prefixEl);
+
+        const badge = document.createElement('span');
+        badge.className = `status-pill ${user.enabled ? 'is-online' : 'is-offline'}`;
+        if (user.enabled) {
+            badge.textContent = '启用中';
+        } else {
+            badge.textContent = user.disabled_reason ? `已停用 (${user.disabled_reason})` : '已停用';
+        }
+        header.append(titleWrap, badge);
+        card.appendChild(header);
+
+        const used = Math.max(0, Number(user.used_bytes || 0));
+        const quota = Math.max(0, Number(user.quota_bytes || 0));
+        const pct = quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0;
+
+        const barTrack = document.createElement('div');
+        barTrack.className = 'quota-bar-track';
+        const barFill = document.createElement('div');
+        barFill.className = `quota-bar-fill${(quota > 0 && pct >= 90) ? ' danger' : ''}`;
+        barFill.style.width = quota > 0 ? `${pct}%` : '0%';
+        barTrack.appendChild(barFill);
+        card.appendChild(barTrack);
+
+        const usageLine = document.createElement('div');
+        usageLine.className = 'hint';
+        usageLine.textContent = quota > 0
+            ? `已用 ${formatBytes(used)} / ${formatBytes(quota)} (${pct}%) · 上行 ${formatBytes(user.upload_bytes)} / 下行 ${formatBytes(user.download_bytes)}`
+            : `已用 ${formatBytes(used)} / 不限配额 · 上行 ${formatBytes(user.upload_bytes)} / 下行 ${formatBytes(user.download_bytes)}`;
+        card.appendChild(usageLine);
+
+        const metaLine = document.createElement('div');
+        metaLine.className = 'hint';
+        const tags = [`到期: ${formatExpireAt(user.expire_at)}`];
+        if (user.prefer_relay) tags.push('中转优先');
+        if (Array.isArray(user.allowed_groups) && user.allowed_groups.length) tags.push(`分组: ${user.allowed_groups.join(', ')}`);
+        if (Array.isArray(user.forward_rule_ids) && user.forward_rule_ids.length) tags.push(`绑定转发: ${user.forward_rule_ids.length} 条`);
+        if (user.max_connections > 0) tags.push(`并发: ${user.max_connections}`);
+        if (user.rate_limit_kbps > 0) tags.push(`限速: ${user.rate_limit_kbps} KB/s`);
+        metaLine.textContent = tags.join(' · ');
+        card.appendChild(metaLine);
+
+        const actions = document.createElement('div');
+        actions.className = 'item-actions';
+        const addActionBtn = (label, cls, handler) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = cls;
+            btn.textContent = label;
+            btn.addEventListener('click', handler);
+            actions.appendChild(btn);
+        };
+        addActionBtn('复制链接', 'btn btn-primary btn-sm', () => fetchUserTokenAndAct(user, 'copy').catch(e => showToast(e.message, 'error')));
+        addActionBtn('二维码', 'btn btn-sm', () => fetchUserTokenAndAct(user, 'qr').catch(e => showToast(e.message, 'error')));
+        addActionBtn('编辑', 'btn btn-sm', () => openSubUserModal(user));
+        addActionBtn(user.enabled ? '停用' : '启用', 'btn btn-sm', () => toggleSubUser(user));
+        addActionBtn('重置流量', 'btn btn-sm', () => resetSubUserTraffic(user));
+        addActionBtn('轮换密钥', 'btn btn-sm', () => rotateSubUser(user));
+        addActionBtn('删除', 'btn btn-danger btn-sm', () => deleteSubUser(user));
+        card.appendChild(actions);
+
+        grid.appendChild(card);
+    }
+    container.appendChild(grid);
+}
+
+async function loadSubUsers() {
+    const container = document.getElementById('sub-users-list');
+    if (!container) return;
+    try {
+        const res = await fetchAuth('/sub-users');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        state.subUsers = data.users || [];
+        renderSubUsers();
+    } catch (e) {
+        container.textContent = `加载订阅用户失败：${e.message}`;
+    }
+}
+
+function parseListInput(raw) {
+    return String(raw || '').split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+}
+
+function openSubUserModal(existing = null) {
+    const isNew = !existing;
+    const html = `
+        <div class="form-group">
+            <label>用户名 (字母/数字/._-)</label>
+            <input type="text" id="m-su-username" placeholder="alice">
+        </div>
+        <div class="form-grid">
+            <div class="form-group">
+                <label>总流量配额 (GiB，0 为不限)</label>
+                <input type="number" id="m-su-quota-gb" min="0" step="0.5" value="0">
+            </div>
+            <div class="form-group">
+                <label>到期时间 (留空永不过期)</label>
+                <input type="datetime-local" id="m-su-expire">
+            </div>
+        </div>
+        <div class="form-grid">
+            <div class="form-group">
+                <label>最大连接数 (0 为不限)</label>
+                <input type="number" id="m-su-conns" min="0" value="0">
+            </div>
+            <div class="form-group">
+                <label>速率上限 (KB/s，0 为不限)</label>
+                <input type="number" id="m-su-rate" min="0" value="0">
+            </div>
+        </div>
+        <div class="form-group">
+            <label>允许的代理组 (逗号分隔，留空不限)</label>
+            <input type="text" id="m-su-groups" placeholder="例如: Proxy, HK">
+        </div>
+        <div class="form-group">
+            <label>绑定转发规则 ID (32 位 hex，逗号分隔，可选；超限自动停用)</label>
+            <input type="text" id="m-su-rules" placeholder="留空表示不绑定特定转发端口">
+        </div>
+        <div class="form-grid">
+            <label class="inline-check" style="display:flex; align-items:center; gap:6px;"><input type="checkbox" id="m-su-enabled" checked> 启用该用户</label>
+            <label class="inline-check" style="display:flex; align-items:center; gap:6px;"><input type="checkbox" id="m-su-relay"> 强制中转优先 (prefer_relay)</label>
+        </div>
+    `;
+    openModal(isNew ? '新建订阅用户' : '编辑订阅用户', html, async () => {
+        const username = document.getElementById('m-su-username').value.trim();
+        if (isNew && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(username)) {
+            showToast('用户名格式不合法', 'error');
+            return;
+        }
+        const quotaGb = Math.max(0, Number(document.getElementById('m-su-quota-gb').value) || 0);
+        const expireRaw = document.getElementById('m-su-expire').value.trim();
+        const expireAt = expireRaw ? Math.floor(Date.parse(expireRaw) / 1000) : 0;
+        if (expireRaw && (!Number.isFinite(expireAt) || expireAt <= 0)) {
+            showToast('到期时间格式无效', 'error');
+            return;
+        }
+        const payload = {
+            quota_bytes: Math.max(0, Math.round(quotaGb * 1024 * 1024 * 1024)),
+            expire_at: expireAt,
+            enabled: document.getElementById('m-su-enabled').checked,
+            prefer_relay: document.getElementById('m-su-relay').checked,
+            allowed_groups: parseListInput(document.getElementById('m-su-groups').value),
+            forward_rule_ids: parseListInput(document.getElementById('m-su-rules').value),
+            max_connections: Math.max(0, Math.round(Number(document.getElementById('m-su-conns').value) || 0)),
+            rate_limit_kbps: Math.max(0, Math.round(Number(document.getElementById('m-su-rate').value) || 0)),
+        };
+        if (isNew) payload.username = username;
+        try {
+            const path = isNew ? '/sub-users' : `/sub-users/${encodeURIComponent(existing.id)}`;
+            const res = await fetchAuth(path, {
+                method: isNew ? 'POST' : 'PATCH',
+                body: JSON.stringify(payload),
+            });
+            if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+            const result = await res.json();
+            closeModal();
+            await loadSubUsers();
+            if (isNew && result.token) {
+                const url = buildUserSubUrlForCurrentFormat(result.token, result);
+                await copyTextToClipboard(url, `用户 ${result.username} 已创建，订阅链接已复制`);
+            } else {
+                showToast('订阅用户已保存');
+            }
+        } catch (e) {
+            showToast(`保存失败：${e.message}`, 'error');
+        }
+    });
+
+    const userEl = document.getElementById('m-su-username');
+    if (existing) {
+        userEl.value = existing.username || '';
+        userEl.disabled = true;
+        const gb = existing.quota_bytes ? +(existing.quota_bytes / (1024 * 1024 * 1024)).toFixed(2) : 0;
+        document.getElementById('m-su-quota-gb').value = String(gb);
+        document.getElementById('m-su-expire').value = toLocalDatetimeInputValue(existing.expire_at);
+        document.getElementById('m-su-conns').value = String(existing.max_connections || 0);
+        document.getElementById('m-su-rate').value = String(existing.rate_limit_kbps || 0);
+        document.getElementById('m-su-groups').value = (existing.allowed_groups || []).join(', ');
+        document.getElementById('m-su-rules').value = (existing.forward_rule_ids || []).join(', ');
+        document.getElementById('m-su-enabled').checked = Boolean(existing.enabled);
+        document.getElementById('m-su-relay').checked = Boolean(existing.prefer_relay);
+    }
+}
+
+async function toggleSubUser(user) {
+    try {
+        const res = await fetchAuth(`/sub-users/${encodeURIComponent(user.id)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ enabled: !user.enabled }),
+        });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+        showToast(user.enabled ? `已停用 ${user.username}` : `已启用 ${user.username}`);
+        await loadSubUsers();
+    } catch (e) {
+        showToast(`操作失败：${e.message}`, 'error');
+    }
+}
+
+async function resetSubUserTraffic(user) {
+    if (!confirm(`确认将 ${user.username} 的累计上下行流量归零？若因超额停用，归零后可恢复启用。`)) return;
+    try {
+        const res = await fetchAuth(`/sub-users/${encodeURIComponent(user.id)}/reset-traffic`, { method: 'POST' });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+        showToast(`已重置 ${user.username} 的流量计数`);
+        await loadSubUsers();
+    } catch (e) {
+        showToast(`重置失败：${e.message}`, 'error');
+    }
+}
+
+async function rotateSubUser(user) {
+    if (!confirm(`确认轮换 ${user.username} 的订阅 Token？旧订阅链接将立即失效。`)) return;
+    try {
+        const res = await fetchAuth(`/sub-users/${encodeURIComponent(user.id)}/rotate`, { method: 'POST' });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+        const data = await res.json();
+        await loadSubUsers();
+        if (data.token) {
+            const url = buildUserSubUrlForCurrentFormat(data.token, user);
+            await copyTextToClipboard(url, `已轮换 ${user.username} 的新订阅链接并复制`);
+        }
+    } catch (e) {
+        showToast(`轮换失败：${e.message}`, 'error');
+    }
+}
+
+async function deleteSubUser(user) {
+    if (!confirm(`确认删除订阅用户 ${user.username}？该操作不可撤销。`)) return;
+    try {
+        const res = await fetchAuth(`/sub-users/${encodeURIComponent(user.id)}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+        showToast(`已删除订阅用户 ${user.username}`);
+        await loadSubUsers();
+    } catch (e) {
+        showToast(`删除失败：${e.message}`, 'error');
+    }
+}
+
+document.getElementById('btn-refresh-sub-users')?.addEventListener('click', loadSubUsers);
+document.getElementById('btn-add-sub-user')?.addEventListener('click', () => openSubUserModal(null));
 
 function formatBytes(bytes) {
     if (!bytes || bytes === 0) return '0 B';
@@ -1645,11 +2035,12 @@ if (globalImportBtn) {
 }
 
 // === Action: Config & Raw Save ===
-copyBtn.addEventListener('click', () => {
+function copyCurrentSubLink() {
     subLink.select();
-    document.execCommand('copy');
-    showToast('链接已复制到剪贴板');
-});
+    copyTextToClipboard(subLink.value, '链接已复制到剪贴板');
+}
+copyBtn.addEventListener('click', copyCurrentSubLink);
+document.getElementById('copy-link-inline-btn')?.addEventListener('click', copyCurrentSubLink);
 
 saveConfigBtn.addEventListener('click', async () => {
     try {
@@ -1935,7 +2326,7 @@ async function loadFinalPreview() {
     previewEditor.value = '正在从后端生成最终订阅配置...\n如果数据量大可能会需要几秒钟，请稍候...';
     try {
         let res = await fetch(ProxyForgeSubscription.buildUrl(window.location.origin,
-            state.config.SUBSCRIPTION_TOKEN, document.getElementById('sub-name').value, subscriptionFormat.value));
+            state.config.SUBSCRIPTION_TOKEN, document.getElementById('sub-name').value, subscriptionFormat.value, subscriptionOptions()));
         if (!res.ok) {
             let errText = await res.text();
             throw new Error(`HTTP ${res.status}: ${errText}`);

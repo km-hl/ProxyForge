@@ -93,13 +93,23 @@
                         <div class="form-grid">
                             <div class="form-group full-width">
                                 <label>您的专属客户端订阅链接</label>
-                                <select id="sub-format" aria-label="订阅格式" style="margin-bottom: 8px;">
-                                    <option value="clash">Clash / Mihomo</option>
-                                    <option value="egern">Egern</option>
-                                </select>
+                                <div class="field-row" style="margin-bottom: 8px; align-items: center;">
+                                    <select id="sub-format" aria-label="订阅格式">
+                                        <option value="clash">Clash / Mihomo (YAML)</option>
+                                        <option value="egern">Egern (YAML)</option>
+                                        <option value="singbox">Sing-box (JSON)</option>
+                                        <option value="surge">Surge (INI)</option>
+                                        <option value="uri">通用 URI / Base64</option>
+                                    </select>
+                                    <label class="inline-check" for="sub-prefer-relay" style="display:flex; align-items:center; gap:6px; white-space:nowrap; font-size:0.9rem;">
+                                        <input type="checkbox" id="sub-prefer-relay"> 中转优先 (prefer_relay)
+                                    </label>
+                                </div>
                                 <div class="field-row" style="margin-bottom: 8px;">
                                     <input type="text" id="sub-name" placeholder="订阅名称 (例如: ProxyForge)" value="ProxyForge">
                                     <input type="text" id="sub-link" readonly style="flex-grow: 1; background: #eef1ff; color: var(--primary); font-weight: 500;">
+                                    <button type="button" id="copy-link-inline-btn" class="btn btn-primary">复制</button>
+                                    <button type="button" class="btn" id="sub-qr-btn">二维码</button>
                                 </div>
                                 <span class="hint" id="sub-format-hint">请将此链接复制并添加到您的 Clash / Mihomo 客户端中。修改名称后链接会自动更新。</span>
                             </div>
@@ -126,6 +136,18 @@
                                 <span class="hint">管理密钥不会进入订阅链接；更换后其他后台会话会立即失效。</span>
                             </div>
                         </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-title" style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+                            <span>👥 多用户订阅与配额</span>
+                            <div>
+                                <button type="button" class="btn btn-sm" id="btn-refresh-sub-users">刷新</button>
+                                <button type="button" class="btn btn-primary btn-sm" id="btn-add-sub-user">➕ 新建订阅用户</button>
+                            </div>
+                        </div>
+                        <p class="hint" style="margin-bottom:10px;">支持独立订阅 Token、流量配额、到期时间、`prefer_relay` 中转重写与超限自动停用转发端口。</p>
+                        <div id="sub-users-list" aria-live="polite">正在读取订阅用户…</div>
                     </div>
                 </div>
 
@@ -274,6 +296,7 @@
                         <p>Agent 主动通过 HTTPS 上报状态、领取任务，无需开放入站 API 端口。可选启用独立 sing-box 运行环境管理；角色仅作标记。</p>
                         <p>连接来源 IP 可能是 NAT 或代理地址，不代表节点连接地址。<a href="https://github.com/km-hl/ProxyForge/blob/master/docs/AGENT_INSTALL.md" target="_blank" rel="noopener noreferrer">安装与恢复说明</a></p>
                         <button class="btn btn-primary" id="agent-add-btn">添加服务器</button>
+                        <button class="btn" id="agent-tunnels-btn">多跳隧道 & 流量总览</button>
                         <button class="btn" id="agent-refresh-btn">刷新状态</button>
                         <div id="agent-list" style="overflow:auto" aria-live="polite"></div>
                     </div>
@@ -320,10 +343,10 @@
     <script src="/static/rule-utils.js?v=mobile-20261021-2"></script>
     <script src="/static/template-session.js?v=mobile-20261021-2"></script>
     <script src="/static/network-settings.js?v=mobile-20261021-2"></script>
-    <script src="/static/subscription-utils.js?v=mobile-20261021-2"></script>
-    <script src="/static/app.js?v=mobile-20261021-2"></script>
+    <script src="/static/subscription-utils.js?v=phase4-20261116-1"></script>
+    <script src="/static/app.js?v=phase4-20261116-1"></script>
     <script src="/static/template-history.js?v=mobile-20261021-2"></script>
-    <script src="/static/agents.js?v=mobile-20261021-2"></script>
-    <script src="/static/managed-nodes.js?v=mobile-20261021-2"></script>
+    <script src="/static/agents.js?v=phase4-20261116-1"></script>
+    <script src="/static/managed-nodes.js?v=phase4-20261116-1"></script>
 </body>
 </html>

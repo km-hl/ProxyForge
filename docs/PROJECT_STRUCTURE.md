@@ -64,6 +64,8 @@ ProxyForge/
 
 `agent/` 下新增 Phase 0–2 纯标准库多服务、落地接管与数据面组件：`runtime_engine.py`（`RuntimeCoordinator` 与跨服务端口冲突编排）、`acme_manager.py`（HTTP-01 / DNS-01 证书与脱敏凭据）、`caddy_manager.py`（站点伪装与 TLS 终止 `Caddyfile` 托管）、`caddy-release.json` / `proxyforge-caddy.service`、`adoption.py`（`sing-box` / `xray` / `caddy` 存量扫描与 `adopt_scan` 上报）、`gost_manager.py`（`go-gost` TCP/UDP 转发、多跳 Chain 与 `Best Exit` 防抖优选）、`traffic_collector.py`（loopback Prometheus `/metrics` 与 `nftables` 计数器防重启回退增量采集）以及 `gost-release.json` / `proxyforge-gost.service`。控制面新增 `/api/agents/deployments/generate-keys`、`/api/agents/deployments/protocols`、`/api/agent/adoptions`、`/api/agents/{agent_id}/adopt-scan`、`/api/agents/{agent_id}/forwards`、`/api/agents/tunnels/chains`、`/api/agents/{agent_id}/best-exits`、`/api/agent/best-exit`、`/api/agent/traffic` 与 `/api/agents/traffic/summary` 接口。
 
+前端控制台 (`static/`) Phase 4 整合：`subscription-utils.js` 新增 Mihomo/Egern/Sing-box/Surge/URI URL 构造（含 `prefer_relay` 与 `/sub/{token}`）和纯 JS 自包含 SVG 二维码生成器；`app.js` / `index.html` / `style.css` 新增格式与中转开关、二维码弹窗以及基于纯 DOM `.textContent` 渲染的多用户订阅与配额管理面板；`agents.js` 补全 6 协议落地/ACME/Caddy 伪装部署、`singbox`/`caddy`/`gost`/`adopt_scan` 任务、一键接管扫描面板、端口转发与 `Best Exit` 优选组面板及全网隧道/流量总览；`managed-nodes.js` 支持渲染 `adopted` 存量接管资产并跳转接管扫描详情。
+
 ## 3. API 与启动入口
 
 保持 `uvicorn main:app`、`python main.py`、Docker Compose 与原 systemd 入口。`main.py` 继续负责 Web 路由编排、运行数据初始化和 AirportService 装配；机场请求与缓存协调位于 `proxyforge/airports/`。导入此入口仍有初始化副作用，测试应使用现有隔离加载器。

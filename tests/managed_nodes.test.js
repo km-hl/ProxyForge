@@ -25,4 +25,8 @@ test('job result, removal and revocation are distinguished from connectivity', (
 test('managed nodes route editing through the correct owner', () => {
     assert.equal(managementAction(node), 'chain');
     assert.equal(managementAction({ ...node, kind: 'direct' }), 'deployment');
+    const adopted = { ...node, kind: 'adopted', status: 'adopted', publishable: false, core: 'xray', protocol: 'trojan', sni: 'cdn.example.com' };
+    assert.equal(managementAction(adopted), 'adoptions');
+    assert.equal(statusLabel(adopted), '接管扫描');
+    assert.equal(matches(adopted, 'xray', 'unpublished'), true);
 });

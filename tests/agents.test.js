@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { agentStatusLabel, agentCanRunJobs, agentCanManageRuntime, agentCanDeploy, agentCanLand, agentCanChain } = require('../static/agents.js');
+const { agentStatusLabel, agentCanRunJobs, agentCanManageRuntime, agentCanDeploy, agentCanLand, agentCanChain, agentCanGost } = require('../static/agents.js');
 
 test('chain changes require explicit upgraded capability', () => {
     const agent = { status: 'online', compatible: true, metadata: { job_protocol_version: 1, runtime_protocol_version: 1, supported: true } };
@@ -65,6 +65,15 @@ test('landing capability is independent from Reality and requires the runtime', 
     assert.equal(agentCanDeploy(agent), false);
     agent.metadata.runtime_protocol_version = 0;
     assert.equal(agentCanLand(agent), false);
+});
+
+test('go-gost data plane capability requires runtime helper and gost_protocol_version=1', () => {
+    const agent = { status: 'online', compatible: true, metadata: { job_protocol_version: 1, runtime_protocol_version: 1, supported: true } };
+    assert.equal(agentCanGost(agent), false);
+    agent.metadata.gost_protocol_version = 1;
+    assert.equal(agentCanGost(agent), true);
+    agent.metadata.runtime_protocol_version = 0;
+    assert.equal(agentCanGost(agent), false);
 });
 
 // Exercise asynchronous enrollment against a small DOM harness, without a browser dependency.

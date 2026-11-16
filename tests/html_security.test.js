@@ -20,13 +20,20 @@ test('HTML escaping handles nullish and scalar values', () => {
     assert.equal(escapeHtml(1234), '1234');
 });
 
-test('management credentials are not persisted in browser storage', () => {
-    const appSource = fs.readFileSync(
-        path.join(__dirname, '..', 'static', 'app.js'),
-        'utf8'
-    );
+test('management credentials and sub tokens are not persisted in browser storage', () => {
+    for (const file of ['app.js', 'agents.js', 'managed-nodes.js', 'subscription-utils.js']) {
+        const src = fs.readFileSync(path.join(__dirname, '..', 'static', file), 'utf8');
+        assert.doesNotMatch(src, /localStorage|sessionStorage/, `browser storage used in ${file}`);
+    }
+});
 
-    assert.doesNotMatch(appSource, /localStorage|sessionStorage/);
+test('static index has unique Phase 4 subscription controls and single multi-user container', () => {
+    const html = fs.readFileSync(path.join(__dirname, '..', 'static', 'index.html'), 'utf8');
+    assert.equal((html.match(/id="sub-users-list"/g) || []).length, 1);
+    assert.equal((html.match(/id="copy-btn"/g) || []).length, 1);
+    assert.equal((html.match(/id="sub-qr-btn"/g) || []).length, 1);
+    assert.equal((html.match(/id="sub-prefer-relay"/g) || []).length, 1);
+    assert.equal((html.match(/id="agent-tunnels-btn"/g) || []).length, 1);
 });
 
 test('node import recognizes TUIC, AnyTLS, and WireGuard share links', () => {
