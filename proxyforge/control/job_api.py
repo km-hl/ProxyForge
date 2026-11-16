@@ -8,7 +8,7 @@ from pydantic import Field, constr, model_validator
 from proxyforge.control.agent_api import AdoptScanOutput, Payload, Identifier, SingboxStatus
 from proxyforge.control.control_store import UnauthorizedAgent
 from proxyforge.control.job_store import JobConflict, JobNotFound
-from agent.runtime_spec import CADDY_RELEASE, RELEASE, validate_action
+from agent.runtime_spec import CADDY_RELEASE, GOST_RELEASE, RELEASE, validate_action
 
 
 class JobRequest(Payload):
@@ -17,6 +17,7 @@ class JobRequest(Payload):
         'singbox.status', 'adopt_scan',
         'singbox.install', 'singbox.start', 'singbox.stop', 'singbox.restart', 'singbox.rollback',
         'caddy.install', 'caddy.start', 'caddy.stop', 'caddy.restart', 'caddy.rollback',
+        'gost.install', 'gost.start', 'gost.stop', 'gost.restart', 'gost.rollback',
     ]
     payload: dict = Field(default_factory=dict)
     deployment_revision: None = None
@@ -81,7 +82,12 @@ def attach_job_routes(app, admin, agent, store_provider):
 
     @admin.get('/runtime/release')
     def runtime_release():
-        return {'version': RELEASE['version'], 'caddy_version': CADDY_RELEASE['version'], 'runtime_protocol_version': 1}
+        return {
+            'version': RELEASE['version'],
+            'caddy_version': CADDY_RELEASE['version'],
+            'gost_version': GOST_RELEASE['version'],
+            'runtime_protocol_version': 1,
+        }
 
     @admin.get('/{agent_id}/jobs')
     def list_jobs(agent_id: str):

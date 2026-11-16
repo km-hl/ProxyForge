@@ -7,7 +7,7 @@ import socket
 import struct
 import time
 
-from .runtime_download import download_binary, download_caddy_binary
+from .runtime_download import download_binary, download_caddy_binary, download_gost_binary
 from .runtime_engine import (
     RUNTIME_PROFILES,
     RollbackFailed,
@@ -16,7 +16,7 @@ from .runtime_engine import (
     RuntimeEngine,
     SystemBackend,
 )
-from .runtime_spec import CONFIG_ACTIONS, SERVICE_CADDY, SERVICE_SINGBOX, validate_runtime_job
+from .runtime_spec import CONFIG_ACTIONS, SERVICE_CADDY, SERVICE_GOST, SERVICE_SINGBOX, validate_runtime_job
 from .system_info import os_release, SUPPORTED
 
 ROOT = Path('/var/lib/proxyforge-runtime')
@@ -34,8 +34,8 @@ def receive_job(connection):
     data = b''
     connection.settimeout(5)
     while not data.endswith(b'\n'):
-        block = connection.recv(8193 - len(data))
-        if not block or len(data) + len(block) > 8192:
+        block = connection.recv(262145 - len(data))
+        if not block or len(data) + len(block) > 262144:
             raise ValueError('Invalid runtime request')
         data += block
     job = json.loads(data)
@@ -51,6 +51,7 @@ def receive_job(connection):
 DEFAULT_DOWNLOADERS = {
     SERVICE_SINGBOX: download_binary,
     SERVICE_CADDY: download_caddy_binary,
+    SERVICE_GOST: download_gost_binary,
 }
 
 
@@ -117,11 +118,12 @@ def main():
         raise SystemExit('Runtime helper requires systemd socket activation')
     trusted_directory(ROOT)
     services = [SERVICE_SINGBOX]
-    try:
-        pwd.getpwnam(RUNTIME_PROFILES[SERVICE_CADDY].account)
-        services.append(SERVICE_CADDY)
-    except KeyError:
-        pass
+    for optional_service in (SERVICE_CADDY, SERVICE_GOST):
+        try:
+            pwd.getpwnam(RUNTIME_PROFILES[optional_service].account)
+            services.append(optional_service)
+        except KeyError:
+            pass
     coordinator = build_coordinator(ROOT, arch, services=tuple(services))
     agent_uid = pwd.getpwnam('proxyforge-agent').pw_uid
     with (ROOT / 'helper.lock').open('a') as lock:

@@ -24,6 +24,10 @@ def chain_available():
     return capability_available('chain-protocol')
 
 
+def gost_available():
+    return capability_available('gost-protocol')
+
+
 def capability_available(name):
     marker = Path('/opt/proxyforge-agent') / name
     try:

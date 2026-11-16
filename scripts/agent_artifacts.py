@@ -18,14 +18,14 @@ MAX_FILE = 1024 * 1024
 AGENT_FILES = (
     "__init__.py", "acme_manager.py", "adoption.py", "caddy-release.json",
     "caddy_manager.py", "chain_spec.py", "client.py", "deployment_spec.py",
-    "install-runtime.sh", "install.sh", "job_lease.py", "jobs.py",
-    "landing_spec.py", "main.py", "proxyforge-agent.service",
-    "proxyforge-caddy.service", "proxyforge-runtime.service",
-    "proxyforge-runtime.socket", "proxyforge-singbox.service",
-    "README.md", "README.zh-CN.md",
+    "gost-release.json", "gost_manager.py", "install-runtime.sh", "install.sh",
+    "job_lease.py", "jobs.py", "landing_spec.py", "main.py",
+    "proxyforge-agent.service", "proxyforge-caddy.service", "proxyforge-gost.service",
+    "proxyforge-runtime.service", "proxyforge-runtime.socket",
+    "proxyforge-singbox.service", "README.md", "README.zh-CN.md",
     "runtime_client.py", "runtime_download.py", "runtime_engine.py",
     "runtime_helper.py", "runtime_spec.py", "singbox-release.json",
-    "system_info.py", "install-compatibility.json", "LICENSE",
+    "system_info.py", "traffic_collector.py", "install-compatibility.json", "LICENSE",
 )
 DOC_FILES = (
     "AGENT_ARTIFACTS.md", "AGENT_INSTALL.md", "AGENT_INSTALL_HELP.md", "AGENT_INSTALL_DEBIAN_CI.md", "AGENT_B1.md", "AGENT_B2.md", "AGENT_B3.md",
@@ -115,8 +115,8 @@ def package_metadata(files):
     # This contract describes the current installer, not a promise about future
     # or older Controllers. Changing support requires reviewing this verifier.
     expected = {
-        "python_minimum": "3.9", "controller_schema_baseline": 6,
-        "protocols": {name: 1 for name in ("inventory", "jobs", "runtime", "deployment", "landing", "chain")},
+        "python_minimum": "3.9", "controller_schema_baseline": 7,
+        "protocols": {name: 1 for name in ("inventory", "jobs", "runtime", "deployment", "landing", "chain", "gost")},
         "platforms": {"debian": ["12", "13"], "ubuntu": ["22.04", "24.04"]},
         "architectures": ["amd64", "arm64"], "service_manager": "systemd",
         "runtime_helper_enabled_by_default": False,

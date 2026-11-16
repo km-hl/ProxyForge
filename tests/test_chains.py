@@ -169,7 +169,10 @@ class ChainStoreTest(unittest.TestCase):
     def test_schema4_upgrade_and_atomic_failure_preserve_ciphertext(self):
         with self.store.connection() as db:
             before = [tuple(row) for row in db.execute('SELECT * FROM deployments')]
-            db.execute('DROP TABLE IF EXISTS adopted_nodes')
+            for tbl in ('traffic_batches', 'traffic_counters', 'gost_agent_states',
+                        'forward_rules', 'best_exit_groups', 'tunnel_chains',
+                        'adopted_nodes'):
+                db.execute('DROP TABLE IF EXISTS ' + tbl)
             db.execute('DROP TABLE chains')
             db.execute('DELETE FROM schema_migrations WHERE version>=5')
         def fail(db):
@@ -180,7 +183,7 @@ class ChainStoreTest(unittest.TestCase):
         reopened = ControlStore(self.store.path)
         with reopened.connection() as db:
             self.assertEqual(before, [tuple(row) for row in db.execute('SELECT * FROM deployments')])
-            self.assertEqual(db.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0], 6)
+            self.assertEqual(db.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0], 7)
 
     def test_api_authentication_conflicts_candidates_and_secret_rejection(self):
         from fastapi.testclient import TestClient

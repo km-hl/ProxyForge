@@ -35,7 +35,7 @@ python3 scripts/agent_artifacts.py verify --commit "$commit" \
 | `agent_version` | 从该提交 `agent/__init__.py` 的字面值读取；当前 0.6.0 |
 | `controller_release_version` | 默认 `null`；构建时可显式指定独立的 Controller SemVer，校验时须独立提供同一预期值；不表示已创建 tag/Release |
 | `controller_source_commit` | 配套 Controller 来源提交，与 Agent 同提交；不是允许任意旧 Controller 的兼容承诺 |
-| `compatibility` | Python 3.9+、systemd、OS/架构允许列表、Controller schema 基线 6，以及清单/任务/runtime/部署/落地/链路各自协议版本 1 |
+| `compatibility` | Python 3.9+、systemd、OS/架构允许列表、Controller schema 基线 7，以及清单/任务/runtime/部署/落地/链路/gost 各自协议版本 1 |
 | `archive` | 规范文件名、字节数、完整 tar 的 SHA256 |
 | `files` | 每个成员的路径、字节数、SHA256 和规范模式 `0644` |
 

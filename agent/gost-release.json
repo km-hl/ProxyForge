@@ -1,0 +1,14 @@
+{
+  "version": "3.3.3",
+  "repository": "go-gost/gost",
+  "assets": {
+    "amd64": {
+      "name": "gost_3.3.3_linux_amd64.tar.gz",
+      "sha256": "f4c1255dc892a7014c0ad6e5f1c3573108f7bea4403f04f21873406ab58aa666"
+    },
+    "arm64": {
+      "name": "gost_3.3.3_linux_arm64.tar.gz",
+      "sha256": "4c704c92df6eeea8a3b08d0de4fd3c44343095a20136b3b6cf334f98d2f174ab"
+    }
+  }
+}

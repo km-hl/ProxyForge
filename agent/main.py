@@ -13,6 +13,7 @@ import uuid
 from .client import Client, AgentConnectionError, CredentialRejected
 from .system_info import collect
 from .jobs import process_job, runner_lock
+from .traffic_collector import flush_gost_traffic
 
 
 def save_config(path, config):
@@ -85,6 +86,10 @@ def run_loop(path, once=False):
                 print("Agent protocol incompatible; inventory only, update required", file=sys.stderr)
             elif result.get("job_protocol_version") == 1:
                 process_job(client, config, path)
+                try:
+                    flush_gost_traffic(client, config, path)
+                except (AgentConnectionError, OSError, ValueError):
+                    pass
             failures = 0
             if once:
                 return 0

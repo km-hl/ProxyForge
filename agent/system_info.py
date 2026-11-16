@@ -7,7 +7,7 @@ import subprocess
 
 from . import VERSION, PROTOCOL_VERSION
 from .runtime_client import available as runtime_available
-from .runtime_client import deployment_available, landing_available, chain_available
+from .runtime_client import deployment_available, gost_available, landing_available, chain_available
 
 SUPPORTED = {("debian", "12"), ("debian", "13"), ("ubuntu", "22.04"), ("ubuntu", "24.04")}
 
@@ -62,6 +62,7 @@ def collect(instance_id):
             "deployment_protocol_version": 1 if deployment_available() else 0,
             "landing_protocol_version": 1 if landing_available() else 0,
             "chain_protocol_version": 1 if chain_available() else 0,
+            "gost_protocol_version": 1 if gost_available() else 0,
             "uptime": uptime, "addresses": [],
             "supported": (system, version) in SUPPORTED and arch in {"amd64", "arm64"},
             "singbox": singbox_status()}

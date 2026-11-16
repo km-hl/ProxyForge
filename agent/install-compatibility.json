@@ -1,13 +1,14 @@
 {
   "python_minimum": "3.9",
-  "controller_schema_baseline": 6,
+  "controller_schema_baseline": 7,
   "protocols": {
     "inventory": 1,
     "jobs": 1,
     "runtime": 1,
     "deployment": 1,
     "landing": 1,
-    "chain": 1
+    "chain": 1,
+    "gost": 1
   },
   "platforms": {
     "debian": ["12", "13"],

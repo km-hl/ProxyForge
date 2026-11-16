@@ -190,6 +190,7 @@ class AgentArtifactTests(unittest.TestCase):
                 patch.object(system_info, "deployment_available", return_value=True), \
                 patch.object(system_info, "landing_available", return_value=True), \
                 patch.object(system_info, "chain_available", return_value=True), \
+                patch.object(system_info, "gost_available", return_value=True), \
                 patch.object(system_info, "singbox_status", return_value={}):
             inventory = system_info.collect("artifact-test")
         compatibility = self.manifest["compatibility"]

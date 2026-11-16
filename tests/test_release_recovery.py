@@ -51,7 +51,7 @@ class LegacyReleaseTest(unittest.TestCase):
                 self.assertEqual((data / name).read_bytes(), content, name)
             self.assertFalse((data / 'deployment.key').exists())
             with closing(sqlite3.connect(str(data / 'proxyforge.db'))) as db:
-                self.assertEqual(db.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0], 6)
+                self.assertEqual(db.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0], 7)
 
 
 class RecoveryReleaseTest(unittest.TestCase):

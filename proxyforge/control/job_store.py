@@ -4,7 +4,14 @@ import json
 import secrets
 import uuid
 from agent.adoption import valid_adopt_output
-from agent.runtime_spec import RUNTIME_ACTIONS, CONFIG_ACTIONS, revision, validate_action
+from agent.runtime_spec import (
+    CONFIG_ACTIONS,
+    GOST_ACTIONS,
+    RUNTIME_ACTIONS,
+    SINGBOX_ACTIONS,
+    revision,
+    validate_action,
+)
 from agent.deployment_spec import DEPLOYMENT_ACTIONS
 from agent.landing_spec import LANDING_ACTIONS
 from agent.chain_spec import CHAIN_ACTIONS
@@ -80,8 +87,10 @@ class JobStoreMixin:
             agent = self._job_agent(db, agent_id)
             self._runtime_capability(agent, action)
             self._expire_jobs(db, agent_id)
-            if action in RUNTIME_ACTIONS and db.execute('SELECT 1 FROM deployments WHERE agent_id=?', (agent_id,)).fetchone():
+            if action in SINGBOX_ACTIONS and db.execute('SELECT 1 FROM deployments WHERE agent_id=?', (agent_id,)).fetchone():
                 raise JobConflict()  # Do not silently revert/stop a published managed deployment.
+            if action in GOST_ACTIONS and db.execute('SELECT 1 FROM gost_agent_states WHERE agent_id=?', (agent_id,)).fetchone():
+                raise JobConflict()  # Do not silently revert/stop managed go-gost forwards.
             return self._enqueue_job(db, agent_id, request_id, action, payload)
 
     def _enqueue_job(self, db, agent_id, request_id, action, payload):
@@ -94,8 +103,11 @@ class JobStoreMixin:
                 raise JobConflict()
             return self._job_view(existing)
         # Retain idempotency keys/results for seven days, with a hard global cap.
-        db.execute("DELETE FROM jobs WHERE status IN ('success','failed','cancelled') AND finished_at<? AND id NOT IN (SELECT job_id FROM deployments UNION SELECT job_id FROM chains)",
-                   (now - 7 * 86400,))
+        db.execute(
+            "DELETE FROM jobs WHERE status IN ('success','failed','cancelled') AND finished_at<? AND id NOT IN "
+            "(SELECT job_id FROM deployments UNION SELECT job_id FROM chains UNION SELECT job_id FROM gost_agent_states WHERE job_id!='')",
+            (now - 7 * 86400,),
+        )
         if db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] >= 10000 or db.execute(
                 "SELECT COUNT(*) FROM jobs WHERE agent_id=? AND status IN ('pending','assigned','running')",
                 (agent_id,)).fetchone()[0] >= 20:
@@ -171,6 +183,8 @@ class JobStoreMixin:
             if action in LANDING_ACTIONS and metadata.get('landing_protocol_version') != 1:
                 raise JobConflict()
             if action in CHAIN_ACTIONS and metadata.get('chain_protocol_version') != 1:
+                raise JobConflict()
+            if action in GOST_ACTIONS and metadata.get('gost_protocol_version') != 1:
                 raise JobConflict()
 
     def report_job(self, token, job_id, lease, result=None, renew=False):

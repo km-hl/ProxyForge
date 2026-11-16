@@ -7,7 +7,7 @@ import time
 import urllib.parse
 import urllib.request
 
-from .runtime_spec import CADDY_RELEASE, RELEASE
+from .runtime_spec import CADDY_RELEASE, GOST_RELEASE, RELEASE
 
 MAX_ARCHIVE = 64 * 1024 * 1024
 MAX_BINARY = 160 * 1024 * 1024
@@ -119,3 +119,14 @@ def download_caddy_binary(directory, arch, guard=lambda: None):
     asset = CADDY_RELEASE['assets'][arch]
     url = 'https://github.com/caddyserver/caddy/releases/download/v' + CADDY_RELEASE['version'] + '/' + asset['name']
     download_release_binary(directory, url, asset['sha256'], ('caddy', './caddy'), 'caddy', guard)
+
+
+def extract_gost_binary(archive, destination, arch):
+    asset = GOST_RELEASE['assets'][arch]
+    extract_release_binary(archive, destination, asset['sha256'], ('gost', './gost'))
+
+
+def download_gost_binary(directory, arch, guard=lambda: None):
+    asset = GOST_RELEASE['assets'][arch]
+    url = 'https://github.com/go-gost/gost/releases/download/v' + GOST_RELEASE['version'] + '/' + asset['name']
+    download_release_binary(directory, url, asset['sha256'], ('gost', './gost'), 'gost', guard)

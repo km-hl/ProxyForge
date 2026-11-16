@@ -114,6 +114,7 @@ class AgentMetadata(Payload):
     deployment_protocol_version: StrictInt = Field(default=0, ge=0, le=1000)
     landing_protocol_version: StrictInt = Field(default=0, ge=0, le=1000)
     chain_protocol_version: StrictInt = Field(default=0, ge=0, le=1000)
+    gost_protocol_version: StrictInt = Field(default=0, ge=0, le=1000)
     uptime: StrictInt = Field(default=0, ge=0)
     addresses: list[ShortText] = Field(default_factory=list, max_length=16)
     supported: StrictBool = False
@@ -252,6 +253,8 @@ def attach_agent_routes(app, management_auth, store_provider):
     attach_job_routes(app, admin, agent, store_provider)
     from proxyforge.control.deployment_api import attach_deployment_routes
     attach_deployment_routes(app, admin, store_provider)
+    from proxyforge.control.gost_api import attach_gost_routes
+    attach_gost_routes(admin, agent, store_provider)
     app.add_middleware(AgentBodyLimit)
     app.include_router(admin)
     app.include_router(agent)

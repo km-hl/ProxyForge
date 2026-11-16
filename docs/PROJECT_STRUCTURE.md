@@ -42,10 +42,10 @@ ProxyForge/
 | `airports/service.py` | 显式注入依赖，统一机场节点/元信息缓存与后台刷新协调 |
 | `airports/sources.py` | AirportSource / AirportSnapshot 内部快照，旧格式投影与来源身份比较 |
 | `airports/parser.py` | 纯 YAML / Base64 订阅解析，格式失败回退，其他故障与控制信号向外传播 |
-| `control/agent_api.py`、`job_api.py`、`deployment_api.py` | 管理/Agent 路由、鉴权衔接、请求与响应 schema |
-| `control/control_store.py` | SQLite 连接、migration（当前 schema 6）、注册、身份和心跳 |
+| `control/agent_api.py`、`job_api.py`、`deployment_api.py`、`gost_api.py` | 管理/Agent 路由、鉴权衔接、转发/链/Best-Exit 与流量批次上传 schema |
+| `control/control_store.py` | SQLite 连接、migration（当前 schema 7）、注册、身份和心跳 |
 | `control/job_store.py` | 租约、重试、状态回报、探针/接管扫描入库与任务保留 |
-| `control/deployment_store.py`、`chain_store.py` | 加密期望配置（Reality / SS2022 / Trojan / VLESS-WS / Hysteria2）、服务端密钥辅助、版本冲突、依赖和节点发布条件 |
+| `control/deployment_store.py`、`chain_store.py`、`gost_store.py` | 加密期望配置（落地、链路、go-gost 转发/多跳/Best-Exit）、流量计数器累加及并发/端口冲突控制 |
 | `control/managed_inventory.py` | 不读取秘密的节点与接管资产管理清单 |
 | `config/template_store.py` | 文件锁、原子提交、事务恢复和模板历史 |
 | `config/network_config.py`、`mihomo_compat.py` | DNS/TUN 纯校验与固定兼容基线 |
@@ -58,9 +58,9 @@ ProxyForge/
 | `subscription/validation.py` | 节点与完整 Mihomo 配置校验 |
 | `subscription/builder.py` | 由显式输入构建订阅/provider，清理生成结果中的引用 |
 
-表中路径相对于 `proxyforge/`。数据库当前为 schema 6（含 `adopted_nodes`）；运行文件仍使用 `data/`。
+表中路径相对于 `proxyforge/`。数据库当前为 schema 7（含 `adopted_nodes` 与 Phase 2 `forward_rules`/`tunnel_chains`/`best_exit_groups`/`gost_agent_states`/`traffic_counters`/`traffic_batches`）；运行文件仍使用 `data/`。
 
-`agent/` 下新增 Phase 0–1 纯标准库多服务与落地接管组件：`runtime_engine.py`（`RuntimeCoordinator` 与跨服务端口冲突编排）、`acme_manager.py`（HTTP-01 / DNS-01 证书与脱敏凭据）、`caddy_manager.py`（站点伪装与 TLS 终止 `Caddyfile` 托管）、`caddy-release.json` / `proxyforge-caddy.service`，以及 `adoption.py`（`sing-box` / `xray` / `caddy` 存量扫描与 `adopt_scan` 上报）。控制面新增 `/api/agents/deployments/generate-keys`、`/api/agents/deployments/protocols`、`/api/agent/adoptions` 与 `/api/agents/{agent_id}/adopt-scan` 接口。
+`agent/` 下新增 Phase 0–2 纯标准库多服务、落地接管与数据面组件：`runtime_engine.py`（`RuntimeCoordinator` 与跨服务端口冲突编排）、`acme_manager.py`（HTTP-01 / DNS-01 证书与脱敏凭据）、`caddy_manager.py`（站点伪装与 TLS 终止 `Caddyfile` 托管）、`caddy-release.json` / `proxyforge-caddy.service`、`adoption.py`（`sing-box` / `xray` / `caddy` 存量扫描与 `adopt_scan` 上报）、`gost_manager.py`（`go-gost` TCP/UDP 转发、多跳 Chain 与 `Best Exit` 防抖优选）、`traffic_collector.py`（loopback Prometheus `/metrics` 与 `nftables` 计数器防重启回退增量采集）以及 `gost-release.json` / `proxyforge-gost.service`。控制面新增 `/api/agents/deployments/generate-keys`、`/api/agents/deployments/protocols`、`/api/agent/adoptions`、`/api/agents/{agent_id}/adopt-scan`、`/api/agents/{agent_id}/forwards`、`/api/agents/tunnels/chains`、`/api/agents/{agent_id}/best-exits`、`/api/agent/best-exit`、`/api/agent/traffic` 与 `/api/agents/traffic/summary` 接口。
 
 ## 3. API 与启动入口
 

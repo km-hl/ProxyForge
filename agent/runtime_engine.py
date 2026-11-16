@@ -18,6 +18,7 @@ from .runtime_spec import (
     CADDY_CONFIG_ACTIONS,
     CADDY_RELEASE,
     CONFIG_ACTIONS,
+    GOST_RELEASE,
     RELEASE,
     SERVICE_CADDY,
     SERVICE_GOST,
@@ -28,6 +29,7 @@ from .runtime_spec import (
 from .deployment_spec import runtime_config
 from .landing_spec import build_caddy_site_for_landing, deployment_tls_plan, runtime_config as landing_config
 from .chain_spec import CHAIN_ACTIONS, runtime_config as chain_config
+from .gost_manager import GOST_CONFIG_ACTIONS, render_gost_config
 
 UNIT = 'proxyforge-singbox.service'
 EMPTY_CONFIG = {'log': {'level': 'warn'}, 'inbounds': [], 'outbounds': [{'type': 'direct', 'tag': 'direct'}]}
@@ -135,7 +137,7 @@ GOST_PROFILE = RuntimeProfile(
     version_args=('-V',),
     version_prefix='',
     empty_config={'services': []},
-    release=None,
+    release=GOST_RELEASE,
     install_action='gost.install',
     start_action='gost.start',
     stop_action='gost.stop',
@@ -347,6 +349,11 @@ def _extract_gost_bindings(service, config):
         handler_type = str(((item.get('handler') or {}).get('type')) or '').lower()
         transport = 'udp' if (listener_type in GOST_UDP_TYPES or handler_type in GOST_UDP_TYPES) else 'tcp'
         bindings.append(PortBinding(service, transport, host, port))
+    metrics = config.get('metrics')
+    if isinstance(metrics, dict) and metrics.get('addr'):
+        m_host, m_port = _parse_addr_host_port(metrics.get('addr'))
+        if m_port is not None:
+            bindings.append(PortBinding(service, 'tcp', m_host, m_port))
     return bindings
 
 
@@ -736,7 +743,9 @@ class RuntimeEngine:
             return landing_config(job['deployment'], **(render_overrides or {}))
         if action in CHAIN_ACTIONS:
             return chain_config(job['deployment'])
-        if action in ('deployment.remove', 'landing.remove'):
+        if action == 'gost.apply':
+            return render_gost_config(job['deployment'], **(render_overrides or {}))
+        if action in ('deployment.remove', 'landing.remove', 'gost.remove'):
             return self.profile.empty_config
         return self._read_config(source) if source else self.profile.empty_config
 
@@ -932,12 +941,63 @@ class RuntimeCoordinator:
         overrides['key_path'] = dest_key
         return singbox_engine.apply(job, guard, render_overrides=overrides)
 
+    def _resolve_gost_metrics_addr(self, gost_engine, deployment):
+        explicit = str((deployment or {}).get('metrics_addr') or '').strip()
+        if explicit:
+            return explicit
+        prospective = render_gost_config(deployment)
+        used = collect_active_bindings(self.service_roots, exclude_service=SERVICE_GOST)
+        used.extend(extract_config_bindings(SERVICE_GOST, prospective))
+        current_rel = gost_engine.pointer('current')
+        if current_rel:
+            cfg_path = gost_engine.root / current_rel / GOST_PROFILE.config_filename
+            if cfg_path.is_file():
+                try:
+                    existing = json.loads(cfg_path.read_text(encoding='utf-8'))
+                    existing_addr = str(((existing.get('metrics') or {}).get('addr')) or '').strip()
+                    host, port = _parse_addr_host_port(existing_addr)
+                    if port is not None and host in ('127.0.0.1', '::1'):
+                        candidate_binding = PortBinding(SERVICE_GOST, 'tcp', host, port)
+                        if not any(bindings_conflict(candidate_binding, b) for b in used):
+                            return existing_addr
+                except (OSError, ValueError):
+                    pass
+        port = allocate_loopback_port(used, start=18000, end=28000, host='127.0.0.1', transport='tcp', probe_host=False)
+        return f'127.0.0.1:{port}'
+
+    def _write_gost_metrics_meta(self, gost_engine, metrics_addr, epoch):
+        meta_path = gost_engine.root / 'metrics.json'
+        if not metrics_addr:
+            meta_path.unlink(missing_ok=True)
+            return
+        write_json(meta_path, {'metrics_addr': metrics_addr, 'epoch': epoch}, mode=0o644)
+
+    def _apply_gost_job(self, job, guard):
+        gost_engine = self.engines[SERVICE_GOST]
+        if job['type'] == 'gost.remove':
+            result = gost_engine.apply(job, guard)
+            self._write_gost_metrics_meta(gost_engine, '', '')
+            return result
+        has_items = any(job['deployment'].get(k) for k in ('forwards', 'chains', 'relay_services', 'best_exit_groups'))
+        if not has_items:
+            result = gost_engine.apply(job, guard)
+            self._write_gost_metrics_meta(gost_engine, '', '')
+            return result
+        metrics_addr = self._resolve_gost_metrics_addr(gost_engine, job['deployment'])
+        result = gost_engine.apply(job, guard, render_overrides={'metrics_addr': metrics_addr})
+        self._write_gost_metrics_meta(gost_engine, metrics_addr, job['id'][:12])
+        return result
+
     def apply(self, job, guard=lambda: None):
         validate_runtime_job(job)
         if job['type'] in ('landing.apply', 'landing.remove'):
             if SERVICE_SINGBOX not in self.engines:
                 raise ValueError('Managed runtime service is not enabled')
             return self._apply_landing_job(job, guard)
+        if job['type'] in GOST_CONFIG_ACTIONS:
+            if SERVICE_GOST not in self.engines:
+                raise ValueError('Managed runtime service is not enabled')
+            return self._apply_gost_job(job, guard)
         service = job_service(job['type'])
         if service not in self.engines:
             raise ValueError('Managed runtime service is not enabled')
