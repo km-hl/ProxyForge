@@ -1,5 +1,6 @@
 """Root-owned immutable releases, port conflict validation, and recoverable activation."""
 from dataclasses import dataclass
+import hashlib
 import ipaddress
 import json
 import os
@@ -14,6 +15,8 @@ from urllib.parse import urlsplit
 
 from .runtime_download import download_binary
 from .runtime_spec import (
+    CADDY_CONFIG_ACTIONS,
+    CADDY_RELEASE,
     CONFIG_ACTIONS,
     RELEASE,
     SERVICE_CADDY,
@@ -23,7 +26,7 @@ from .runtime_spec import (
     validate_runtime_job,
 )
 from .deployment_spec import runtime_config
-from .landing_spec import runtime_config as landing_config
+from .landing_spec import build_caddy_site_for_landing, deployment_tls_plan, runtime_config as landing_config
 from .chain_spec import CHAIN_ACTIONS, runtime_config as chain_config
 
 UNIT = 'proxyforge-singbox.service'
@@ -114,7 +117,7 @@ CADDY_PROFILE = RuntimeProfile(
     version_args=('version',),
     version_prefix='',
     empty_config='{\n\tauto_https off\n}\n',
-    release=None,
+    release=CADDY_RELEASE,
     install_action='caddy.install',
     start_action='caddy.start',
     stop_action='caddy.stop',
@@ -456,6 +459,8 @@ def allocate_loopback_port(used_bindings, *, start=18000, end=28000, host='127.0
 
 
 def sync_directory(path):
+    if os.name != 'posix':
+        return
     fd = os.open(str(path), os.O_RDONLY)
     try:
         os.fsync(fd)
@@ -482,17 +487,25 @@ def write_json(path, value, mode=0o600):
     write_text(path, json.dumps(value), mode)
 
 
-def _probe_tcp_ports(profile, config_text):
+def _probe_tcp_targets(profile, config_text):
     if profile.service == SERVICE_SINGBOX:
         config = json.loads(config_text)
-        ports = []
+        targets = []
         for inbound in config.get('inbounds', []):
             if str(inbound.get('type') or '').lower() in UDP_ONLY_INBOUNDS:
                 continue
             if 'listen_port' in inbound:
-                ports.append(inbound['listen_port'])
-        return ports
-    return [b.port for b in extract_config_bindings(profile.service, config_text) if b.transport == 'tcp']
+                host = normalize_bind_host(inbound.get('listen') or '::')
+                probe = '127.0.0.1' if host in ('127.0.0.1', '0.0.0.0') else '::1'
+                targets.append((probe, inbound['listen_port']))
+        return targets
+    targets = []
+    for binding in extract_config_bindings(profile.service, config_text):
+        if binding.transport != 'tcp':
+            continue
+        probe = '127.0.0.1' if binding.host in ('127.0.0.1', '0.0.0.0') else '::1'
+        targets.append((probe, binding.port))
+    return targets
 
 
 class SystemBackend:
@@ -547,8 +560,8 @@ class SystemBackend:
             if Path('/proc/' + pid + '/exe').resolve(strict=True) != (release / self.profile.binary_name).resolve(strict=True):
                 return False
             config_text = (release / self.profile.config_filename).read_text()
-            for port in _probe_tcp_ports(self.profile, config_text):
-                with socket.create_connection(('::1', port),
+            for host, port in _probe_tcp_targets(self.profile, config_text):
+                with socket.create_connection((host, port),
                                               timeout=_probe_timeout(1, deadline)):
                     pass
             return True
@@ -711,18 +724,23 @@ class RuntimeEngine:
         else:
             write_text(target, config)
 
-    def _render_job_config(self, action, job, source):
+    def _render_job_config(self, action, job, source, render_overrides=None):
+        if self.profile.service == SERVICE_CADDY:
+            if action in ('caddy.remove', 'caddy.stop', 'deployment.remove', 'landing.remove'):
+                return self.profile.empty_config
+            if action == 'caddy.apply' and isinstance(job.get('payload'), dict) and 'caddyfile' in job['payload']:
+                return job['payload']['caddyfile']
         if action == 'deployment.apply':
             return runtime_config(job['deployment'])
         if action == 'landing.apply':
-            return landing_config(job['deployment'])
+            return landing_config(job['deployment'], **(render_overrides or {}))
         if action in CHAIN_ACTIONS:
             return chain_config(job['deployment'])
         if action in ('deployment.remove', 'landing.remove'):
             return self.profile.empty_config
         return self._read_config(source) if source else self.profile.empty_config
 
-    def apply(self, job, guard=lambda: None):
+    def apply(self, job, guard=lambda: None, *, render_overrides=None):
         validate_runtime_job(job)
         self.recover()
         receipt = self.receipts().get(job['id'])
@@ -734,7 +752,7 @@ class RuntimeEngine:
         current, previous = self.pointer('current'), self.pointer('previous')
         was_running = self.backend.active()
         action = job['type']
-        if action not in (self.profile.install_action, *CONFIG_ACTIONS) and not current:
+        if action not in (self.profile.install_action, *CONFIG_ACTIONS, *CADDY_CONFIG_ACTIONS) and not current:
             raise ValueError('Runtime is not installed')
         if action == self.profile.rollback_action and not previous:
             raise ValueError('No previous release')
@@ -759,13 +777,13 @@ class RuntimeEngine:
             candidate.mkdir(mode=0o750)
             try:
                 source = previous if action == self.profile.rollback_action else current
-                if action == self.profile.install_action or (action in CONFIG_ACTIONS and not current):
+                if action == self.profile.install_action or (action in (*CONFIG_ACTIONS, *CADDY_CONFIG_ACTIONS) and not current):
                     self.downloader(candidate, self.arch, guard)
                     release_info = {'version': pinned['version']}
                 else:
                     shutil.copy2(self.root / source / self.profile.binary_name, candidate / self.profile.binary_name)
                     release_info = json.loads((self.root / source / 'release.json').read_text())
-                config = self._render_job_config(action, job, source)
+                config = self._render_job_config(action, job, source, render_overrides=render_overrides)
                 validate_port_allocation(self.profile.service, config, service_roots=self.service_roots)
                 self._write_config(candidate, config)
                 write_json(candidate / 'release.json', release_info, 0o644)
@@ -803,11 +821,56 @@ class RuntimeEngine:
 class RuntimeCoordinator:
     """Coordinate multiple isolated RuntimeEngine instances with shared port collision guards."""
 
-    def __init__(self, engines):
+    def __init__(self, engines, *, acme_manager=None, caddy_manager=None):
         self.engines = dict(engines)
         self.service_roots = {service: engine.root for service, engine in self.engines.items()}
         for engine in self.engines.values():
             engine.service_roots = self.service_roots
+        self._acme_manager = acme_manager
+        self._caddy_manager = caddy_manager
+
+    def _get_acme_manager(self):
+        if self._acme_manager is None:
+            from .acme_manager import AcmeManager
+            acme_root = self.service_roots[SERVICE_SINGBOX].parent / 'acme' if SERVICE_SINGBOX in self.service_roots else None
+            self._acme_manager = AcmeManager(acme_root or Path('/var/lib/proxyforge-runtime/acme'))
+        return self._acme_manager
+
+    def _get_caddy_manager(self):
+        if self._caddy_manager is None:
+            from .caddy_manager import CaddyManager
+            caddy_engine = self.engines.get(SERVICE_CADDY)
+            caddy_state = (caddy_engine.root / 'state') if caddy_engine else Path('/var/lib/proxyforge-runtime/services/caddy/state')
+            gid = getattr(caddy_engine.backend, 'gid', None) if caddy_engine else None
+            self._caddy_manager = CaddyManager(
+                caddy_state,
+                acme_manager=self._get_acme_manager(),
+                runtime_engine=caddy_engine,
+                service_roots=self.service_roots,
+                service_gid=gid,
+            )
+        return self._caddy_manager
+
+    def _stage_singbox_certs(self, src_cert, src_key, site_id='landing'):
+        singbox_engine = self.engines[SERVICE_SINGBOX]
+        cert_dir = singbox_engine.root / 'certs' / site_id
+        cert_dir.mkdir(parents=True, exist_ok=True, mode=0o750)
+        dest_cert = cert_dir / 'fullchain.pem'
+        dest_key = cert_dir / 'privkey.pem'
+        write_text(dest_cert, Path(src_cert).read_text(encoding='utf-8'), mode=0o640)
+        write_text(dest_key, Path(src_key).read_text(encoding='utf-8'), mode=0o640)
+        gid = getattr(singbox_engine.backend, 'gid', None)
+        if os.name == 'posix' and gid is not None:
+            os.chown(cert_dir.parent, 0, gid)
+            os.chown(cert_dir, 0, gid)
+            os.chown(dest_cert, 0, gid)
+            os.chown(dest_key, 0, gid)
+            cert_dir.parent.chmod(0o750)
+            cert_dir.chmod(0o750)
+        return str(dest_cert), str(dest_key)
+
+    def _derived_caddy_job_id(self, job_id):
+        return hashlib.sha256(('caddy:' + job_id).encode('utf-8')).hexdigest()[:32]
 
     def recover(self):
         for engine in self.engines.values():
@@ -818,8 +881,63 @@ class RuntimeCoordinator:
             raise ValueError('Unsupported managed service')
         return self.engines[service].status()
 
+    def _apply_landing_job(self, job, guard):
+        singbox_engine = self.engines[SERVICE_SINGBOX]
+        caddy_job_id = self._derived_caddy_job_id(job['id'])
+        if job['type'] == 'landing.remove':
+            result = singbox_engine.apply(job, guard)
+            if SERVICE_CADDY in self.engines or self._caddy_manager is not None:
+                self._get_caddy_manager().remove_site('landing', job_id=caddy_job_id, guard=guard)
+            return result
+
+        spec = job['deployment']
+        plan = deployment_tls_plan(spec, site_id='landing')
+        if not plan['needs_cert'] and not plan['needs_caddy']:
+            return singbox_engine.apply(job, guard)
+
+        overrides = {}
+        if plan['needs_caddy']:
+            if SERVICE_CADDY not in self.engines and self._caddy_manager is None:
+                raise ValueError('Caddy runtime service is not enabled')
+            caddy_manager = self._get_caddy_manager()
+            loopback_port = self.allocate_port(probe_host=False)
+            if plan['caddy_role'] == 'loopback_camouflage':
+                site = build_caddy_site_for_landing(spec, site_id='landing', listen_port=loopback_port)
+                caddy_manager.upsert_site(site, job_id=caddy_job_id, guard=guard)
+                overrides['caddy_port'] = loopback_port
+                try:
+                    return singbox_engine.apply(job, guard, render_overrides=overrides)
+                except Exception:
+                    caddy_manager.remove_site('landing', job_id=self._derived_caddy_job_id(caddy_job_id), guard=lambda: None)
+                    raise
+            # frontdoor_ws: obtain cert and validate Caddyfile before mutating sing-box.
+            site = build_caddy_site_for_landing(spec, site_id='landing', backend_port=loopback_port)
+            sites = caddy_manager.load_sites()
+            sites[site['site_id']] = site
+            caddyfile = caddy_manager.render_all(sites)
+            overrides['backend_port'] = loopback_port
+            singbox_result = singbox_engine.apply(job, guard, render_overrides=overrides)
+            caddy_manager.apply_caddyfile(caddy_job_id, caddyfile, guard=guard)
+            caddy_manager.save_sites(sites)
+            return singbox_result
+
+        # Direct ACME cert consumed by sing-box (e.g. Trojan or Hysteria2).
+        acme_params = plan['acme']
+        acme_kwargs = {k: v for k, v in acme_params.items() if k not in ('cert_name', 'domain')}
+        src_cert, src_key = self._get_acme_manager().ensure_certificate(
+            acme_params['cert_name'], acme_params['domain'], **acme_kwargs,
+        )
+        dest_cert, dest_key = self._stage_singbox_certs(src_cert, src_key, site_id='landing')
+        overrides['cert_path'] = dest_cert
+        overrides['key_path'] = dest_key
+        return singbox_engine.apply(job, guard, render_overrides=overrides)
+
     def apply(self, job, guard=lambda: None):
         validate_runtime_job(job)
+        if job['type'] in ('landing.apply', 'landing.remove'):
+            if SERVICE_SINGBOX not in self.engines:
+                raise ValueError('Managed runtime service is not enabled')
+            return self._apply_landing_job(job, guard)
         service = job_service(job['type'])
         if service not in self.engines:
             raise ValueError('Managed runtime service is not enabled')

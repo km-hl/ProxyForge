@@ -2,6 +2,7 @@
 import json
 import os
 import sqlite3
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -15,6 +16,8 @@ from proxyforge.control.agent_installation import installation_info
 
 ShortText = constr(strict=True, max_length=128)
 Identifier = constr(strict=True, pattern=r"^[a-f0-9]{32}$")
+Sha256Hex = constr(strict=True, pattern=r"^[a-f0-9]{64}$")
+SourceKey = constr(strict=True, pattern=r"^adopt-[a-f0-9]{16}$")
 Token = constr(strict=True, min_length=40, max_length=128)
 
 
@@ -56,6 +59,45 @@ class SingboxStatus(Payload):
     running: StrictBool = False
     version: ShortText = ""
     status: constr(strict=True, max_length=32) = "not_installed"
+
+
+class AdoptServiceItem(Payload):
+    core: Literal["sing-box", "xray", "caddy"]
+    pid: StrictInt = Field(ge=0)
+    service_name: ShortText = ""
+    config_path: ShortText
+    config_sha256: Sha256Hex
+
+
+class AdoptEndpointItem(Payload):
+    source_key: SourceKey
+    core: Literal["sing-box", "xray", "caddy"]
+    service_name: ShortText = ""
+    config_path: ShortText
+    config_sha256: Sha256Hex
+    tag: constr(strict=True, max_length=64) = ""
+    protocol: constr(strict=True, max_length=32)
+    listen: ShortText
+    listen_port: StrictInt = Field(ge=1, le=65535)
+    tls_mode: Literal["none", "tls", "reality"]
+    sni: ShortText = ""
+    network: constr(strict=True, max_length=32) = "tcp"
+    ws_path: ShortText = ""
+    adoptable: StrictBool = True
+
+
+class AdoptScanOutput(Payload):
+    scanned_at: StrictInt = Field(ge=0)
+    services: list[AdoptServiceItem] = Field(default_factory=list, max_length=16)
+    endpoints: list[AdoptEndpointItem] = Field(default_factory=list, max_length=32)
+
+
+class AdoptScanUpload(AdoptScanOutput):
+    instance_id: Identifier
+
+
+class AdoptScanTrigger(Payload):
+    request_id: Identifier
 
 
 class AgentMetadata(Payload):
@@ -185,6 +227,26 @@ def attach_agent_routes(app, management_auth, store_provider):
         if not authorization.startswith("Bearer ") or len(authorization) > 160:
             raise UnauthorizedAgent()
         return store_provider().heartbeat(authorization[7:], json.loads(data.model_dump_json()), observed_ip(request))
+
+    @agent.post("/adoptions")
+    def upload_adoptions(data: AdoptScanUpload, authorization: str = Header(default="")):
+        if not authorization.startswith("Bearer ") or len(authorization) > 160:
+            raise UnauthorizedAgent()
+        scan_payload = json.loads(data.model_dump_json(exclude={"instance_id"}))
+        return store_provider().record_adoption_scan(authorization[7:], data.instance_id, scan_payload)
+
+    @admin.get("/{agent_id}/adoptions")
+    def get_adoptions(agent_id: str):
+        store = store_provider()
+        try:
+            store.get_agent(agent_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        return {"adoptions": store.list_adopted_nodes(agent_id)}
+
+    @admin.post("/{agent_id}/adopt-scan")
+    def trigger_adopt_scan(agent_id: str, data: AdoptScanTrigger):
+        return store_provider().create_job(agent_id, data.request_id, "adopt_scan", {})
 
     from proxyforge.control.job_api import attach_job_routes
     attach_job_routes(app, admin, agent, store_provider)

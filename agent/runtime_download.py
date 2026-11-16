@@ -7,7 +7,7 @@ import time
 import urllib.parse
 import urllib.request
 
-from .runtime_spec import RELEASE
+from .runtime_spec import CADDY_RELEASE, RELEASE
 
 MAX_ARCHIVE = 64 * 1024 * 1024
 MAX_BINARY = 160 * 1024 * 1024
@@ -108,3 +108,14 @@ def download_binary(directory, arch, guard=lambda: None):
     url = 'https://github.com/SagerNet/sing-box/releases/download/v' + RELEASE['version'] + '/' + asset['name']
     expected = 'sing-box-' + RELEASE['version'] + '-linux-' + arch + '/sing-box'
     download_release_binary(directory, url, asset['sha256'], expected, 'sing-box', guard)
+
+
+def extract_caddy_binary(archive, destination, arch):
+    asset = CADDY_RELEASE['assets'][arch]
+    extract_release_binary(archive, destination, asset['sha256'], ('caddy', './caddy'))
+
+
+def download_caddy_binary(directory, arch, guard=lambda: None):
+    asset = CADDY_RELEASE['assets'][arch]
+    url = 'https://github.com/caddyserver/caddy/releases/download/v' + CADDY_RELEASE['version'] + '/' + asset['name']
+    download_release_binary(directory, url, asset['sha256'], ('caddy', './caddy'), 'caddy', guard)

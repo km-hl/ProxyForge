@@ -165,6 +165,7 @@ class QueueTest(unittest.TestCase):
 
     def test_v1_migration_preserves_credentials_and_inventory(self):
         with self.store.connection() as db:
+            db.execute('DROP TABLE IF EXISTS adopted_nodes')
             db.execute('DROP TABLE chains')
             db.execute('DROP TABLE jobs')
             db.execute('DROP TABLE deployments')
@@ -178,6 +179,7 @@ class QueueTest(unittest.TestCase):
 
     def test_migration_failure_rolls_back_schema(self):
         with self.store.connection() as db:
+            db.execute('DROP TABLE IF EXISTS adopted_nodes')
             db.execute('DROP TABLE chains')
             db.execute('DROP TABLE jobs')
             db.execute('DROP TABLE deployments')

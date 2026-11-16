@@ -13,13 +13,19 @@ SERVICE_GOST = 'go-gost'
 MANAGED_SERVICES = (SERVICE_SINGBOX, SERVICE_CADDY, SERVICE_GOST)
 
 RELEASE = json.loads(Path(__file__).with_name('singbox-release.json').read_text(encoding='utf-8'))
+CADDY_RELEASE = json.loads(Path(__file__).with_name('caddy-release.json').read_text(encoding='utf-8'))
 CONFIG_ACTIONS = (*DEPLOYMENT_ACTIONS, *LANDING_ACTIONS, *CHAIN_ACTIONS)
-RUNTIME_ACTIONS = ('singbox.install', 'singbox.start', 'singbox.stop', 'singbox.restart', 'singbox.rollback', *CONFIG_ACTIONS)
+CADDY_CONFIG_ACTIONS = ('caddy.apply', 'caddy.remove')
+CADDY_ACTIONS = ('caddy.install', 'caddy.start', 'caddy.stop', 'caddy.restart', 'caddy.rollback', *CADDY_CONFIG_ACTIONS)
+SINGBOX_ACTIONS = ('singbox.install', 'singbox.start', 'singbox.stop', 'singbox.restart', 'singbox.rollback')
+RUNTIME_ACTIONS = (*SINGBOX_ACTIONS, *CADDY_ACTIONS, *CONFIG_ACTIONS)
 RUNTIME_ERRORS = ('runtime_unavailable', 'runtime_failed', 'runtime_cancelled', 'rollback_failed')
 
 
 def job_service(action):
     """Map an allowlisted runtime action to its owning managed runtime service."""
+    if action in CADDY_ACTIONS:
+        return SERVICE_CADDY
     if action in RUNTIME_ACTIONS:
         return SERVICE_SINGBOX
     raise ValueError('Unsupported runtime action')
@@ -30,9 +36,15 @@ def validate_action(action, payload):
         raise ValueError('Unsupported runtime action')
     if action in CONFIG_ACTIONS:
         validate_reference(payload)
+    elif action == 'caddy.apply':
+        if set(payload) != {'caddyfile'} or not isinstance(payload['caddyfile'], str) or len(payload['caddyfile']) > 128 * 1024:
+            raise ValueError('Invalid Caddy payload')
     elif action == 'singbox.install':
         if payload != {'version': RELEASE['version']}:
             raise ValueError('Only the pinned release is allowed')
+    elif action == 'caddy.install':
+        if payload != {'version': CADDY_RELEASE['version']}:
+            raise ValueError('Only the pinned Caddy release is allowed')
     elif payload:
         raise ValueError('Runtime action takes no arguments')
 

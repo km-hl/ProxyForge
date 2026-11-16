@@ -3,6 +3,7 @@ import hmac
 import json
 import secrets
 import uuid
+from agent.adoption import valid_adopt_output
 from agent.runtime_spec import RUNTIME_ACTIONS, CONFIG_ACTIONS, revision, validate_action
 from agent.deployment_spec import DEPLOYMENT_ACTIONS
 from agent.landing_spec import LANDING_ACTIONS
@@ -70,10 +71,10 @@ class JobStoreMixin:
         if action in CONFIG_ACTIONS:
             raise JobConflict()  # Only the atomic desired-state API may enqueue these.
         payload = {} if payload is None else payload
-        if action != 'singbox.status':
+        if action not in ('singbox.status', 'adopt_scan'):
             validate_action(action, payload)
         elif payload:
-            raise ValueError('Status takes no arguments')
+            raise ValueError('Probe job takes no arguments')
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             agent = self._job_agent(db, agent_id)
@@ -207,6 +208,11 @@ class JobStoreMixin:
                 output = result.get('output') or {}
                 if output.get('installed') is not True or output.get('running') is not True:
                     raise JobConflict()
+            if row['type'] == 'adopt_scan' and status == 'success':
+                output = result.get('output')
+                if not valid_adopt_output(output):
+                    raise JobConflict()
+                self._save_adopted_scan(db, agent_id, output)
             db.execute("UPDATE jobs SET status=?,result=?,error=?,finished_at=? WHERE id=?",
                        (status, encoded, result.get("error"), self.clock(), job_id))
             self._audit(db, "job_" + status, agent_id)

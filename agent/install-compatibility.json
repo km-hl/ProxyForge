@@ -1,6 +1,6 @@
 {
   "python_minimum": "3.9",
-  "controller_schema_baseline": 5,
+  "controller_schema_baseline": 6,
   "protocols": {
     "inventory": 1,
     "jobs": 1,

@@ -1,12 +1,15 @@
-"""Management-only desired state. No private keys accepted or returned."""
+"""Management-only desired state and non-secret key helper endpoints."""
+from typing import Literal, Optional
+
+from fastapi import HTTPException
 from fastapi.responses import JSONResponse
-from typing import Literal
-from pydantic import Field, StrictInt, StrictBool, model_validator
-from proxyforge.control.agent_api import Payload, Identifier
-from agent.deployment_spec import validate_settings
-from agent.landing_spec import validate_settings as validate_landing_settings
-from proxyforge.control.deployment_store import DeploymentKeyError
+from pydantic import Field, StrictBool, StrictInt, constr, model_validator
+
 from agent.chain_spec import validate_settings as validate_chain_settings
+from agent.deployment_spec import validate_settings
+from agent.landing_spec import PROTOCOL_SPEC, validate_settings as validate_landing_settings
+from proxyforge.control.agent_api import Identifier, Payload
+from proxyforge.control.deployment_store import DeploymentKeyError
 
 
 class ChainRequest(Payload):
@@ -27,12 +30,29 @@ class DeploymentRequest(Payload):
     expected_revision: StrictInt = Field(ge=0, le=2147483646)
     settings: dict
     remove: StrictBool = False
-    protocol: Literal['vless-reality', 'ss2022'] = 'vless-reality'
+    protocol: Literal['vless-reality', 'ss2022', 'reality', 'trojan', 'vless-ws', 'hysteria2'] = 'vless-reality'
+    secrets: Optional[dict] = None
+    key_ref: Optional[constr(strict=True, min_length=16, max_length=4096)] = None
 
     @model_validator(mode='after')
     def settings_schema(self):
-        (validate_landing_settings if self.protocol == 'ss2022' else validate_settings)(self.settings)
+        if self.protocol == 'vless-reality':
+            if self.secrets is not None or self.key_ref is not None:
+                raise ValueError('Legacy vless-reality does not accept landing secrets or key_ref')
+            validate_settings(self.settings)
+        else:
+            validate_landing_settings(self.settings, protocol=self.protocol)
+            if self.secrets is not None:
+                if not isinstance(self.secrets, dict) or set(self.secrets) - {'dns_api_token'}:
+                    raise ValueError('Unsupported deployment secrets field')
+                token = self.secrets.get('dns_api_token')
+                if token is not None and (not isinstance(token, str) or not 12 <= len(token) <= 256 or any(ord(c) < 32 for c in token)):
+                    raise ValueError('Invalid ACME DNS API token')
         return self
+
+
+class LandingKeyHelperRequest(Payload):
+    protocol: Literal['ss2022', 'reality', 'trojan', 'vless-ws', 'hysteria2'] = 'reality'
 
 
 def attach_deployment_routes(app, admin, store_provider):
@@ -44,14 +64,34 @@ def attach_deployment_routes(app, admin, store_provider):
     def chain_landings():
         return {'landings': store_provider().chain_landings()}
 
+    @admin.post('/deployments/generate-keys')
+    def generate_landing_keys(data: LandingKeyHelperRequest):
+        return store_provider().generate_landing_keys(protocol=data.protocol)
+
+    @admin.get('/deployments/protocols')
+    def landing_protocols():
+        return {
+            'protocols': {
+                name: {
+                    'tls_modes': list(spec['tls_modes']),
+                    'default_tls_mode': spec['default_tls'],
+                    'requires_domain': spec['requires_domain'],
+                    'project_client': spec['project_client'],
+                }
+                for name, spec in PROTOCOL_SPEC.items()
+            }
+        }
+
     @admin.get('/{agent_id}/chain')
     def get_chain(agent_id: str):
         return {'chain': store_provider().get_chain(agent_id)}
 
     @admin.put('/{agent_id}/chain')
     def put_chain(agent_id: str, data: ChainRequest):
-        return store_provider().put_chain(agent_id, data.request_id, data.expected_revision,
-                                         data.landing_agent_id, data.settings, data.remove)
+        return store_provider().put_chain(
+            agent_id, data.request_id, data.expected_revision,
+            data.landing_agent_id, data.settings, data.remove,
+        )
 
     @app.exception_handler(DeploymentKeyError)
     async def unavailable(request, exc):
@@ -63,4 +103,17 @@ def attach_deployment_routes(app, admin, store_provider):
 
     @admin.put('/{agent_id}/deployment')
     def put_deployment(agent_id: str, data: DeploymentRequest):
-        return store_provider().put_deployment(agent_id, data.request_id, data.expected_revision, data.settings, data.remove, data.protocol)
+        try:
+            return store_provider().put_deployment(
+                agent_id,
+                data.request_id,
+                data.expected_revision,
+                data.settings,
+                data.remove,
+                data.protocol,
+                secrets_input=data.secrets,
+                key_ref=data.key_ref,
+            )
+        except ValueError:
+            # Never echo user-provided secrets or detailed validation strings.
+            raise HTTPException(status_code=422, detail='Invalid deployment specification') from None

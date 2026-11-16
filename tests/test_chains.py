@@ -169,8 +169,9 @@ class ChainStoreTest(unittest.TestCase):
     def test_schema4_upgrade_and_atomic_failure_preserve_ciphertext(self):
         with self.store.connection() as db:
             before = [tuple(row) for row in db.execute('SELECT * FROM deployments')]
+            db.execute('DROP TABLE IF EXISTS adopted_nodes')
             db.execute('DROP TABLE chains')
-            db.execute('DELETE FROM schema_migrations WHERE version=5')
+            db.execute('DELETE FROM schema_migrations WHERE version>=5')
         def fail(db):
             db.execute('CREATE TABLE chains(x TEXT)')
             raise sqlite3.OperationalError('interrupted')
@@ -179,7 +180,7 @@ class ChainStoreTest(unittest.TestCase):
         reopened = ControlStore(self.store.path)
         with reopened.connection() as db:
             self.assertEqual(before, [tuple(row) for row in db.execute('SELECT * FROM deployments')])
-            self.assertEqual(db.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0], 5)
+            self.assertEqual(db.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0], 6)
 
     def test_api_authentication_conflicts_candidates_and_secret_rejection(self):
         from fastapi.testclient import TestClient

@@ -13,8 +13,9 @@ import uuid
 from proxyforge.control.job_store import JobStoreMixin, migrate_jobs
 from proxyforge.control.deployment_store import DeploymentStoreMixin, migrate_deployments, migrate_landings
 from proxyforge.control.chain_store import ChainStoreMixin, migrate_chains
-from proxyforge.control.managed_inventory import ManagedInventoryMixin
+from proxyforge.control.managed_inventory import ManagedInventoryMixin, migrate_adoptions
 
+CURRENT_SCHEMA = 6
 PROTOCOL_VERSION = 1
 ONLINE_SECONDS = 90
 OFFLINE_SECONDS = 300
@@ -57,7 +58,7 @@ class ControlStore(ManagedInventoryMixin, ChainStoreMixin, DeploymentStoreMixin,
             db.execute("BEGIN IMMEDIATE")
             db.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)")
             version = db.execute("SELECT COALESCE(MAX(version),0) FROM schema_migrations").fetchone()[0]
-            if version > 5:
+            if version > CURRENT_SCHEMA:
                 raise RuntimeError("Control database is newer than this application")
             if version == 0:
                 # Individual statements stay within the migration transaction.
@@ -88,6 +89,8 @@ class ControlStore(ManagedInventoryMixin, ChainStoreMixin, DeploymentStoreMixin,
                 migrate_landings(db)
             if version < 5:
                 migrate_chains(db)
+            if version < 6:
+                migrate_adoptions(db)
             db.commit()
 
     @contextlib.contextmanager

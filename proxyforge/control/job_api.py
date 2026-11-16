@@ -1,27 +1,31 @@
 """No arbitrary command, path, URL or deployment payload is accepted by B2."""
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 
 from fastapi import Header
 from fastapi.responses import JSONResponse
 from pydantic import Field, constr, model_validator
 
-from proxyforge.control.agent_api import Payload, Identifier, SingboxStatus
+from proxyforge.control.agent_api import AdoptScanOutput, Payload, Identifier, SingboxStatus
 from proxyforge.control.control_store import UnauthorizedAgent
 from proxyforge.control.job_store import JobConflict, JobNotFound
-from agent.runtime_spec import RELEASE, validate_action
+from agent.runtime_spec import CADDY_RELEASE, RELEASE, validate_action
 
 
 class JobRequest(Payload):
     request_id: Identifier
-    type: Literal['singbox.status', 'singbox.install', 'singbox.start', 'singbox.stop', 'singbox.restart', 'singbox.rollback']
+    type: Literal[
+        'singbox.status', 'adopt_scan',
+        'singbox.install', 'singbox.start', 'singbox.stop', 'singbox.restart', 'singbox.rollback',
+        'caddy.install', 'caddy.start', 'caddy.stop', 'caddy.restart', 'caddy.rollback',
+    ]
     payload: dict = Field(default_factory=dict)
     deployment_revision: None = None
 
     @model_validator(mode='after')
     def action_schema(self):
-        if self.type == 'singbox.status':
+        if self.type in ('singbox.status', 'adopt_scan'):
             if self.payload:
-                raise ValueError('Status takes no arguments')
+                raise ValueError('Probe job takes no arguments')
         else:
             validate_action(self.type, self.payload)
         return self
@@ -41,7 +45,7 @@ class StatusOutput(SingboxStatus):
 
 class JobResult(Payload):
     status: Literal['success', 'failed']
-    output: Optional[StatusOutput] = None
+    output: Optional[Union[AdoptScanOutput, StatusOutput]] = None
     error: Optional[Literal['probe_failed', 'runtime_unavailable', 'runtime_failed', 'runtime_cancelled', 'rollback_failed']] = None
 
     @model_validator(mode='after')
@@ -77,7 +81,7 @@ def attach_job_routes(app, admin, agent, store_provider):
 
     @admin.get('/runtime/release')
     def runtime_release():
-        return {'version': RELEASE['version'], 'runtime_protocol_version': 1}
+        return {'version': RELEASE['version'], 'caddy_version': CADDY_RELEASE['version'], 'runtime_protocol_version': 1}
 
     @admin.get('/{agent_id}/jobs')
     def list_jobs(agent_id: str):

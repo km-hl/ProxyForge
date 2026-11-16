@@ -5,12 +5,16 @@ import os
 from pathlib import Path
 import re
 
+from .adoption import scan_host, valid_adopt_output
 from .client import AgentConnectionError, JobRejected
 from .system_info import singbox_status
 from .runtime_spec import RUNTIME_ACTIONS, RUNTIME_ERRORS, valid_output, validate_runtime_job
 from .runtime_client import execute as execute_runtime
 from .runtime_engine import RuntimeCancelled
 from .job_lease import JobLease
+
+ADOPT_SCAN_ACTION = 'adopt_scan'
+PROBE_ACTIONS = ('singbox.status', ADOPT_SCAN_ACTION)
 
 
 @contextlib.contextmanager
@@ -49,7 +53,7 @@ def validate_job(job):
             validate_runtime_job(job)
         except ValueError:
             raise AgentConnectionError('Unsupported runtime job schema') from None
-    elif (job.get('type') != 'singbox.status' or job.get('payload') != {} or
+    elif (job.get('type') not in PROBE_ACTIONS or job.get('payload') != {} or
             job.get('deployment_revision') is not None):
         raise AgentConnectionError('Unsupported job schema')
 
@@ -66,10 +70,10 @@ def validate_journal(journal, binding):
         identity, result = entry['identity'], entry['result']
         if (not isinstance(identity, dict) or set(identity) != {'id', 'type', 'deployment_revision'} or
                 not isinstance(identity['id'], str) or not re.fullmatch(r'[a-f0-9]{32}', identity['id']) or
-                identity['type'] not in ('singbox.status', *RUNTIME_ACTIONS) or
+                identity['type'] not in (*PROBE_ACTIONS, *RUNTIME_ACTIONS) or
                 identity['id'] in seen):
             raise ValueError('Invalid job journal identity')
-        if identity['type'] == 'singbox.status':
+        if identity['type'] in PROBE_ACTIONS:
             if identity['deployment_revision'] is not None:
                 raise ValueError('Invalid status revision')
         elif not isinstance(identity['deployment_revision'], str) or not re.fullmatch(r'[a-f0-9]{64}', identity['deployment_revision']):
@@ -83,7 +87,8 @@ def validate_journal(journal, binding):
                 raise ValueError('Invalid job journal failure')
         elif result['status'] == 'success':
             output = result['output']
-            if result['error'] is not None or not valid_output(output):
+            valid = valid_adopt_output(output) if identity['type'] == ADOPT_SCAN_ACTION else valid_output(output)
+            if result['error'] is not None or not valid:
                 raise ValueError('Invalid job journal output')
         else:
             raise ValueError('Invalid job journal status')
@@ -123,7 +128,7 @@ def process_job(client, config, config_path):
                     result = {'status': 'failed', 'output': None, 'error': 'runtime_unavailable'}
             else:
                 try:
-                    output = singbox_status()
+                    output = scan_host() if job['type'] == ADOPT_SCAN_ACTION else singbox_status()
                     result = {'status': 'success', 'output': output, 'error': None}
                 except (OSError, ValueError):
                     result = {'status': 'failed', 'output': None, 'error': 'probe_failed'}
