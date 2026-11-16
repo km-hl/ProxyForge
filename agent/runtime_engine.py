@@ -1,4 +1,6 @@
-"""Root-owned immutable releases and recoverable activation of one fixed unit."""
+"""Root-owned immutable releases, port conflict validation, and recoverable activation."""
+from dataclasses import dataclass
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -8,9 +10,18 @@ import shutil
 import socket
 import subprocess
 import time
+from urllib.parse import urlsplit
 
 from .runtime_download import download_binary
-from .runtime_spec import RELEASE, CONFIG_ACTIONS, validate_runtime_job
+from .runtime_spec import (
+    CONFIG_ACTIONS,
+    RELEASE,
+    SERVICE_CADDY,
+    SERVICE_GOST,
+    SERVICE_SINGBOX,
+    job_service,
+    validate_runtime_job,
+)
 from .deployment_spec import runtime_config
 from .landing_spec import runtime_config as landing_config
 from .chain_spec import CHAIN_ACTIONS, runtime_config as chain_config
@@ -20,6 +31,8 @@ EMPTY_CONFIG = {'log': {'level': 'warn'}, 'inbounds': [], 'outbounds': [{'type':
 STARTUP_HEALTH_TIMEOUT = 20.0
 HEALTH_POLL_INTERVAL = 0.5
 HEALTH_SAMPLES = 3
+UDP_ONLY_INBOUNDS = frozenset(('hysteria2', 'tuic', 'wireguard'))
+DUAL_TRANSPORT_INBOUNDS = frozenset(('shadowsocks', 'snell', 'socks'))
 
 
 def _probe_timeout(maximum, deadline):
@@ -39,6 +52,409 @@ class RollbackFailed(Exception):
     pass
 
 
+@dataclass(frozen=True)
+class RuntimeProfile:
+    service: str
+    unit: str
+    account: str
+    binary_name: str
+    config_filename: str = 'config.json'
+    config_format: str = 'json'
+    check_args: tuple = ('check', '-c')
+    version_args: tuple = ('version',)
+    version_prefix: str = ''
+    empty_config: object = None
+    release: object = None
+    install_action: str = ''
+    start_action: str = ''
+    stop_action: str = ''
+    rollback_action: str = ''
+
+    def check_command(self, release_dir):
+        if not self.check_args:
+            return None
+        return [str(release_dir / self.binary_name), *self.check_args, str(release_dir / self.config_filename)]
+
+    def version_command(self, release_dir):
+        return [str(release_dir / self.binary_name), *self.version_args]
+
+    def version_matches(self, stdout, expected_version):
+        first = stdout.splitlines()[0].strip() if stdout else ''
+        if self.version_prefix:
+            return first == self.version_prefix + expected_version
+        return bool(re.search(r'(?<![\d.])' + re.escape(expected_version) + r'(?![\d.])', first))
+
+
+SINGBOX_PROFILE = RuntimeProfile(
+    service=SERVICE_SINGBOX,
+    unit=UNIT,
+    account='proxyforge-singbox',
+    binary_name='sing-box',
+    config_filename='config.json',
+    config_format='json',
+    check_args=('check', '-c'),
+    version_args=('version',),
+    version_prefix='sing-box version ',
+    empty_config=EMPTY_CONFIG,
+    release=RELEASE,
+    install_action='singbox.install',
+    start_action='singbox.start',
+    stop_action='singbox.stop',
+    rollback_action='singbox.rollback',
+)
+
+CADDY_PROFILE = RuntimeProfile(
+    service=SERVICE_CADDY,
+    unit='proxyforge-caddy.service',
+    account='proxyforge-caddy',
+    binary_name='caddy',
+    config_filename='Caddyfile',
+    config_format='text',
+    check_args=('validate', '--adapter', 'caddyfile', '--config'),
+    version_args=('version',),
+    version_prefix='',
+    empty_config='{\n\tauto_https off\n}\n',
+    release=None,
+    install_action='caddy.install',
+    start_action='caddy.start',
+    stop_action='caddy.stop',
+    rollback_action='caddy.rollback',
+)
+
+GOST_PROFILE = RuntimeProfile(
+    service=SERVICE_GOST,
+    unit='proxyforge-gost.service',
+    account='proxyforge-gost',
+    binary_name='gost',
+    config_filename='config.json',
+    config_format='json',
+    check_args=(),
+    version_args=('-V',),
+    version_prefix='',
+    empty_config={'services': []},
+    release=None,
+    install_action='gost.install',
+    start_action='gost.start',
+    stop_action='gost.stop',
+    rollback_action='gost.rollback',
+)
+
+RUNTIME_PROFILES = {
+    SINGBOX_PROFILE.service: SINGBOX_PROFILE,
+    CADDY_PROFILE.service: CADDY_PROFILE,
+    GOST_PROFILE.service: GOST_PROFILE,
+}
+
+
+@dataclass(frozen=True)
+class PortBinding:
+    service: str
+    transport: str
+    host: str
+    port: int
+
+
+def normalize_bind_host(value):
+    text = str(value or '').strip()
+    for prefix in ('tcp4/', 'tcp6/', 'udp4/', 'udp6/'):
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+            break
+    if text in ('', '*'):
+        return '::'
+    if text.startswith('[') and text.endswith(']'):
+        text = text[1:-1]
+    try:
+        return str(ipaddress.ip_address(text))
+    except ValueError:
+        return text.lower()
+
+
+def _is_ip_literal(value):
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
+
+
+def addresses_conflict(host_a, host_b):
+    a = normalize_bind_host(host_a)
+    b = normalize_bind_host(host_b)
+    if a == b:
+        return True
+    if '::' in (a, b):
+        return True
+    if '0.0.0.0' in (a, b):
+        other = b if a == '0.0.0.0' else a
+        if not _is_ip_literal(other):
+            return True
+        return ipaddress.ip_address(other).version == 4
+    return False
+
+
+def bindings_conflict(first, second):
+    return (first.transport == second.transport and
+            first.port == second.port and
+            addresses_conflict(first.host, second.host))
+
+
+def _parse_addr_host_port(raw, default_port=None):
+    text = str(raw or '').strip()
+    for prefix in ('tcp4/', 'tcp6/', 'udp4/', 'udp6/'):
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+            break
+    if '://' in text:
+        parsed = urlsplit(text)
+        host = normalize_bind_host(parsed.hostname or '::')
+        if parsed.port is not None:
+            return host, parsed.port
+        if parsed.scheme == 'http':
+            return host, 80
+        if parsed.scheme == 'https':
+            return host, 443
+        return host, default_port
+    if text.startswith('['):
+        end = text.find(']')
+        if end != -1:
+            host = normalize_bind_host(text[1:end])
+            rest = text[end + 1:]
+            if rest.startswith(':') and rest[1:].isdigit():
+                return host, int(rest[1:])
+            return host, default_port
+    if text.startswith(':') and text[1:].isdigit():
+        return '::', int(text[1:])
+    if text.count(':') == 1:
+        host_part, port_part = text.rsplit(':', 1)
+        if port_part.isdigit():
+            return normalize_bind_host(host_part), int(port_part)
+    if text.isdigit():
+        return '::', int(text)
+    if default_port is not None and text:
+        return normalize_bind_host(text), default_port
+    return None, None
+
+
+def _singbox_transports(inbound):
+    kind = str(inbound.get('type') or '').lower()
+    network = inbound.get('network')
+    if isinstance(network, str) and network.lower() in ('tcp', 'udp'):
+        return (network.lower(),)
+    if isinstance(network, (list, tuple)):
+        items = tuple(item.lower() for item in network if isinstance(item, str) and item.lower() in ('tcp', 'udp'))
+        if items:
+            return items
+    if kind in UDP_ONLY_INBOUNDS:
+        return ('udp',)
+    if kind in DUAL_TRANSPORT_INBOUNDS:
+        return ('tcp', 'udp')
+    return ('tcp',)
+
+
+def _extract_singbox_bindings(service, config):
+    bindings = []
+    for section, default_transports in (('inbounds', None), ('endpoints', ('udp',))):
+        entries = config.get(section) or []
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict) or 'listen_port' not in entry:
+                continue
+            port = entry['listen_port']
+            if type(port) is not int:
+                raise ValueError('Invalid listen_port')
+            host = normalize_bind_host(entry.get('listen') or '::')
+            transports = default_transports or _singbox_transports(entry)
+            for transport in transports:
+                bindings.append(PortBinding(service, transport, host, port))
+    return bindings
+
+
+def _extract_caddy_json_bindings(service, config):
+    bindings = []
+    servers = ((config.get('apps') or {}).get('http') or {}).get('servers') or {}
+    if not isinstance(servers, dict):
+        return bindings
+    for server in servers.values():
+        if not isinstance(server, dict):
+            continue
+        protocols = server.get('protocols')
+        transports = ('tcp', 'udp') if isinstance(protocols, list) and 'h3' in protocols else ('tcp',)
+        for addr in server.get('listen') or []:
+            host, port = _parse_addr_host_port(addr)
+            if port is None:
+                continue
+            for transport in transports:
+                bindings.append(PortBinding(service, transport, host, port))
+    return bindings
+
+
+def _extract_caddyfile_bindings(service, text):
+    bindings = []
+    seen = set()
+    depth = 0
+    current_addrs = []
+    bind_hosts = []
+    for raw_line in text.splitlines():
+        line = raw_line.split('#', 1)[0].strip()
+        if not line:
+            continue
+        if depth == 0 and '{' in line:
+            header = line.split('{', 1)[0].strip()
+            if header:
+                current_addrs = [token.rstrip(',') for token in header.split() if token.rstrip(',')]
+            else:
+                current_addrs = []
+            bind_hosts = []
+        elif depth == 1 and current_addrs and line.startswith('bind '):
+            bind_hosts.extend(normalize_bind_host(tok) for tok in line.split()[1:])
+        depth += line.count('{') - line.count('}')
+        if depth <= 0:
+            depth = 0
+            if current_addrs:
+                hosts_override = bind_hosts or [None]
+                for addr in current_addrs:
+                    host, port = _parse_addr_host_port(addr, default_port=443)
+                    if port is None:
+                        continue
+                    for override in hosts_override:
+                        effective_host = override if override is not None else (host if _is_ip_literal(host) or host in ('::', '0.0.0.0') else '::')
+                        key = ('tcp', effective_host, port)
+                        if key not in seen:
+                            seen.add(key)
+                            bindings.append(PortBinding(service, 'tcp', effective_host, port))
+                current_addrs = []
+                bind_hosts = []
+    return bindings
+
+
+GOST_UDP_TYPES = frozenset(('udp', 'rudp', 'quic', 'kcp'))
+
+
+def _extract_gost_bindings(service, config):
+    bindings = []
+    for item in config.get('services') or []:
+        if not isinstance(item, dict) or not item.get('addr'):
+            continue
+        host, port = _parse_addr_host_port(item.get('addr'))
+        if port is None:
+            continue
+        listener_type = str(((item.get('listener') or {}).get('type')) or '').lower()
+        handler_type = str(((item.get('handler') or {}).get('type')) or '').lower()
+        transport = 'udp' if (listener_type in GOST_UDP_TYPES or handler_type in GOST_UDP_TYPES) else 'tcp'
+        bindings.append(PortBinding(service, transport, host, port))
+    return bindings
+
+
+_CONFIG_BINDING_EXTRACTORS = {
+    SERVICE_SINGBOX: _extract_singbox_bindings,
+    SERVICE_CADDY: _extract_caddy_json_bindings,
+    SERVICE_GOST: _extract_gost_bindings,
+}
+
+
+def extract_config_bindings(service, config_data):
+    """Extract normalized listening PortBindings for sing-box, caddy, or go-gost configs."""
+    if isinstance(config_data, str):
+        stripped = config_data.strip()
+        if not stripped:
+            return []
+        try:
+            parsed = json.loads(stripped)
+        except ValueError:
+            if service == SERVICE_CADDY:
+                return _extract_caddyfile_bindings(service, stripped)
+            raise ValueError('Invalid runtime JSON configuration') from None
+        config_data = parsed
+    if not isinstance(config_data, dict):
+        raise ValueError('Invalid runtime configuration payload')
+    extractor = _CONFIG_BINDING_EXTRACTORS.get(service)
+    if extractor is None:
+        raise ValueError('Unsupported managed service')
+    return extractor(service, config_data)
+
+
+def collect_active_bindings(service_roots, *, exclude_service=None):
+    bindings = []
+    if not service_roots:
+        return bindings
+    for service, root in service_roots.items():
+        if service == exclude_service:
+            continue
+        profile = RUNTIME_PROFILES.get(service)
+        if not profile:
+            continue
+        config_path = Path(root) / 'current' / profile.config_filename
+        if not config_path.is_file():
+            continue
+        text = config_path.read_text(encoding='utf-8')
+        bindings.extend(extract_config_bindings(service, text))
+    return bindings
+
+
+def _probe_host_socket(binding):
+    family = socket.AF_INET6 if ':' in binding.host else socket.AF_INET
+    socktype = socket.SOCK_DGRAM if binding.transport == 'udp' else socket.SOCK_STREAM
+    address = (binding.host, binding.port)
+    with socket.socket(family, socktype) as probe:
+        if binding.transport == 'tcp':
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if family == socket.AF_INET6 and binding.host == '::':
+            probe.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        probe.bind(address)
+
+
+def validate_port_allocation(service, candidate_config, *, service_roots=None, probe_sockets=False):
+    """Validate port bounds, intra-config uniqueness, and cross-service port conflicts."""
+    candidate = extract_config_bindings(service, candidate_config)
+    for index, binding in enumerate(candidate):
+        if type(binding.port) is not int or not 1 <= binding.port <= 65535:
+            raise ValueError('Listening port out of range')
+        for previous in candidate[:index]:
+            if bindings_conflict(binding, previous):
+                raise ValueError('Duplicate listening port inside %s configuration: %s:%d/%s' % (
+                    service, binding.host, binding.port, binding.transport))
+    sibling_bindings = collect_active_bindings(service_roots, exclude_service=service)
+    for binding in candidate:
+        for other in sibling_bindings:
+            if bindings_conflict(binding, other):
+                raise ValueError('Port %d/%s on %s conflicts with %s' % (
+                    binding.port, binding.transport, binding.host, other.service))
+    if probe_sockets:
+        own_active = set()
+        if service_roots and service in service_roots:
+            own_active = set(collect_active_bindings({service: service_roots[service]}))
+        for binding in candidate:
+            if binding in own_active:
+                continue
+            try:
+                _probe_host_socket(binding)
+            except OSError:
+                raise ValueError('Listening port %s:%d/%s is already in use' % (
+                    binding.host, binding.port, binding.transport)) from None
+    return candidate
+
+
+def allocate_loopback_port(used_bindings, *, start=18000, end=28000, host='127.0.0.1',
+                         transport='tcp', probe_host=True):
+    """Allocate a deterministic free loopback port not occupied by any managed service."""
+    if start > end or not 1 <= start <= 65535 or not 1 <= end <= 65535:
+        raise ValueError('Invalid port allocation range')
+    normalized_host = normalize_bind_host(host)
+    for port in range(start, end + 1):
+        candidate = PortBinding('_allocated', transport, normalized_host, port)
+        if any(bindings_conflict(candidate, existing) for existing in used_bindings):
+            continue
+        if probe_host:
+            try:
+                _probe_host_socket(candidate)
+            except OSError:
+                continue
+        return port
+    raise ValueError('No free loopback port available in range')
+
+
 def sync_directory(path):
     fd = os.open(str(path), os.O_RDONLY)
     try:
@@ -47,12 +463,13 @@ def sync_directory(path):
         os.close(fd)
 
 
-def write_json(path, value, mode=0o600):
+def write_text(path, text, mode=0o600):
+    """Atomically replace a file with UTF-8 text and fsync parent directory."""
     temporary = path.with_name('.' + path.name + '.' + secrets.token_hex(8))
     try:
         fd = os.open(str(temporary), os.O_CREAT | os.O_EXCL | os.O_WRONLY, mode)
         with os.fdopen(fd, 'w', encoding='utf-8') as output:
-            json.dump(value, output)
+            output.write(text)
             output.flush()
             os.fsync(output.fileno())
         os.replace(temporary, path)
@@ -61,49 +478,77 @@ def write_json(path, value, mode=0o600):
         temporary.unlink(missing_ok=True)
 
 
+def write_json(path, value, mode=0o600):
+    write_text(path, json.dumps(value), mode)
+
+
+def _probe_tcp_ports(profile, config_text):
+    if profile.service == SERVICE_SINGBOX:
+        config = json.loads(config_text)
+        ports = []
+        for inbound in config.get('inbounds', []):
+            if str(inbound.get('type') or '').lower() in UDP_ONLY_INBOUNDS:
+                continue
+            if 'listen_port' in inbound:
+                ports.append(inbound['listen_port'])
+        return ports
+    return [b.port for b in extract_config_bindings(profile.service, config_text) if b.transport == 'tcp']
+
+
 class SystemBackend:
-    def __init__(self):
+    profile = SINGBOX_PROFILE
+    uid = None
+    gid = None
+
+    def __init__(self, profile=SINGBOX_PROFILE):
         import pwd
-        account = pwd.getpwnam('proxyforge-singbox')
+        self.profile = profile
+        account = pwd.getpwnam(profile.account)
         self.uid, self.gid = account.pw_uid, account.pw_gid
 
     def check(self, release):
         # Candidate config is readable by the isolated runtime user, never world-readable.
-        os.chown(release, 0, self.gid)
+        config_path = release / self.profile.config_filename
+        if self.gid is not None:
+            os.chown(release, 0, self.gid)
+            os.chown(config_path, 0, self.gid)
         release.chmod(0o755)
-        os.chown(release / 'config.json', 0, self.gid)
-        (release / 'config.json').chmod(0o640)
-        result = subprocess.run([str(release / 'sing-box'), 'check', '-c', str(release / 'config.json')],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20,
-                                user=self.uid, group=self.gid, extra_groups=[])
-        if result.returncode:
-            raise ValueError('Runtime configuration check failed')
-        result = subprocess.run([str(release / 'sing-box'), 'version'], capture_output=True, text=True,
-                                timeout=5, user=self.uid, group=self.gid, extra_groups=[])
-        first = result.stdout.splitlines()[0] if result.stdout else ''
+        config_path.chmod(0o640)
+        run_kwargs = {'timeout': 20}
+        version_kwargs = {'capture_output': True, 'text': True, 'timeout': 5}
+        if self.uid is not None and self.gid is not None:
+            identity = {'user': self.uid, 'group': self.gid, 'extra_groups': []}
+            run_kwargs.update(identity)
+            version_kwargs.update(identity)
+        check_cmd = self.profile.check_command(release)
+        if check_cmd is not None:
+            result = subprocess.run(check_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **run_kwargs)
+            if result.returncode:
+                raise ValueError('Runtime configuration check failed')
+        result = subprocess.run(self.profile.version_command(release), **version_kwargs)
         expected = json.loads((release / 'release.json').read_text())['version']
-        if result.returncode or first != 'sing-box version ' + expected:
+        if result.returncode or not self.profile.version_matches(result.stdout, expected):
             raise ValueError('Runtime version check failed')
 
     def active(self, *, deadline=None):
-        return subprocess.run(['/usr/bin/systemctl', 'is-active', '--quiet', UNIT],
+        return subprocess.run(['/usr/bin/systemctl', 'is-active', '--quiet', self.profile.unit],
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                               timeout=_probe_timeout(5, deadline)).returncode == 0
 
     def matches(self, release, *, deadline=None):
         if not self.active(deadline=deadline):
             return False
-        value = subprocess.run(['/usr/bin/systemctl', 'show', '--property=MainPID', '--value', UNIT],
+        value = subprocess.run(['/usr/bin/systemctl', 'show', '--property=MainPID', '--value', self.profile.unit],
                                capture_output=True, text=True, timeout=_probe_timeout(5, deadline))
         pid = value.stdout.strip()
         if value.returncode or not pid.isdigit() or int(pid) <= 1:
             return False
         try:
-            if Path('/proc/' + pid + '/exe').resolve(strict=True) != (release / 'sing-box').resolve(strict=True):
+            if Path('/proc/' + pid + '/exe').resolve(strict=True) != (release / self.profile.binary_name).resolve(strict=True):
                 return False
-            config = json.loads((release / 'config.json').read_text())
-            for inbound in config.get('inbounds', []):
-                with socket.create_connection(('::1', inbound['listen_port']),
+            config_text = (release / self.profile.config_filename).read_text()
+            for port in _probe_tcp_ports(self.profile, config_text):
+                with socket.create_connection(('::1', port),
                                               timeout=_probe_timeout(1, deadline)):
                     pass
             return True
@@ -111,7 +556,7 @@ class SystemBackend:
             return False
 
     def stop(self):
-        subprocess.run(['/usr/bin/systemctl', 'stop', UNIT], check=True, timeout=30,
+        subprocess.run(['/usr/bin/systemctl', 'stop', self.profile.unit], check=True, timeout=30,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if self.active():
             raise ValueError('Runtime did not stop')
@@ -120,9 +565,9 @@ class SystemBackend:
         if self.matches(release):
             return
         # A never-started unit may have no loaded failure state yet.
-        subprocess.run(['/usr/bin/systemctl', 'reset-failed', UNIT], check=False, timeout=5,
+        subprocess.run(['/usr/bin/systemctl', 'reset-failed', self.profile.unit], check=False, timeout=5,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(['/usr/bin/systemctl', 'restart', UNIT], check=True, timeout=30,
+        subprocess.run(['/usr/bin/systemctl', 'restart', self.profile.unit], check=True, timeout=30,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         # Type=simple can report started before exec and listener readiness.
         # Allow one bounded initial grace, then keep the existing stable checks.
@@ -148,9 +593,15 @@ class SystemBackend:
 
 
 class RuntimeEngine:
-    def __init__(self, root, backend, arch, downloader=download_binary):
-        self.root, self.backend, self.arch, self.downloader = Path(root), backend, arch, downloader
-        (self.root / 'releases').mkdir(exist_ok=True)
+    def __init__(self, root, backend, arch, downloader=download_binary, *,
+                 profile=SINGBOX_PROFILE, service_roots=None):
+        self.root = Path(root)
+        self.backend = backend
+        self.arch = arch
+        self.downloader = downloader
+        self.profile = profile
+        self.service_roots = service_roots
+        (self.root / 'releases').mkdir(parents=True, exist_ok=True)
 
     def pointer(self, name):
         path = self.root / name
@@ -248,6 +699,29 @@ class RuntimeEngine:
                     raise ValueError('Invalid managed release directory')
                 shutil.rmtree(path)
 
+    def _read_config(self, release_rel):
+        path = self.root / release_rel / self.profile.config_filename
+        text = path.read_text(encoding='utf-8')
+        return json.loads(text) if self.profile.config_format == 'json' else text
+
+    def _write_config(self, candidate, config):
+        target = candidate / self.profile.config_filename
+        if self.profile.config_format == 'json':
+            write_json(target, config)
+        else:
+            write_text(target, config)
+
+    def _render_job_config(self, action, job, source):
+        if action == 'deployment.apply':
+            return runtime_config(job['deployment'])
+        if action == 'landing.apply':
+            return landing_config(job['deployment'])
+        if action in CHAIN_ACTIONS:
+            return chain_config(job['deployment'])
+        if action in ('deployment.remove', 'landing.remove'):
+            return self.profile.empty_config
+        return self._read_config(source) if source else self.profile.empty_config
+
     def apply(self, job, guard=lambda: None):
         validate_runtime_job(job)
         self.recover()
@@ -260,20 +734,21 @@ class RuntimeEngine:
         current, previous = self.pointer('current'), self.pointer('previous')
         was_running = self.backend.active()
         action = job['type']
-        if action not in ('singbox.install', *CONFIG_ACTIONS) and not current:
+        if action not in (self.profile.install_action, *CONFIG_ACTIONS) and not current:
             raise ValueError('Runtime is not installed')
-        if action == 'singbox.rollback' and not previous:
+        if action == self.profile.rollback_action and not previous:
             raise ValueError('No previous release')
         new = current
-        running = action != 'singbox.stop'
-        if action == 'singbox.rollback':
+        running = action != self.profile.stop_action
+        if action == self.profile.rollback_action:
             running = was_running
         already_running = bool(current and self.backend.matches(self.root / current))
-        same_version = bool(current and json.loads((self.root / current / 'release.json').read_text())['version'] == RELEASE['version'])
-        unchanged = already_running and (action == 'singbox.start' or (action == 'singbox.install' and same_version))
+        pinned = self.profile.release or RELEASE
+        same_version = bool(current and json.loads((self.root / current / 'release.json').read_text())['version'] == pinned['version'])
+        unchanged = already_running and (action == self.profile.start_action or (action == self.profile.install_action and same_version))
         if unchanged:
             self.backend.check(self.root / current)
-        if action != 'singbox.stop' and not unchanged:
+        if action != self.profile.stop_action and not unchanged:
             new = 'releases/' + job['id']
             candidate = self.root / new
             if candidate.exists():
@@ -283,27 +758,20 @@ class RuntimeEngine:
                 shutil.rmtree(candidate)
             candidate.mkdir(mode=0o750)
             try:
-                source = previous if action == 'singbox.rollback' else current
-                if action == 'singbox.install' or (action in CONFIG_ACTIONS and not current):
+                source = previous if action == self.profile.rollback_action else current
+                if action == self.profile.install_action or (action in CONFIG_ACTIONS and not current):
                     self.downloader(candidate, self.arch, guard)
-                    release_info = {'version': RELEASE['version']}
+                    release_info = {'version': pinned['version']}
                 else:
-                    shutil.copy2(self.root / source / 'sing-box', candidate / 'sing-box')
+                    shutil.copy2(self.root / source / self.profile.binary_name, candidate / self.profile.binary_name)
                     release_info = json.loads((self.root / source / 'release.json').read_text())
-                config = json.loads((self.root / source / 'config.json').read_text()) if source else EMPTY_CONFIG
-                if action == 'deployment.apply':
-                    config = runtime_config(job['deployment'])
-                elif action == 'landing.apply':
-                    config = landing_config(job['deployment'])
-                elif action in CHAIN_ACTIONS:
-                    config = chain_config(job['deployment'])
-                elif action in ('deployment.remove', 'landing.remove'):
-                    config = EMPTY_CONFIG
-                write_json(candidate / 'config.json', config)
+                config = self._render_job_config(action, job, source)
+                validate_port_allocation(self.profile.service, config, service_roots=self.service_roots)
+                self._write_config(candidate, config)
                 write_json(candidate / 'release.json', release_info, 0o644)
                 self.backend.check(candidate)
                 # Copied binaries also need durability before publishing the generation.
-                with (candidate / 'sing-box').open('rb') as binary:
+                with (candidate / self.profile.binary_name).open('rb') as binary:
                     os.fsync(binary.fileno())
                 sync_directory(candidate)
                 sync_directory(candidate.parent)
@@ -330,3 +798,34 @@ class RuntimeEngine:
             if job['id'] not in self.receipts():
                 self.rollback(transaction)
             raise
+
+
+class RuntimeCoordinator:
+    """Coordinate multiple isolated RuntimeEngine instances with shared port collision guards."""
+
+    def __init__(self, engines):
+        self.engines = dict(engines)
+        self.service_roots = {service: engine.root for service, engine in self.engines.items()}
+        for engine in self.engines.values():
+            engine.service_roots = self.service_roots
+
+    def recover(self):
+        for engine in self.engines.values():
+            engine.recover()
+
+    def status(self, service=SERVICE_SINGBOX):
+        if service not in self.engines:
+            raise ValueError('Unsupported managed service')
+        return self.engines[service].status()
+
+    def apply(self, job, guard=lambda: None):
+        validate_runtime_job(job)
+        service = job_service(job['type'])
+        if service not in self.engines:
+            raise ValueError('Managed runtime service is not enabled')
+        return self.engines[service].apply(job, guard)
+
+    def allocate_port(self, *, start=18000, end=28000, host='127.0.0.1', transport='tcp', probe_host=True):
+        used = collect_active_bindings(self.service_roots)
+        return allocate_loopback_port(used, start=start, end=end, host=host,
+                                      transport=transport, probe_host=probe_host)

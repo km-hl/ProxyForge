@@ -7,10 +7,22 @@ from .deployment_spec import DEPLOYMENT_ACTIONS, validate_reference, validate_sp
 from .landing_spec import LANDING_ACTIONS, validate_spec as validate_landing_spec
 from .chain_spec import CHAIN_ACTIONS, validate_spec as validate_chain_spec
 
+SERVICE_SINGBOX = 'sing-box'
+SERVICE_CADDY = 'caddy'
+SERVICE_GOST = 'go-gost'
+MANAGED_SERVICES = (SERVICE_SINGBOX, SERVICE_CADDY, SERVICE_GOST)
+
 RELEASE = json.loads(Path(__file__).with_name('singbox-release.json').read_text(encoding='utf-8'))
 CONFIG_ACTIONS = (*DEPLOYMENT_ACTIONS, *LANDING_ACTIONS, *CHAIN_ACTIONS)
 RUNTIME_ACTIONS = ('singbox.install', 'singbox.start', 'singbox.stop', 'singbox.restart', 'singbox.rollback', *CONFIG_ACTIONS)
 RUNTIME_ERRORS = ('runtime_unavailable', 'runtime_failed', 'runtime_cancelled', 'rollback_failed')
+
+
+def job_service(action):
+    """Map an allowlisted runtime action to its owning managed runtime service."""
+    if action in RUNTIME_ACTIONS:
+        return SERVICE_SINGBOX
+    raise ValueError('Unsupported runtime action')
 
 
 def validate_action(action, payload):

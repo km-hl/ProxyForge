@@ -1,4 +1,4 @@
-"""Pinned, bounded HTTPS downloads; extract only the regular sing-box binary."""
+"""Pinned, bounded HTTPS downloads; extract only verified regular binaries."""
 import hashlib
 import os
 from pathlib import Path
@@ -12,32 +12,42 @@ from .runtime_spec import RELEASE
 MAX_ARCHIVE = 64 * 1024 * 1024
 MAX_BINARY = 160 * 1024 * 1024
 DOWNLOAD_SECONDS = 300
+TRUSTED_RELEASE_HOSTS = (
+    'github.com',
+    'release-assets.githubusercontent.com',
+    'objects.githubusercontent.com',
+)
 
 
 class ReleaseRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         parsed = urllib.parse.urlsplit(newurl)
-        if (parsed.scheme != 'https' or parsed.hostname not in ('github.com', 'release-assets.githubusercontent.com') or
+        if (parsed.scheme != 'https' or parsed.hostname not in TRUSTED_RELEASE_HOSTS or
                 parsed.username or parsed.password or parsed.port not in (None, 443)):
             raise ValueError('Untrusted release redirect')
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def extract_binary(archive, destination, arch):
-    asset = RELEASE['assets'][arch]
+def verify_sha256(archive, expected_sha256):
     checksum = hashlib.sha256()
     with Path(archive).open('rb') as source:
         for block in iter(lambda: source.read(1024 * 1024), b''):
             checksum.update(block)
-    if checksum.hexdigest() != asset['sha256']:
+    if checksum.hexdigest() != expected_sha256:
         raise ValueError('Release checksum mismatch')
-    expected = 'sing-box-' + RELEASE['version'] + '-linux-' + arch + '/sing-box'
+
+
+def extract_release_binary(archive, destination, expected_sha256, member_names):
+    verify_sha256(archive, expected_sha256)
+    expected = (member_names,) if isinstance(member_names, str) else tuple(member_names)
+    if not expected:
+        raise ValueError('Missing expected binary path')
     with tarfile.open(archive, 'r:gz') as package:
         found = False
         for count, member in enumerate(package):
             if count > 64:
                 raise ValueError('Unexpected archive layout')
-            if member.name != expected:
+            if member.name not in expected:
                 continue
             if found or not member.isfile() or not 0 < member.size <= MAX_BINARY:
                 raise ValueError('Invalid release binary')
@@ -57,9 +67,10 @@ def extract_binary(archive, destination, arch):
     Path(destination).chmod(0o755)
 
 
-def download_binary(directory, arch, guard=lambda: None):
-    asset = RELEASE['assets'][arch]
-    url = 'https://github.com/SagerNet/sing-box/releases/download/v' + RELEASE['version'] + '/' + asset['name']
+def download_release_binary(directory, url, expected_sha256, member_names, binary_name, guard=lambda: None):
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme != 'https' or parsed.hostname not in TRUSTED_RELEASE_HOSTS:
+        raise ValueError('Untrusted release URL')
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), ReleaseRedirect())
     deadline = time.monotonic() + DOWNLOAD_SECONDS
     archive = Path(directory) / 'release.tar.gz'
@@ -81,6 +92,19 @@ def download_binary(directory, arch, guard=lambda: None):
                     raise ValueError('Release exceeds limit')
                 output.write(data)
         guard()
-        extract_binary(archive, Path(directory) / 'sing-box', arch)
+        extract_release_binary(archive, Path(directory) / binary_name, expected_sha256, member_names)
     finally:
         archive.unlink(missing_ok=True)
+
+
+def extract_binary(archive, destination, arch):
+    asset = RELEASE['assets'][arch]
+    expected = 'sing-box-' + RELEASE['version'] + '-linux-' + arch + '/sing-box'
+    extract_release_binary(archive, destination, asset['sha256'], expected)
+
+
+def download_binary(directory, arch, guard=lambda: None):
+    asset = RELEASE['assets'][arch]
+    url = 'https://github.com/SagerNet/sing-box/releases/download/v' + RELEASE['version'] + '/' + asset['name']
+    expected = 'sing-box-' + RELEASE['version'] + '-linux-' + arch + '/sing-box'
+    download_release_binary(directory, url, asset['sha256'], expected, 'sing-box', guard)
