@@ -2,7 +2,16 @@
 
 这份指南提供开发计划第 16 项的完整入口：固定 bootstrap → 校验其 SHA256 → 下载固定官方源码归档 → 校验归档 → 在 root 控制的目录中准备 Agent → 执行首次安装。控制台「添加服务器」提供相同的固定安装命令；平台实测范围见文末。
 
-命令入口体验参考 [Komari 官方快速安装](https://www.komari.wiki/install/quick-start)，凭据继续采用 ProxyForge 的隐藏 TTY 输入。没有采用将注册 token 放入参数的方式。
+命令入口体验参考 [Komari 官方快速安装](https://www.komari.wiki/install/quick-start)，凭据继续采用 ProxyForge 的隐藏 TTY 输入或控制台按需内联的一次性 `pfreg_` 注册凭据。
+
+## 快速一条命令安装（推荐，Komari 风格）
+
+自当前版本起，Controller 直接托管经启动校验的只读安装包 `/api/agent/package.tar.gz` 与一键安装脚本 `/api/agent/install.sh`（内置精确包 SHA256）。在控制台 **「Agent 服务器 → 添加服务器」** 中填写服务器名称并勾选所需可选项，即可一键复制一条命令到目标 Linux（Debian 12/13、Ubuntu 22.04/24.04 x86_64/arm64）执行：
+
+- 支持可选项：`--runtime`（同时启用 `sing-box` / `Caddy` / `go-gost` 托管辅助服务）、`--with-singbox` / `--with-caddy` / `--with-gost` / `--with-all`（预装固定版本二进制）、`--adopt-scan`（上线后立即扫描存量节点）、`--upgrade`（原地升级代码并保留原有配置密钥）、`--reinstall`（清理后全新重装）、`-k/--insecure`、`-t`（单次 10 分钟有效的注册凭据）及 `--gh-proxy`。
+- 默认使用无密钥隐藏 TTY 提示、或在控制台勾选「内联一次性凭据」生成自动注册的一键命令；关闭弹窗或取消勾选立即清除页面内暂存凭据。
+
+下方仍完整保留从 GitHub 固定 Commit 引导安装的离线可核验方式：
 
 安装参数、英文终端提示与中文处理建议见[安装命令帮助](AGENT_INSTALL_HELP.md)。
 

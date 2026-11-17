@@ -37,16 +37,29 @@ def controller_url(value, allow_insecure=False):
     return value.rstrip("/")
 
 
+ALLOWED_ENDPOINTS = frozenset((
+    "/api/agent/register",
+    "/api/agent/heartbeat",
+    "/api/agent/jobs/claim",
+    "/api/agent/adoptions",
+    "/api/agent/traffic",
+    "/api/agent/best-exit",
+))
+
+
 class Client:
     def __init__(self, server, allow_insecure=False, ca_file=None):
         self.server = controller_url(server, allow_insecure)
         context = ssl.create_default_context(cafile=ca_file)
+        if allow_insecure and not ca_file:
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
         self.opener = urllib.request.build_opener(
             urllib.request.ProxyHandler({}), NoRedirect(),
             urllib.request.HTTPSHandler(context=context))
 
     def post(self, path, payload, token=None):
-        if path not in ("/api/agent/register", "/api/agent/heartbeat", "/api/agent/jobs/claim") and not re.fullmatch(
+        if path not in ALLOWED_ENDPOINTS and not re.fullmatch(
                 r'/api/agent/jobs/[a-f0-9]{32}/(start|result|renew)', path):
             raise ValueError("Unsupported Agent endpoint")
         content = json.dumps(payload).encode("utf-8")

@@ -20,12 +20,28 @@ TRUSTED_RELEASE_HOSTS = (
 
 
 class ReleaseRedirect(urllib.request.HTTPRedirectHandler):
+    def __init__(self, allowed_hosts=TRUSTED_RELEASE_HOSTS):
+        self.allowed_hosts = allowed_hosts
+
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         parsed = urllib.parse.urlsplit(newurl)
-        if (parsed.scheme != 'https' or parsed.hostname not in TRUSTED_RELEASE_HOSTS or
+        if (parsed.scheme != 'https' or (self.allowed_hosts is not None and parsed.hostname not in self.allowed_hosts) or
                 parsed.username or parsed.password or parsed.port not in (None, 443)):
             raise ValueError('Untrusted release redirect')
         return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _resolve_mirror_url(url, mirror_prefix):
+    if not mirror_prefix:
+        return url, TRUSTED_RELEASE_HOSTS
+    if not isinstance(mirror_prefix, str):
+        raise ValueError('Invalid mirror URL')
+    parsed = urllib.parse.urlsplit(mirror_prefix.strip())
+    if (parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password or
+            parsed.query or parsed.fragment):
+        raise ValueError('Mirror URL must be a plain https:// URL')
+    prefix = mirror_prefix.strip().rstrip('/')
+    return prefix + '/' + url, None
 
 
 def verify_sha256(archive, expected_sha256):
@@ -67,15 +83,16 @@ def extract_release_binary(archive, destination, expected_sha256, member_names):
     Path(destination).chmod(0o755)
 
 
-def download_release_binary(directory, url, expected_sha256, member_names, binary_name, guard=lambda: None):
-    parsed = urllib.parse.urlsplit(url)
-    if parsed.scheme != 'https' or parsed.hostname not in TRUSTED_RELEASE_HOSTS:
+def download_release_binary(directory, url, expected_sha256, member_names, binary_name, guard=lambda: None, *, mirror_prefix=None):
+    target_url, allowed_hosts = _resolve_mirror_url(url, mirror_prefix)
+    parsed = urllib.parse.urlsplit(target_url)
+    if parsed.scheme != 'https' or (allowed_hosts is not None and parsed.hostname not in allowed_hosts):
         raise ValueError('Untrusted release URL')
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), ReleaseRedirect())
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), ReleaseRedirect(allowed_hosts))
     deadline = time.monotonic() + DOWNLOAD_SECONDS
     archive = Path(directory) / 'release.tar.gz'
     try:
-        request = urllib.request.Request(url, headers={'User-Agent': 'ProxyForge-runtime'})
+        request = urllib.request.Request(target_url, headers={'User-Agent': 'ProxyForge-runtime'})
         with opener.open(request, timeout=15) as response, archive.open('xb') as output:
             total = 0
             while True:
@@ -103,11 +120,11 @@ def extract_binary(archive, destination, arch):
     extract_release_binary(archive, destination, asset['sha256'], expected)
 
 
-def download_binary(directory, arch, guard=lambda: None):
+def download_binary(directory, arch, guard=lambda: None, *, mirror_prefix=None):
     asset = RELEASE['assets'][arch]
     url = 'https://github.com/SagerNet/sing-box/releases/download/v' + RELEASE['version'] + '/' + asset['name']
     expected = 'sing-box-' + RELEASE['version'] + '-linux-' + arch + '/sing-box'
-    download_release_binary(directory, url, asset['sha256'], expected, 'sing-box', guard)
+    download_release_binary(directory, url, asset['sha256'], expected, 'sing-box', guard, mirror_prefix=mirror_prefix)
 
 
 def extract_caddy_binary(archive, destination, arch):
@@ -115,10 +132,10 @@ def extract_caddy_binary(archive, destination, arch):
     extract_release_binary(archive, destination, asset['sha256'], ('caddy', './caddy'))
 
 
-def download_caddy_binary(directory, arch, guard=lambda: None):
+def download_caddy_binary(directory, arch, guard=lambda: None, *, mirror_prefix=None):
     asset = CADDY_RELEASE['assets'][arch]
     url = 'https://github.com/caddyserver/caddy/releases/download/v' + CADDY_RELEASE['version'] + '/' + asset['name']
-    download_release_binary(directory, url, asset['sha256'], ('caddy', './caddy'), 'caddy', guard)
+    download_release_binary(directory, url, asset['sha256'], ('caddy', './caddy'), 'caddy', guard, mirror_prefix=mirror_prefix)
 
 
 def extract_gost_binary(archive, destination, arch):
@@ -126,7 +143,7 @@ def extract_gost_binary(archive, destination, arch):
     extract_release_binary(archive, destination, asset['sha256'], ('gost', './gost'))
 
 
-def download_gost_binary(directory, arch, guard=lambda: None):
+def download_gost_binary(directory, arch, guard=lambda: None, *, mirror_prefix=None):
     asset = GOST_RELEASE['assets'][arch]
     url = 'https://github.com/go-gost/gost/releases/download/v' + GOST_RELEASE['version'] + '/' + asset['name']
-    download_release_binary(directory, url, asset['sha256'], ('gost', './gost'), 'gost', guard)
+    download_release_binary(directory, url, asset['sha256'], ('gost', './gost'), 'gost', guard, mirror_prefix=mirror_prefix)

@@ -12,6 +12,7 @@ import uuid
 
 from .client import Client, AgentConnectionError, CredentialRejected
 from .system_info import collect
+from .adoption import scan_host
 from .jobs import process_job, runner_lock
 from .traffic_collector import flush_gost_traffic
 
@@ -116,6 +117,7 @@ def main(argv=None):
     enrollment.add_argument("--ca-file")
     runtime = commands.add_parser("run")
     runtime.add_argument("--once", action="store_true")
+    commands.add_parser("adopt-scan")
     args = parser.parse_args(argv)
     try:
         if args.command == "register":
@@ -124,6 +126,15 @@ def main(argv=None):
             token = sys.stdin.readline(256).strip()
             register(args.config, args.server, token, args.allow_insecure, args.ca_file)
             print("Agent registered; credentials saved privately")
+            return 0
+        if args.command == "adopt-scan":
+            config = load_config(args.config)
+            if not config.get("token"):
+                raise ValueError("Registration incomplete")
+            client = Client(config["controller"], config.get("allow_insecure", False), config.get("ca_file"))
+            scan = scan_host()
+            result = client.post("/api/agent/adoptions", {**scan, "instance_id": config["instance_id"]}, config["token"])
+            print(f"Adoption scan uploaded ({result.get('adopted_count', 0)} endpoints)")
             return 0
         return run(args.config, args.once)
     except (AgentConnectionError, ValueError, OSError, KeyError):

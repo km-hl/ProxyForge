@@ -12,7 +12,12 @@ from pydantic import BaseModel, Field, StrictBool, StrictInt, constr
 
 from proxyforge.security.auth_rate_limit import LoginRateLimiter
 from proxyforge.control.control_store import CapacityExceeded, InvalidRegistration, UnauthorizedAgent
-from proxyforge.control.agent_installation import installation_info
+from proxyforge.control.agent_installation import (
+    build_agent_bundle,
+    controller_url,
+    installation_info,
+    render_quick_install_script,
+)
 
 ShortText = constr(strict=True, max_length=128)
 Identifier = constr(strict=True, pattern=r"^[a-f0-9]{32}$")
@@ -209,6 +214,32 @@ def attach_agent_routes(app, management_auth, store_provider):
         except KeyError:
             raise HTTPException(status_code=404, detail="Agent not found")
         return Response(status_code=204)
+
+    @agent.get("/package.tar.gz")
+    def get_agent_package():
+        payload, digest = build_agent_bundle()
+        return Response(
+            content=payload,
+            media_type="application/gzip",
+            headers={"ETag": f'"{digest}"', "Cache-Control": "public, max-age=60"},
+        )
+
+    @agent.get("/install.sh")
+    def get_quick_install_script():
+        _, digest = build_agent_bundle()
+        raw_public = os.environ.get("PROXYFORGE_PUBLIC_URL", "")
+        default_server = ""
+        try:
+            if raw_public:
+                default_server = controller_url(raw_public)
+        except ValueError:
+            default_server = ""
+        script = render_quick_install_script(default_server=default_server, bundle_sha256=digest)
+        return Response(
+            content=script,
+            media_type="text/x-shellscript; charset=utf-8",
+            headers={"Cache-Control": "no-store"},
+        )
 
     @agent.post("/register")
     def register_agent(data: Registration, request: Request):

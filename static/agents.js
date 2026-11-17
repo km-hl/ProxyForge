@@ -948,42 +948,180 @@ async function copyAgentCommand(field) {
     }
 }
 
+function safeShellArg(value) {
+    const clean = String(value ?? '').replace(/[\r\n\0]/g, '').trim();
+    if (!clean) return "''";
+    if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(clean)) return clean;
+    return "'" + clean.replace(/'/g, "'\\''") + "'";
+}
+
+function buildQuickInstallCommand(info, opts = {}) {
+    if (!info || !info.quick_install_url || !info.controller_url) return '';
+    const args = ['-e', safeShellArg(info.controller_url)];
+    if (opts.token) args.push('-t', safeShellArg(opts.token));
+    const allCores = Boolean(opts.withSingbox && opts.withCaddy && opts.withGost);
+    if (allCores) {
+        args.push('--with-all');
+    } else {
+        if (opts.runtime) args.push('--runtime');
+        if (opts.withSingbox) args.push('--with-singbox');
+        if (opts.withCaddy) args.push('--with-caddy');
+        if (opts.withGost) args.push('--with-gost');
+    }
+    if (opts.adoptScan) args.push('--adopt-scan');
+    if (opts.mode === 'upgrade') args.push('--upgrade');
+    else if (opts.mode === 'reinstall') args.push('--reinstall');
+    if (opts.insecure) args.push('-k');
+    if (opts.caFile && String(opts.caFile).trim()) args.push('--ca-file', safeShellArg(opts.caFile));
+    if (opts.ghProxy && String(opts.ghProxy).trim()) args.push('--gh-proxy', safeShellArg(opts.ghProxy));
+    if (opts.noDeps) args.push('--no-deps');
+
+    const curlFlags = opts.insecure ? '-fsSLk' : '-fsSL';
+    const scriptUrl = safeShellArg(info.quick_install_url);
+    const argStr = args.join(' ');
+    if (opts.useSudo) {
+        return 'curl ' + curlFlags + ' ' + scriptUrl + ' | sudo bash -s -- ' + argStr;
+    }
+    return 'bash <(curl ' + curlFlags + ' ' + scriptUrl + ') ' + argStr;
+}
+
 async function addAgent() {
-    let busy = false, issued = false;
+    let busy = false, issued = false, quickInfo = null, issuedToken = '';
     openModal('添加服务器',
-        '<p>1. 核对 Controller 地址，在目标 VPS 执行安装命令。</p>' +
-        '<p>要求：Debian 12/13 或 Ubuntu 22.04/24.04，amd64/arm64，systemd、Python 3.9+、sudo 和可信 CA。已有安装请按恢复指南操作。</p>' +
-        '<p id="agent-install-status">正在读取安装信息…</p><div id="agent-install-commands"></div>' +
+        '<p class="hint">支持 Komari 风格一条命令完成下载校验、安装与自动注册，并按需勾选 Runtime / 预装内核 / 存量接管。</p>' +
+        '<div id="agent-quick-box" class="quick-install-box" hidden>' +
+        '<div class="form-group"><label for="new-agent-name">服务器名称</label><input id="new-agent-name" maxlength="128" autocomplete="off" placeholder="例如: hk-landing-01"></div>' +
+        '<div class="quick-option-chips">' +
+        '<label class="inline-check"><input type="checkbox" id="qi-runtime" checked> 启用托管 Runtime</label>' +
+        '<label class="inline-check"><input type="checkbox" id="qi-inline-token" checked> 内联一次性凭据</label>' +
+        '<label class="inline-check"><input type="checkbox" id="qi-adopt-scan" checked> 自动接管扫描</label>' +
+        '<label class="inline-check"><input type="checkbox" id="qi-with-gost"> 预装 go-gost</label>' +
+        '<label class="inline-check"><input type="checkbox" id="qi-with-singbox"> 预装 sing-box</label>' +
+        '<label class="inline-check"><input type="checkbox" id="qi-with-caddy"> 预装 Caddy</label>' +
+        '<label class="inline-check"><input type="checkbox" id="qi-sudo"> 非 root 加 sudo</label>' +
+        '<label class="inline-check"><input type="checkbox" id="qi-insecure"> 跳过 TLS 校验 (-k)</label>' +
+        '</div>' +
+        '<div class="form-grid">' +
+        '<div class="form-group"><label for="qi-mode">安装模式</label><select id="qi-mode"><option value="install">首次安装（默认）</option><option value="upgrade">原地升级（保留凭据）</option><option value="reinstall">强制覆盖重装</option></select></div>' +
+        '<div class="form-group"><label for="qi-gh-proxy">GitHub 加速镜像 (可选)</label><input id="qi-gh-proxy" placeholder="例如 https://ghfast.top"></div>' +
+        '<div class="form-group full-width"><label for="qi-ca-file">自定义 CA 证书路径 (可选)</label><input id="qi-ca-file" placeholder="/etc/ssl/custom-ca.pem"></div>' +
+        '</div>' +
+        '<div class="form-group"><label for="agent-quick-command">一键安装命令（在目标 Debian / Ubuntu 终端粘贴执行）</label>' +
+        '<textarea id="agent-quick-command" class="quick-cmd-preview" readonly rows="3" autocomplete="off"></textarea></div>' +
+        '<div class="panel-actions"><button type="button" class="btn btn-primary" id="agent-quick-copy-btn">🚀 生成并复制一键命令</button></div>' +
+        '<p id="agent-quick-hint" class="hint"></p>' +
+        '</div>' +
+        '<p id="agent-install-status" class="hint">正在读取安装信息…</p>' +
+        '<details id="agent-legacy-details"><summary>传统 GitHub 固定 Commit 手动校验与交互凭据（兼容旧流程）</summary>' +
+        '<p class="hint">要求：Debian 12/13 或 Ubuntu 22.04/24.04，amd64/arm64，systemd、Python 3.9+。</p>' +
+        '<div id="agent-install-commands"></div>' +
         '<p><a href="https://github.com/km-hl/ProxyForge/blob/master/docs/AGENT_INSTALL.md" target="_blank" rel="noopener noreferrer">中文安装、升级与恢复指南</a></p>' +
-        '<p>2. 终端提示隐藏输入凭据后，填写名称并点击「生成注册凭据」。凭据仅有效 10 分钟。</p>' +
-        '<label for="new-agent-name">服务器名称</label><input id="new-agent-name" maxlength="128" autocomplete="off">' +
-        '<div id="agent-registration-result" hidden><p>3. 将以下凭据粘贴到终端的隐藏输入提示中。不要放入命令或 URL。</p>' +
+        '<div id="agent-registration-result" hidden><p>一次性注册凭据（10 分钟有效，仅可消费一次）：</p>' +
         '<input id="agent-registration-token" aria-label="一次性注册凭据" readonly autocomplete="off">' +
         '<p id="agent-registration-expiry"></p>' +
-        '<p>关闭后不再显示。安装结束后关闭此窗口并刷新服务器列表，确认状态为在线。注册响应丢失时，检查并移除孤儿 Agent，再生成新凭据恢复。</p></div>', async () => {
+        '<p class="hint">关闭后不再显示。安装结束后关闭此窗口并刷新服务器列表，确认状态为在线。</p></div>' +
+        '</details>', async () => {
             if (!current() || busy) return;
             if (issued) { closeModal(); return; }
-            if (!name.value.trim()) { showToast('请填写服务器名称', 'error'); name.focus(); return; }
-            busy = true; modalConfirm.disabled = true;
-            try {
-                const registration = await (await fetchAuth('/agents/registration-tokens', {
-                    method: 'POST', body: JSON.stringify({ name: name.value.trim() })
-                })).json();
-                if (!current()) return;
-                document.getElementById('agent-registration-token').value = registration.registration_token;
-                document.getElementById('agent-registration-expiry').textContent =
-                    '有效期至 ' + new Date(registration.expires_at * 1000).toLocaleString() + '；只能成功注册一次。';
-                document.getElementById('agent-registration-result').hidden = false;
-                name.readOnly = true; issued = true; modalConfirm.textContent = '关闭';
-            } catch (error) {
-                if (current()) showToast(error.message, 'error');
-            } finally {
-                busy = false;
-                if (current()) modalConfirm.disabled = false;
-            }
+            await issueRegistrationAndSync(false);
         });
+
     const name = document.getElementById('new-agent-name');
+    const quickBox = document.getElementById('agent-quick-box');
+    const quickCmdField = document.getElementById('agent-quick-command');
+    const quickCopyBtn = document.getElementById('agent-quick-copy-btn');
+    const quickHint = document.getElementById('agent-quick-hint');
     const current = () => name.isConnected && modalOverlay.classList.contains('active');
+
+    function readQuickOptions() {
+        const inline = document.getElementById('qi-inline-token');
+        const modeEl = document.getElementById('qi-mode');
+        const modeVal = modeEl ? modeEl.value : 'install';
+        return {
+            runtime: Boolean(document.getElementById('qi-runtime')?.checked),
+            adoptScan: Boolean(document.getElementById('qi-adopt-scan')?.checked),
+            withGost: Boolean(document.getElementById('qi-with-gost')?.checked),
+            withSingbox: Boolean(document.getElementById('qi-with-singbox')?.checked),
+            withCaddy: Boolean(document.getElementById('qi-with-caddy')?.checked),
+            useSudo: Boolean(document.getElementById('qi-sudo')?.checked),
+            insecure: Boolean(document.getElementById('qi-insecure')?.checked),
+            mode: modeVal,
+            caFile: document.getElementById('qi-ca-file')?.value.trim() || '',
+            ghProxy: document.getElementById('qi-gh-proxy')?.value.trim() || '',
+            token: (inline && inline.checked && modeVal !== 'upgrade' && issuedToken) ? issuedToken : '',
+        };
+    }
+
+    function updateQuickCommandPreview() {
+        if (!quickInfo || !quickCmdField) return;
+        const opts = readQuickOptions();
+        quickCmdField.value = buildQuickInstallCommand(quickInfo, opts);
+        const needToken = Boolean(document.getElementById('qi-inline-token')?.checked) && opts.mode !== 'upgrade';
+        if (quickCopyBtn) {
+            quickCopyBtn.textContent = (needToken && !issuedToken) ? '🚀 生成凭据并复制命令' : '📋 复制一键命令';
+        }
+        if (quickHint) {
+            if (opts.mode === 'upgrade') quickHint.textContent = '原地升级会保留现有 /etc/proxyforge-agent/config.json 与密钥，无需重新生成注册凭据。';
+            else if (needToken && !issuedToken) quickHint.textContent = '填写服务器名称后点击上方按钮，将自动生成 10 分钟有效的一次性凭据并嵌入命令。';
+            else if (needToken && issuedToken) quickHint.textContent = '已内联一次性注册凭据（10 分钟单次有效），关闭窗口即从页面清除；勾选上方选项仍可实时微调命令。';
+            else quickHint.textContent = '当前命令不含任何密钥；在目标终端执行后可从交互提示中隐藏输入注册凭据。';
+        }
+    }
+
+    async function issueRegistrationAndSync(copyAfter) {
+        if (!current() || busy) return false;
+        if (!name.value.trim()) { showToast('请填写服务器名称', 'error'); name.focus(); return false; }
+        busy = true; modalConfirm.disabled = true;
+        if (quickCopyBtn) quickCopyBtn.disabled = true;
+        try {
+            const registration = await (await fetchAuth('/agents/registration-tokens', {
+                method: 'POST', body: JSON.stringify({ name: name.value.trim() })
+            })).json();
+            if (!current()) return false;
+            issuedToken = registration.registration_token || '';
+            document.getElementById('agent-registration-token').value = issuedToken;
+            document.getElementById('agent-registration-expiry').textContent =
+                '有效期至 ' + new Date(registration.expires_at * 1000).toLocaleString() + '；只能成功注册一次。';
+            document.getElementById('agent-registration-result').hidden = false;
+            name.readOnly = true; issued = true; modalConfirm.textContent = '关闭';
+            updateQuickCommandPreview();
+            if (copyAfter && quickCmdField && quickCmdField.value) {
+                await copyAgentCommand(quickCmdField);
+            }
+            return true;
+        } catch (error) {
+            if (current()) showToast(error.message, 'error');
+            return false;
+        } finally {
+            busy = false;
+            if (current()) {
+                modalConfirm.disabled = false;
+                if (quickCopyBtn) quickCopyBtn.disabled = false;
+            }
+        }
+    }
+
+    for (const optId of ['qi-runtime', 'qi-inline-token', 'qi-adopt-scan', 'qi-with-gost', 'qi-with-singbox', 'qi-with-caddy', 'qi-sudo', 'qi-insecure', 'qi-mode']) {
+        const el = document.getElementById(optId);
+        if (el) el.onchange = updateQuickCommandPreview;
+    }
+    for (const optId of ['qi-gh-proxy', 'qi-ca-file']) {
+        const el = document.getElementById(optId);
+        if (el) el.oninput = updateQuickCommandPreview;
+    }
+    if (quickCopyBtn) {
+        quickCopyBtn.onclick = async () => {
+            const opts = readQuickOptions();
+            const needToken = Boolean(document.getElementById('qi-inline-token')?.checked) && opts.mode !== 'upgrade';
+            if (needToken && !issuedToken) {
+                await issueRegistrationAndSync(true);
+            } else if (quickCmdField) {
+                updateQuickCommandPreview();
+                await copyAgentCommand(quickCmdField);
+            }
+        };
+    }
+
     modalConfirm.textContent = '生成注册凭据';
     modalConfirm.disabled = true;
     try {
@@ -995,8 +1133,14 @@ async function addAgent() {
             return;
         }
         status.textContent = 'Controller：' + info.controller_url + '；Agent ' + info.agent_version +
-            '；源码提交：' + info.source_commit + '；Bootstrap：' + info.bootstrap_commit +
-            '；SHA256：' + info.bootstrap_sha256;
+            (info.package_sha256 ? '；包校验：' + info.package_sha256.slice(0, 16) + '…' :
+                '；源码提交：' + info.source_commit + '；Bootstrap：' + info.bootstrap_commit + '；SHA256：' + info.bootstrap_sha256);
+
+        if (info.quick_install_url && quickBox) {
+            quickInfo = info;
+            quickBox.hidden = false;
+            updateQuickCommandPreview();
+        }
         const container = document.getElementById('agent-install-commands');
         for (const [action, label] of [['install', '复制 Agent 安装命令'], ['check', '复制只读下载校验命令'],
             ['runtime', '复制启用托管 runtime 命令（可选，root 辅助服务）']]) {
@@ -1021,7 +1165,7 @@ async function addAgent() {
 }
 
 function clearRegistrationToken() {
-    for (const id of ['agent-registration-token', 'deployment-dns-token', 'tunnel-relay-pass']) {
+    for (const id of ['agent-registration-token', 'agent-quick-command', 'deployment-dns-token', 'tunnel-relay-pass']) {
         const field = document.getElementById(id);
         if (field) field.value = '';
     }
@@ -1040,4 +1184,4 @@ if (typeof document !== 'undefined') {
             refreshAgents();
     }, 30000);
 }
-if (typeof module !== 'undefined' && module.exports) module.exports = { agentStatusLabel, agentCanRunJobs, agentCanManageRuntime, agentCanDeploy, agentCanLand, agentCanChain, agentCanGost };
+if (typeof module !== 'undefined' && module.exports) module.exports = { agentStatusLabel, agentCanRunJobs, agentCanManageRuntime, agentCanDeploy, agentCanLand, agentCanChain, agentCanGost, buildQuickInstallCommand };

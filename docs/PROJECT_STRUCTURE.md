@@ -42,7 +42,7 @@ ProxyForge/
 | `airports/service.py` | 显式注入依赖，统一机场节点/元信息缓存与后台刷新协调 |
 | `airports/sources.py` | AirportSource / AirportSnapshot 内部快照，旧格式投影与来源身份比较 |
 | `airports/parser.py` | 纯 YAML / Base64 订阅解析，格式失败回退，其他故障与控制信号向外传播 |
-| `control/agent_api.py`、`job_api.py`、`deployment_api.py`、`gost_api.py` | 管理/Agent 路由、鉴权衔接、转发/链/Best-Exit 与流量批次上传 schema |
+| `control/agent_api.py`、`job_api.py`、`deployment_api.py`、`gost_api.py` | 管理/Agent 路由（含 `/api/agent/install.sh`、`/api/agent/package.tar.gz` 一键打包接口）、鉴权衔接、转发/链/Best-Exit 与流量批次上传 schema |
 | `control/control_store.py` | SQLite 连接、migration（当前 schema 8）、注册、身份和心跳 |
 | `control/job_store.py` | 租约、重试、状态回报、探针/接管扫描入库与任务保留 |
 | `control/deployment_store.py`、`chain_store.py`、`gost_store.py` | 加密期望配置（落地、链路、go-gost 转发/多跳/Best-Exit）、流量计数器累加及并发/端口冲突控制 |

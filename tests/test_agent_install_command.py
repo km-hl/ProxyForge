@@ -93,6 +93,81 @@ class AgentInstallCommandTests(unittest.TestCase):
                               server="https://your-controller.example" if mode == "install" else None)
             self.assertEqual(command, expected)
 
+    def test_quick_bundle_script_and_http_routes(self):
+        import gzip
+        import os
+        import tarfile
+        import tempfile
+        from fastapi.testclient import TestClient
+        from proxyforge.control.agent_installation import (
+            AGENT_BUNDLE_FILES,
+            build_agent_bundle,
+            installation_info,
+            render_quick_install_script,
+        )
+        from test_api_integration import TEST_ADMIN_TOKEN, load_isolated_application
+
+        payload, digest = build_agent_bundle()
+        payload2, digest2 = build_agent_bundle()
+        self.assertEqual(payload, payload2)
+        self.assertEqual(digest, digest2)
+        self.assertRegex(digest, r"^[0-9a-f]{64}$")
+
+        with gzip.GzipFile(fileobj=io.BytesIO(payload), mode="rb") as gz:
+            with tarfile.open(fileobj=gz, mode="r:") as arc:
+                names = {m.name for m in arc.getmembers()}
+                for req in AGENT_BUNDLE_FILES:
+                    self.assertIn(f"agent/{req}", names)
+                for m in arc.getmembers():
+                    if m.name.endswith(".sh"):
+                        self.assertEqual(m.mode & 0o777, 0o755)
+                        self.assertNotIn(b"\r\n", arc.extractfile(m).read())
+
+        script = render_quick_install_script("https://your-controller.example/", bundle_sha256=digest)
+        self.assertIn(f"BUNDLE_SHA256={digest}", script)
+        self.assertIn("--with-gost", script)
+        self.assertIn("--adopt-scan", script)
+        self.assertIn("--upgrade", script)
+        self.assertIn("--reinstall", script)
+
+        info = installation_info("https://your-controller.example")
+        self.assertEqual(info["quick_install_url"], "https://your-controller.example/api/agent/install.sh")
+        self.assertEqual(info["package_sha256"], digest)
+        self.assertIn("gost", info["release_versions"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            app = load_isolated_application(Path(tmp))
+            old_pub = os.environ.get("PROXYFORGE_PUBLIC_URL")
+            os.environ["PROXYFORGE_PUBLIC_URL"] = "https://your-controller.example"
+            try:
+                with TestClient(app.app) as client:
+                    pkg_res = client.get("/api/agent/package.tar.gz")
+                    self.assertEqual(pkg_res.status_code, 200)
+                    self.assertEqual(hashlib.sha256(pkg_res.content).hexdigest(), digest)
+
+                    sh_res = client.get("/api/agent/install.sh")
+                    self.assertEqual(sh_res.status_code, 200)
+                    self.assertIn(digest, sh_res.text)
+                    self.assertNotIn("pfreg_", sh_res.text)
+
+                    meta_res = client.get("/api/agents/install-command",
+                                          headers={"Authorization": "Bearer " + TEST_ADMIN_TOKEN})
+                    self.assertEqual(meta_res.status_code, 200)
+                    self.assertEqual(meta_res.json()["package_sha256"], digest)
+            finally:
+                if old_pub is None:
+                    os.environ.pop("PROXYFORGE_PUBLIC_URL", None)
+                else:
+                    os.environ["PROXYFORGE_PUBLIC_URL"] = old_pub
+
+    def test_agent_client_allows_phase1_phase2_endpoints(self):
+        from agent.client import ALLOWED_ENDPOINTS, Client
+        for ep in ("/api/agent/adoptions", "/api/agent/traffic", "/api/agent/best-exit"):
+            self.assertIn(ep, ALLOWED_ENDPOINTS)
+        c = Client("https://controller.example", allow_insecure=True)
+        https_handler = [h for h in c.opener.handlers if h.__class__.__name__ == "HTTPSHandler"][0]
+        self.assertFalse(https_handler._context.check_hostname)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1021,3 +1021,33 @@ img.emoji { height: 1em; width: 1em; margin: 0 .05em 0 .1em; vertical-align: -0.
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+[hidden] { display: none !important; }
+
+.quick-install-box {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid #c7d2fe;
+    border-radius: var(--radius);
+    background: linear-gradient(180deg, #fafbff 0%, #ffffff 100%);
+}
+.quick-option-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.quick-cmd-preview {
+    min-height: 74px !important;
+    background: #0f172a !important;
+    color: #e2e8f0 !important;
+    border-color: #1e293b !important;
+    font-family: var(--font-mono) !important;
+    font-size: 0.8rem !important;
+    line-height: 1.5;
+}
+.quick-cmd-preview:focus {
+    background: #0f172a !important;
+    border-color: var(--primary) !important;
+}

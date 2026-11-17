@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { agentStatusLabel, agentCanRunJobs, agentCanManageRuntime, agentCanDeploy, agentCanLand, agentCanChain, agentCanGost } = require('../static/agents.js');
+const { agentStatusLabel, agentCanRunJobs, agentCanManageRuntime, agentCanDeploy, agentCanLand, agentCanChain, agentCanGost, buildQuickInstallCommand } = require('../static/agents.js');
 
 test('chain changes require explicit upgraded capability', () => {
     const agent = { status: 'online', compatible: true, metadata: { job_protocol_version: 1, runtime_protocol_version: 1, supported: true } };
@@ -169,4 +169,53 @@ test('login expiry closes the real modal and clears registration secret', async 
     vm.runInContext(app.slice(app.indexOf('function showLogin()'), app.indexOf('async function logout()')), ui.ctx);
     ui.ctx.showLogin(); assert.equal(ui.nodes.get('agent-registration-token').value, '');
     assert.equal(ui.ctx.modalOverlay.classList.contains('active'), false);
+});
+
+test('Komari-style one-line builder supports toggles, quoting and inline token lifecycle', async () => {
+    const info = {
+        controller_url: 'https://panel.example:8443',
+        quick_install_url: 'https://panel.example:8443/api/agent/install.sh',
+    };
+    const cmd = buildQuickInstallCommand(info, {
+        token: 'pfreg_test123', runtime: true, adoptScan: true,
+        withSingbox: true, withCaddy: true, withGost: true,
+        mode: 'upgrade', useSudo: true, insecure: true,
+        caFile: "/tmp/my'ca.crt", ghProxy: 'https://gh.example',
+    });
+    assert.match(cmd, /^curl -fsSLk https:\/\/panel\.example:8443\/api\/agent\/install\.sh \| sudo bash -s -- /);
+    assert.match(cmd, /-e https:\/\/panel\.example:8443/);
+    assert.match(cmd, /-t pfreg_test123/);
+    assert.match(cmd, /--with-all/);
+    assert.match(cmd, /--adopt-scan/);
+    assert.match(cmd, /--upgrade/);
+    assert.match(cmd, /--ca-file '\/tmp\/my'\\''ca\.crt'/);
+    assert.match(cmd, /--gh-proxy https:\/\/gh\.example/);
+
+    const copies = [];
+    const quickInfo = {
+        ...installInfo,
+        quick_install_url: 'https://panel.example/api/agent/install.sh',
+        controller_url: 'https://panel.example',
+        package_sha256: 'e'.repeat(64),
+    };
+    const ui = installUI(async path => reply(
+        path.endsWith('install-command') ? quickInfo : { registration_token: 'pfreg_' + 'x'.repeat(43), expires_at: 999 }
+    ), async v => copies.push(v));
+    await ui.add();
+    assert.equal(ui.nodes.get('agent-quick-box').hidden, false);
+    assert.equal(ui.nodes.get('qi-inline-token').checked, undefined);
+    ui.nodes.get('qi-inline-token').checked = true;
+    ui.nodes.get('qi-runtime').checked = true;
+    ui.nodes.get('qi-adopt-scan').checked = true;
+    ui.nodes.get('new-agent-name').value = 'hk-test';
+    await ui.nodes.get('agent-quick-copy-btn').onclick();
+    assert.match(ui.nodes.get('agent-quick-command').value, /-t pfreg_x{43}/);
+    assert.equal(copies.length, 1);
+    ui.nodes.get('qi-with-gost').checked = true;
+    ui.nodes.get('qi-with-gost').onchange();
+    assert.match(ui.nodes.get('agent-quick-command').value, /--with-gost/);
+    assert.match(ui.nodes.get('agent-quick-command').value, /-t pfreg_x{43}/);
+    ui.close();
+    assert.equal(ui.nodes.get('agent-quick-command').value, '');
+    assert.equal(ui.nodes.get('agent-registration-token').value, '');
 });

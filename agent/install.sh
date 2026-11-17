@@ -1,8 +1,20 @@
 #!/bin/bash
-# Install only from a downloaded, reviewed, pinned checkout. No curl | shell.
+# Install only from a downloaded, reviewed, pinned checkout or verified Controller bundle.
 set -euo pipefail
+token_file=""
+allow_insecure=0
+ca_file=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --token-file) token_file="${2:?Missing --token-file value}"; shift 2 ;;
+        --allow-insecure) allow_insecure=1; shift ;;
+        --ca-file) ca_file="${2:?Missing --ca-file value}"; shift 2 ;;
+        -*) echo "Unknown option: $1" >&2; exit 1 ;;
+        *) break ;;
+    esac
+done
 if [[ $EUID -ne 0 || $# -ne 1 ]]; then
-    echo "Usage: sudo bash agent/install.sh https://controller.example" >&2
+    echo "Usage: sudo bash agent/install.sh [--token-file PATH] [--allow-insecure] [--ca-file PATH] https://controller.example" >&2
     exit 1
 fi
 server=$1
@@ -40,12 +52,26 @@ for file in __init__.py main.py client.py system_info.py jobs.py job_lease.py ru
 done
 install -d -m 0700 -o proxyforge-agent -g proxyforge-agent /etc/proxyforge-agent
 install -m 0644 "$source_dir/proxyforge-agent.service" /etc/systemd/system/proxyforge-agent.service
-read -r -s -p "One-time registration token (hidden): " registration_token </dev/tty
-printf '\n'
-trap 'unset registration_token' EXIT
+registration_token=""
+cleanup_token() { unset registration_token; }
+trap cleanup_token EXIT
+if [[ -n "$token_file" ]]; then
+    [[ -f "$token_file" && ! -L "$token_file" ]] || { echo "Invalid registration token file" >&2; exit 1; }
+    IFS= read -r registration_token < "$token_file" || true
+    rm -f -- "$token_file"
+else
+    read -r -s -p "One-time registration token (hidden): " registration_token </dev/tty
+    printf '\n'
+fi
 cd /opt/proxyforge-agent
-printf '%s\n' "$registration_token" | runuser -u proxyforge-agent -- /usr/bin/python3 -m agent.main \
-    --config /etc/proxyforge-agent/config.json register --server "$server" --token-stdin
+reg_args=(--config /etc/proxyforge-agent/config.json register --server "$server" --token-stdin)
+if [[ $allow_insecure -eq 1 ]]; then
+    reg_args+=(--allow-insecure)
+fi
+if [[ -n "$ca_file" ]]; then
+    reg_args+=(--ca-file "$ca_file")
+fi
+printf '%s\n' "$registration_token" | runuser -u proxyforge-agent -- /usr/bin/python3 -m agent.main "${reg_args[@]}"
 unset registration_token
 systemctl daemon-reload
 systemctl enable --now proxyforge-agent.service
