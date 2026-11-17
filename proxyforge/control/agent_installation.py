@@ -500,7 +500,7 @@ fi
 
 if [[ $ADOPT_SCAN -eq 1 ]]; then
     echo "正在执行初始存量节点接管扫描..."
-    runuser -u proxyforge-agent -- /usr/bin/python3 -m agent.main --config /etc/proxyforge-agent/config.json adopt-scan || true
+    (cd /opt/proxyforge-agent && runuser -u proxyforge-agent -- /usr/bin/python3 -m agent.main --config /etc/proxyforge-agent/config.json adopt-scan) || echo "警告: 初始接管扫描未完成，可稍后手动重试"
 fi
 
 echo ""
