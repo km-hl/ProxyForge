@@ -69,7 +69,10 @@ if [[ $allow_insecure -eq 1 ]]; then
     reg_args+=(--allow-insecure)
 fi
 if [[ -n "$ca_file" ]]; then
-    reg_args+=(--ca-file "$ca_file")
+    [[ -f "$ca_file" ]] || { echo "CA certificate file not found: $ca_file" >&2; exit 1; }
+    installed_ca="/etc/proxyforge-agent/controller-ca.pem"
+    install -m 0640 -o root -g proxyforge-agent "$ca_file" "$installed_ca"
+    reg_args+=(--ca-file "$installed_ca")
 fi
 printf '%s\n' "$registration_token" | runuser -u proxyforge-agent -- /usr/bin/python3 -m agent.main "${reg_args[@]}"
 unset registration_token
