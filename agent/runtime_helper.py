@@ -54,6 +54,11 @@ DEFAULT_DOWNLOADERS = {
     SERVICE_GOST: download_gost_binary,
 }
 
+SERVICE_SUBDIRS = {
+    SERVICE_CADDY: 'caddy',
+    SERVICE_GOST: 'gost',
+}
+
 
 def build_coordinator(root, arch, *, backend_factory=SystemBackend, downloaders=None,
                       services=(SERVICE_SINGBOX,)):
@@ -65,7 +70,8 @@ def build_coordinator(root, arch, *, backend_factory=SystemBackend, downloaders=
         profile = RUNTIME_PROFILES[service]
         # Keep sing-box directly under `root` for backward compatibility with
         # existing systemd units and /opt/proxyforge-agent/bin/sing-box.
-        service_root = root if service == SERVICE_SINGBOX else (root / 'services' / service)
+        # Map go-gost -> services/gost to match install-runtime.sh, units, and collector paths.
+        service_root = root if service == SERVICE_SINGBOX else (root / 'services' / SERVICE_SUBDIRS.get(service, service))
         service_root.mkdir(parents=True, exist_ok=True)
         backend = backend_factory(profile) if callable(backend_factory) else backend_factory
         kwargs = {'profile': profile}

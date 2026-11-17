@@ -271,8 +271,8 @@ class MultiServiceCoordinatorAndDownloadTest(unittest.TestCase):
                 services=(SERVICE_SINGBOX, SERVICE_CADDY, SERVICE_GOST),
             )
             self.assertEqual(coordinator.engines[SERVICE_SINGBOX].root, root)
-            self.assertEqual(coordinator.engines[SERVICE_CADDY].root, root / 'services' / SERVICE_CADDY)
-            self.assertEqual(coordinator.engines[SERVICE_GOST].root, root / 'services' / SERVICE_GOST)
+            self.assertEqual(coordinator.engines[SERVICE_CADDY].root, root / 'services' / 'caddy')
+            self.assertEqual(coordinator.engines[SERVICE_GOST].root, root / 'services' / 'gost')
             self.assertEqual(job_service('singbox.install'), SERVICE_SINGBOX)
             with self.assertRaises(ValueError):
                 job_service('unknown.action')
