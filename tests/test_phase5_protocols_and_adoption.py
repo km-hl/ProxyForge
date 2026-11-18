@@ -428,6 +428,16 @@ class Phase5FullAdoptionTests(unittest.TestCase):
             self.assertEqual(extracted[skey]['inbound']['listen_port'], 1443)
             self.assertNotIn('PRIV_KEY_SECRET_001', json.dumps(scan))
 
+            # Verify relative `-c bin/config.json` (like 3x-ui/x-ui) resolves against process cwd
+            xui_dir = root / 'x-ui-work'
+            (xui_dir / 'bin').mkdir(parents=True)
+            rel_cfg = xui_dir / 'bin' / 'config.json'
+            rel_cfg.write_text('{"inbounds": []}', encoding='utf-8')
+            resolved_paths = adoption._extract_config_paths_from_argv(
+                'xray', ['bin/xray-linux-amd64', '-c', 'bin/config.json'], cwd=xui_dir
+            )
+            self.assertEqual(resolved_paths, [rel_cfg])
+
             # Verify RuntimeCoordinator calls adopt_host_service with correct positional args (Bug 1)
             backup_dir = root / 'adoptions'
             cmds = []

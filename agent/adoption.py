@@ -159,21 +159,41 @@ def _core_from_name(name):
     return None
 
 
-def _extract_config_paths_from_argv(core, arguments):
+def _resolve_config_candidate(raw_path, *, cwd=None, exe=''):
+    candidate = Path(raw_path)
+    if candidate.is_absolute():
+        return candidate
+    bases = []
+    if cwd is not None:
+        bases.append(Path(cwd))
+    if exe:
+        exe_parent = Path(exe).parent
+        bases.append(exe_parent)
+        bases.append(exe_parent.parent)
+    for base in bases:
+        joined = Path(os.path.normpath(str(base / candidate)))
+        if joined.exists():
+            return joined
+    if bases:
+        return Path(os.path.normpath(str(bases[0] / candidate)))
+    return candidate
+
+
+def _extract_config_paths_from_argv(core, arguments, *, cwd=None, exe=''):
     configs = []
     index = 1
     while index < len(arguments):
         arg = arguments[index]
         if arg in ('-c', '--config') and index + 1 < len(arguments):
-            configs.append(Path(arguments[index + 1]))
+            configs.append(_resolve_config_candidate(arguments[index + 1], cwd=cwd, exe=exe))
             index += 2
             continue
         for prefix in ('--config=', '-c='):
             if arg.startswith(prefix):
-                configs.append(Path(arg[len(prefix):]))
+                configs.append(_resolve_config_candidate(arg[len(prefix):], cwd=cwd, exe=exe))
                 break
         if core == SERVICE_SINGBOX and arg in ('-C', '--config-directory') and index + 1 < len(arguments):
-            directory = Path(arguments[index + 1])
+            directory = _resolve_config_candidate(arguments[index + 1], cwd=cwd, exe=exe)
             if directory.is_dir() and not directory.is_symlink():
                 configs.extend(sorted(directory.glob('*.json')))
             index += 2
@@ -201,6 +221,10 @@ def discover_processes(proc=Path('/proc')):
         if exe and exe.startswith(MANAGED_PATH_PREFIXES):
             continue
         try:
+            proc_cwd = os.readlink(entry / 'cwd')
+        except OSError:
+            proc_cwd = None
+        try:
             raw_cmd = (entry / 'cmdline').read_bytes()
             arguments = [item.decode('utf-8', errors='replace') for item in raw_cmd.split(b'\0') if item]
         except OSError:
@@ -221,7 +245,7 @@ def discover_processes(proc=Path('/proc')):
             pass
         if service_name.startswith(MANAGED_UNIT_PREFIX):
             continue
-        configs = _extract_config_paths_from_argv(core, arguments)
+        configs = _extract_config_paths_from_argv(core, arguments, cwd=proc_cwd, exe=exe)
         if not configs:
             default_candidates = {
                 SERVICE_SINGBOX: (Path('/etc/sing-box/config.json'), Path('/usr/local/etc/sing-box/config.json'), Path('/etc/s-box/sb.json')),
@@ -255,6 +279,7 @@ def _discover_well_known_configs():
         (SERVICE_SINGBOX, Path('/usr/local/etc/sing-box'), '*.json', 'sing-box.service'),
         (CORE_XRAY, Path('/usr/local/etc/xray'), '*.json', 'xray.service'),
         (CORE_XRAY, Path('/etc/xray'), '*.json', 'xray.service'),
+        (CORE_XRAY, Path('/usr/local/x-ui/bin'), 'config.json', 'x-ui.service'),
     )
     for core, directory, pattern, default_unit in patterns:
         try:
