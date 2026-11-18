@@ -234,7 +234,8 @@ def render_caddyfile(
             global_lines.append(f'\temail {clean_email}')
     else:
         global_lines.append('\tauto_https off')
-    global_lines.extend(['\tlog {', f'\t\tlevel {log_level}', '\t}', '}'])
+    # Disable HTTP/3 in Caddy so Hysteria2 / QUIC keeps exclusive UDP 443 ownership.
+    global_lines.extend(['\tservers {', '\t\tprotocols h1 h2', '\t}', '\tlog {', f'\t\tlevel {log_level}', '\t}', '}'])
 
     blocks = ['\n'.join(global_lines)]
     for site in normalized_sites:

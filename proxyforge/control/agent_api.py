@@ -105,6 +105,21 @@ class AdoptScanTrigger(Payload):
     request_id: Identifier
 
 
+class AdoptSecretsUpload(Payload):
+    instance_id: Identifier
+    items: list[dict] = Field(default_factory=list, max_length=32)
+
+
+class AdoptActionRequest(Payload):
+    request_id: Identifier
+    custom_name: constr(strict=True, max_length=64) = ""
+    server_override: constr(strict=True, max_length=128) = ""
+
+
+class AdoptReturnRequest(Payload):
+    request_id: Identifier
+
+
 class AgentMetadata(Payload):
     instance_id: Identifier
     hostname: ShortText
@@ -137,6 +152,10 @@ class RegistrationRequest(Payload):
 class AgentEdit(RegistrationRequest):
     role: constr(strict=True, pattern=r"^(unassigned|node|landing|both)$") = "unassigned"
     tags: list[constr(strict=True, max_length=32)] = Field(default_factory=list, max_length=16)
+    region: constr(strict=True, max_length=32) | None = None
+    expire_at: float | int | None = Field(default=None, ge=0)
+    quota_bytes: StrictInt | None = Field(default=None, ge=0)
+    billing_label: constr(strict=True, max_length=64) | None = None
 
 
 def attach_agent_routes(app, management_auth, store_provider):
@@ -194,8 +213,19 @@ def attach_agent_routes(app, management_auth, store_provider):
 
     @admin.patch("/{agent_id}")
     def edit_agent(agent_id: str, data: AgentEdit):
+        from proxyforge.control.control_store import _UNSET
+        fields = data.model_fields_set
         try:
-            return store_provider().update_agent(agent_id, data.name, data.role, data.tags)
+            return store_provider().update_agent(
+                agent_id,
+                data.name,
+                data.role,
+                data.tags,
+                region=data.region if "region" in fields else _UNSET,
+                expire_at=data.expire_at if "expire_at" in fields else _UNSET,
+                quota_bytes=data.quota_bytes if "quota_bytes" in fields else _UNSET,
+                billing_label=data.billing_label if "billing_label" in fields else _UNSET,
+            )
         except KeyError:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -267,6 +297,15 @@ def attach_agent_routes(app, management_auth, store_provider):
         scan_payload = json.loads(data.model_dump_json(exclude={"instance_id"}))
         return store_provider().record_adoption_scan(authorization[7:], data.instance_id, scan_payload)
 
+    @agent.post("/adoptions/secrets")
+    def upload_adoption_secrets(data: AdoptSecretsUpload, authorization: str = Header(default="")):
+        if not authorization.startswith("Bearer ") or len(authorization) > 160:
+            raise UnauthorizedAgent()
+        try:
+            return store_provider().record_adoption_secrets(authorization[7:], data.instance_id, data.items)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid adoption secrets payload") from None
+
     @admin.get("/{agent_id}/adoptions")
     def get_adoptions(agent_id: str):
         store = store_provider()
@@ -275,6 +314,26 @@ def attach_agent_routes(app, management_auth, store_provider):
         except KeyError:
             raise HTTPException(status_code=404, detail="Agent not found")
         return {"adoptions": store.list_adopted_nodes(agent_id)}
+
+    @admin.post("/{agent_id}/adoptions/{source_key}/adopt")
+    def adopt_endpoint(agent_id: str, source_key: str, data: AdoptActionRequest):
+        try:
+            return store_provider().adopt_endpoint(
+                agent_id,
+                source_key,
+                data.request_id,
+                custom_name=data.custom_name,
+                server_override=data.server_override,
+            )
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Cannot adopt endpoint without valid extracted credentials") from None
+
+    @admin.post("/{agent_id}/adoptions/{source_key}/return")
+    def return_adopted_endpoint(agent_id: str, source_key: str, data: AdoptReturnRequest):
+        try:
+            return store_provider().return_adopted_endpoint(agent_id, source_key, data.request_id)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Cannot return adopted endpoint") from None
 
     @admin.post("/{agent_id}/adopt-scan")
     def trigger_adopt_scan(agent_id: str, data: AdoptScanTrigger):

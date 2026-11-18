@@ -11,8 +11,8 @@ import time
 import uuid
 
 from .client import Client, AgentConnectionError, CredentialRejected
-from .system_info import collect
-from .adoption import scan_host
+from .system_info import collect, warm_public_addresses
+from .adoption import clear_extracted_credentials, last_extracted_credentials, scan_host
 from .jobs import process_job, runner_lock
 from .traffic_collector import flush_gost_traffic
 
@@ -74,6 +74,35 @@ def run(path, once=False):
         return run_loop(path, once)
 
 
+def _flush_adopted_credentials(client, config):
+    extracted = last_extracted_credentials()
+    if not extracted:
+        return
+    items = []
+    for skey, entry in extracted.items():
+        if not isinstance(entry, dict):
+            continue
+        if "credentials" in entry or "inbound" in entry:
+            creds = entry.get("credentials") if isinstance(entry.get("credentials"), dict) else {}
+            inbound = entry.get("inbound") if isinstance(entry.get("inbound"), dict) else {}
+        else:
+            creds = entry
+            inbound = {}
+        items.append({"source_key": skey, "credentials": creds, "inbound": inbound})
+        if len(items) >= 32:
+            break
+    if not items:
+        return
+    # Keep upload bounded under Controller AgentBodyLimit (16 KiB).
+    while len(items) > 1 and len(json.dumps({"instance_id": config["instance_id"], "items": items}).encode("utf-8")) > 14000:
+        items.pop()
+    try:
+        client.post("/api/agent/adoptions/secrets", {"instance_id": config["instance_id"], "items": items}, config["token"])
+        clear_extracted_credentials()
+    except (AgentConnectionError, OSError, ValueError):
+        pass
+
+
 def run_loop(path, once=False):
     config = load_config(path)
     if not config.get("token"):
@@ -82,11 +111,18 @@ def run_loop(path, once=False):
     failures = 0
     while True:
         try:
+            if not once:
+                try:
+                    warm_public_addresses()
+                except Exception:
+                    pass
             result = client.post("/api/agent/heartbeat", collect(config["instance_id"]), config["token"])
             if not result.get("compatible", False):
                 print("Agent protocol incompatible; inventory only, update required", file=sys.stderr)
             elif result.get("job_protocol_version") == 1:
                 process_job(client, config, path)
+                if last_extracted_credentials():
+                    _flush_adopted_credentials(client, config)
                 try:
                     flush_gost_traffic(client, config, path)
                 except (AgentConnectionError, OSError, ValueError):
@@ -134,6 +170,7 @@ def main(argv=None):
             client = Client(config["controller"], config.get("allow_insecure", False), config.get("ca_file"))
             scan = scan_host()
             result = client.post("/api/agent/adoptions", {**scan, "instance_id": config["instance_id"]}, config["token"])
+            _flush_adopted_credentials(client, config)
             print(f"Adoption scan uploaded ({result.get('adopted_count', 0)} endpoints)")
             return 0
         return run(args.config, args.once)

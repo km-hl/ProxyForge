@@ -2,6 +2,7 @@
 import contextlib
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,27 @@ ONLINE_SECONDS = 90
 OFFLINE_SECONDS = 300
 REGISTRATION_TTL = 600
 MAX_AGENTS = 1000
+_UNSET = object()
+
+
+def _extract_public_ips(addresses, observed_ip=""):
+    ipv4 = ""
+    ipv6 = ""
+    candidates = list(addresses or [])
+    if observed_ip:
+        candidates.append(observed_ip)
+    for raw in candidates:
+        try:
+            addr = ipaddress.ip_address(str(raw).strip())
+        except ValueError:
+            continue
+        if not addr.is_global:
+            continue
+        if addr.version == 4 and not ipv4:
+            ipv4 = str(addr)
+        elif addr.version == 6 and not ipv6:
+            ipv6 = str(addr)
+    return ipv4, ipv6
 
 
 class UnauthorizedAgent(Exception):
@@ -97,7 +119,44 @@ class ControlStore(SubUserStoreMixin, GostStoreMixin, ManagedInventoryMixin, Cha
                 migrate_phase2_dataplane(db)
             if version < 8:
                 migrate_sub_users(db)
+            self._ensure_stage_extensions(db)
             db.commit()
+
+    @staticmethod
+    def _ensure_stage_extensions(db):
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS agent_nodes (
+                id TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+                protocol TEXT NOT NULL,
+                settings TEXT NOT NULL,
+                secret_spec TEXT NOT NULL,
+                revision INTEGER NOT NULL DEFAULT 1,
+                updated_at REAL NOT NULL
+            )"""
+        )
+        db.execute("CREATE INDEX IF NOT EXISTS agent_nodes_agent ON agent_nodes(agent_id)")
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS agent_profiles (
+                agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+                region TEXT NOT NULL DEFAULT '',
+                expire_at REAL,
+                quota_bytes INTEGER,
+                billing_label TEXT NOT NULL DEFAULT ''
+            )"""
+        )
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS adopted_node_secrets (
+                agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+                source_key TEXT NOT NULL,
+                secret_spec TEXT NOT NULL DEFAULT '',
+                adopted_status TEXT NOT NULL DEFAULT 'discovered',
+                custom_name TEXT NOT NULL DEFAULT '',
+                server_override TEXT NOT NULL DEFAULT '',
+                updated_at REAL NOT NULL,
+                PRIMARY KEY (agent_id, source_key)
+            )"""
+        )
 
     @contextlib.contextmanager
     def connection(self):
@@ -181,24 +240,39 @@ class ControlStore(SubUserStoreMixin, GostStoreMixin, ManagedInventoryMixin, Cha
                 "job_protocol_version": 1,
                 "compatible": metadata["protocol_version"] == PROTOCOL_VERSION, "heartbeat_interval": 30}
 
-    def _view(self, row):
+    def _view(self, row, profile=None):
         item = dict(row)
         item["metadata"] = json.loads(item["metadata"])
         item["tags"] = json.loads(item["tags"])
         item["status"] = "revoked" if item["revoked_at"] is not None else online_status(item["last_seen"], self.clock())
         item["compatible"] = item["metadata"].get("protocol_version") == PROTOCOL_VERSION
+        ipv4, ipv6 = _extract_public_ips(item["metadata"].get("addresses", []), item.get("observed_ip", ""))
+        item["public_ipv4"] = ipv4
+        item["public_ipv6"] = ipv6
+        item["region"] = profile["region"] if profile else ""
+        item["expire_at"] = profile["expire_at"] if profile else None
+        item["quota_bytes"] = profile["quota_bytes"] if profile else None
+        item["billing_label"] = profile["billing_label"] if profile else ""
         return item
 
     def list_agents(self):
         with self.connection() as db:
-            return [self._view(row) for row in db.execute("SELECT * FROM agents ORDER BY created_at DESC")]
+            profiles = {
+                row["agent_id"]: dict(row)
+                for row in db.execute("SELECT * FROM agent_profiles")
+            }
+            return [
+                self._view(row, profiles.get(row["id"]))
+                for row in db.execute("SELECT * FROM agents ORDER BY created_at DESC")
+            ]
 
     def get_agent(self, agent_id):
         with self.connection() as db:
             row = db.execute("SELECT * FROM agents WHERE id=?", (agent_id,)).fetchone()
             if not row:
                 raise KeyError(agent_id)
-            return self._view(row)
+            profile = db.execute("SELECT * FROM agent_profiles WHERE agent_id=?", (agent_id,)).fetchone()
+            return self._view(row, dict(profile) if profile else None)
 
     def revoke(self, agent_id, remove=False):
         with self.connection() as db:
@@ -216,11 +290,38 @@ class ControlStore(SubUserStoreMixin, GostStoreMixin, ManagedInventoryMixin, Cha
                 db.execute("DELETE FROM agents WHERE id=?", (agent_id,))
             self._audit(db, "agent_removed" if remove else "agent_revoked", agent_id)
 
-    def update_agent(self, agent_id, name, role, tags):
+    def update_agent(
+        self,
+        agent_id,
+        name,
+        role,
+        tags,
+        *,
+        region=_UNSET,
+        expire_at=_UNSET,
+        quota_bytes=_UNSET,
+        billing_label=_UNSET,
+    ):
         with self.connection() as db:
             result = db.execute("UPDATE agents SET name=?,role=?,tags=? WHERE id=?",
                                 (name, role, json.dumps(tags), agent_id))
             if result.rowcount != 1:
                 raise KeyError(agent_id)
+            if any(v is not _UNSET for v in (region, expire_at, quota_bytes, billing_label)):
+                cur = db.execute("SELECT * FROM agent_profiles WHERE agent_id=?", (agent_id,)).fetchone()
+                new_region = (cur["region"] if cur else "") if region is _UNSET else str(region or "")
+                new_expire = (cur["expire_at"] if cur else None) if expire_at is _UNSET else expire_at
+                new_quota = (cur["quota_bytes"] if cur else None) if quota_bytes is _UNSET else quota_bytes
+                new_billing = (cur["billing_label"] if cur else "") if billing_label is _UNSET else str(billing_label or "")
+                db.execute(
+                    """INSERT INTO agent_profiles(agent_id,region,expire_at,quota_bytes,billing_label)
+                       VALUES(?,?,?,?,?)
+                       ON CONFLICT(agent_id) DO UPDATE SET
+                           region=excluded.region,
+                           expire_at=excluded.expire_at,
+                           quota_bytes=excluded.quota_bytes,
+                           billing_label=excluded.billing_label""",
+                    (agent_id, new_region, new_expire, new_quota, new_billing),
+                )
             self._audit(db, "agent_updated", agent_id)
         return self.get_agent(agent_id)

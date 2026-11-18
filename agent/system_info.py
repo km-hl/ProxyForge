@@ -1,15 +1,72 @@
 """Read-only inventory; no user-controlled command arguments."""
 import hashlib
+import ipaddress
 import platform
 from pathlib import Path
 import socket
 import subprocess
+import time
 
 from . import VERSION, PROTOCOL_VERSION
 from .runtime_client import available as runtime_available
 from .runtime_client import deployment_available, gost_available, landing_available, chain_available
 
 SUPPORTED = {("debian", "12"), ("debian", "13"), ("ubuntu", "22.04"), ("ubuntu", "24.04")}
+_PUBLIC_IP_CACHE = {"at": 0.0, "ipv4": "", "ipv6": ""}
+_PUBLIC_IP_TTL = 600.0
+
+
+def _local_route_global_ips():
+    """Zero-packet kernel route table lookup for global unicast IPv4/IPv6 interface addresses."""
+    found = {"ipv4": "", "ipv6": ""}
+    probes = (
+        ("ipv4", socket.AF_INET, "223.5.5.5", 4),
+        ("ipv6", socket.AF_INET6, "2606:4700:4700::1111", 6),
+    )
+    for key, family, target, version in probes:
+        try:
+            with socket.socket(family, socket.SOCK_DGRAM) as sock:
+                sock.connect((target, 80))
+                raw = sock.getsockname()[0].split("%", 1)[0]
+            ip = ipaddress.ip_address(raw)
+            if ip.is_global and ip.version == version:
+                found[key] = str(ip)
+        except (OSError, ValueError):
+            continue
+    return found
+
+
+def detect_public_addresses(*, allow_network=False, ip_reader=None, now_fn=time.monotonic):
+    """Detect host public IPv4 and IPv6 addresses without blocking heartbeats."""
+    local_ips = _local_route_global_ips()
+    ipv4 = local_ips["ipv4"]
+    ipv6 = local_ips["ipv6"]
+    if allow_network and (not ipv4 or not ipv6):
+        now = float(now_fn())
+        if now - _PUBLIC_IP_CACHE["at"] >= _PUBLIC_IP_TTL or (not _PUBLIC_IP_CACHE["ipv4"] and not _PUBLIC_IP_CACHE["ipv6"]):
+            if ip_reader is None:
+                from .acme_manager import public_ips as ip_reader
+            try:
+                probed = ip_reader() or {}
+            except Exception:
+                probed = {}
+            _PUBLIC_IP_CACHE["at"] = now
+            _PUBLIC_IP_CACHE["ipv4"] = str(probed.get("ipv4") or "")
+            _PUBLIC_IP_CACHE["ipv6"] = str(probed.get("ipv6") or "")
+        if not ipv4 and _PUBLIC_IP_CACHE["ipv4"]:
+            ipv4 = _PUBLIC_IP_CACHE["ipv4"]
+        if not ipv6 and _PUBLIC_IP_CACHE["ipv6"]:
+            ipv6 = _PUBLIC_IP_CACHE["ipv6"]
+    result = []
+    for candidate in (ipv4, ipv6):
+        if candidate:
+            try:
+                ip = ipaddress.ip_address(candidate)
+                if ip.is_global and str(ip) not in result:
+                    result.append(str(ip))
+            except ValueError:
+                continue
+    return result
 
 
 def os_release(path=Path("/etc/os-release")):
@@ -43,7 +100,12 @@ def singbox_status():
     return result
 
 
-def collect(instance_id):
+def warm_public_addresses(*, ip_reader=None, now_fn=time.monotonic):
+    """Refresh the cached external public IPv4/IPv6 (for NAT hosts) in daemon mode."""
+    return detect_public_addresses(allow_network=True, ip_reader=ip_reader, now_fn=now_fn)
+
+
+def collect(instance_id, *, allow_network=False):
     system, version = os_release()
     machine = platform.machine().lower()
     arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(machine, machine)
@@ -55,6 +117,11 @@ def collect(instance_id):
         uptime = max(0, int(float(Path("/proc/uptime").read_text().split()[0])))
     except (OSError, ValueError, IndexError):
         uptime = 0
+    addresses = detect_public_addresses(allow_network=allow_network)
+    if not addresses and (_PUBLIC_IP_CACHE["ipv4"] or _PUBLIC_IP_CACHE["ipv6"]):
+        for cached in (_PUBLIC_IP_CACHE["ipv4"], _PUBLIC_IP_CACHE["ipv6"]):
+            if cached and cached not in addresses:
+                addresses.append(cached)
     return {"instance_id": instance_id, "hostname": socket.gethostname()[:128],
             "machine_id": machine_id, "os": system, "os_version": version, "arch": arch,
             "agent_version": VERSION, "protocol_version": PROTOCOL_VERSION, "job_protocol_version": 1,
@@ -63,6 +130,6 @@ def collect(instance_id):
             "landing_protocol_version": 1 if landing_available() else 0,
             "chain_protocol_version": 1 if chain_available() else 0,
             "gost_protocol_version": 1 if gost_available() else 0,
-            "uptime": uptime, "addresses": [],
+            "uptime": uptime, "addresses": addresses,
             "supported": (system, version) in SUPPORTED and arch in {"amd64", "arm64"},
             "singbox": singbox_status()}

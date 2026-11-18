@@ -30,7 +30,7 @@ class DeploymentRequest(Payload):
     expected_revision: StrictInt = Field(ge=0, le=2147483646)
     settings: dict
     remove: StrictBool = False
-    protocol: Literal['vless-reality', 'ss2022', 'reality', 'trojan', 'vless-ws', 'hysteria2'] = 'vless-reality'
+    protocol: Literal['vless-reality', 'ss2022', 'reality', 'trojan', 'anytls', 'vless-ws', 'hysteria2'] = 'vless-reality'
     secrets: Optional[dict] = None
     key_ref: Optional[constr(strict=True, min_length=16, max_length=4096)] = None
 
@@ -43,16 +43,31 @@ class DeploymentRequest(Payload):
         else:
             validate_landing_settings(self.settings, protocol=self.protocol)
             if self.secrets is not None:
-                if not isinstance(self.secrets, dict) or set(self.secrets) - {'dns_api_token'}:
+                if not isinstance(self.secrets, dict) or set(self.secrets) - {'dns_api_token', 'outbound_password'}:
                     raise ValueError('Unsupported deployment secrets field')
                 token = self.secrets.get('dns_api_token')
                 if token is not None and (not isinstance(token, str) or not 12 <= len(token) <= 256 or any(ord(c) < 32 for c in token)):
                     raise ValueError('Invalid ACME DNS API token')
+                out_pw = self.secrets.get('outbound_password')
+                if out_pw is not None and (not isinstance(out_pw, str) or not 1 <= len(out_pw) <= 256 or any(ord(c) < 32 for c in out_pw)):
+                    raise ValueError('Invalid outbound password')
         return self
 
 
+class AgentNodeUpsertRequest(Payload):
+    request_id: Identifier
+    protocol: Literal['ss2022', 'reality', 'trojan', 'anytls', 'vless-ws', 'hysteria2'] = 'reality'
+    settings: dict
+    secrets: Optional[dict] = None
+    key_ref: Optional[constr(strict=True, min_length=16, max_length=4096)] = None
+
+
+class AgentNodeDeleteRequest(Payload):
+    request_id: Identifier
+
+
 class LandingKeyHelperRequest(Payload):
-    protocol: Literal['ss2022', 'reality', 'trojan', 'vless-ws', 'hysteria2'] = 'reality'
+    protocol: Literal['ss2022', 'reality', 'trojan', 'anytls', 'vless-ws', 'hysteria2'] = 'reality'
 
 
 def attach_deployment_routes(app, admin, store_provider):
@@ -116,4 +131,53 @@ def attach_deployment_routes(app, admin, store_provider):
             )
         except ValueError:
             # Never echo user-provided secrets or detailed validation strings.
+            raise HTTPException(status_code=422, detail='Invalid deployment specification') from None
+
+    @admin.get('/{agent_id}/nodes')
+    def list_agent_nodes(agent_id: str):
+        store = store_provider()
+        try:
+            agent = store.get_agent(agent_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail='Agent not found') from None
+        return {
+            'nodes': store.list_agent_nodes(agent_id),
+            'public_ipv4': agent.get('public_ipv4', ''),
+            'public_ipv6': agent.get('public_ipv6', ''),
+        }
+
+    @admin.post('/{agent_id}/nodes')
+    def create_agent_node(agent_id: str, data: AgentNodeUpsertRequest):
+        try:
+            return store_provider().upsert_agent_node(
+                agent_id,
+                data.request_id,
+                data.protocol,
+                data.settings,
+                secrets_input=data.secrets,
+                key_ref=data.key_ref,
+            )
+        except ValueError:
+            raise HTTPException(status_code=422, detail='Invalid deployment specification') from None
+
+    @admin.put('/{agent_id}/nodes/{node_id}')
+    def update_agent_node(agent_id: str, node_id: str, data: AgentNodeUpsertRequest):
+        try:
+            return store_provider().upsert_agent_node(
+                agent_id,
+                data.request_id,
+                data.protocol,
+                data.settings,
+                node_id=node_id,
+                secrets_input=data.secrets,
+                key_ref=data.key_ref,
+            )
+        except ValueError:
+            raise HTTPException(status_code=422, detail='Invalid deployment specification') from None
+
+    @admin.delete('/{agent_id}/nodes/{node_id}')
+    def delete_agent_node(agent_id: str, node_id: str, data: AgentNodeDeleteRequest):
+        try:
+            return store_provider().delete_agent_node(agent_id, node_id, data.request_id)
+        except ValueError:
             raise HTTPException(status_code=422, detail='Invalid deployment specification') from None

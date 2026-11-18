@@ -83,3 +83,30 @@ def execute(job, guard):
         if result['status'] == 'failed' and result['output'] is None and result['error'] in RUNTIME_ERRORS:
             return result
         raise ValueError('Invalid runtime helper result')
+
+
+def scan_host_privileged():
+    """Request a privileged adoption scan and credential extraction from the root helper."""
+    if not available():
+        return None
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(5)
+            connection.connect(SOCKET)
+            import struct
+            if struct.unpack('3i', connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))[1] != 0:
+                return None
+            connection.sendall(json.dumps({'type': 'adopt.scan_privileged'}).encode() + b'\n')
+            connection.settimeout(15)
+            data = b''
+            while not data.endswith(b'\n'):
+                block = connection.recv(65537 - len(data))
+                if not block or len(data) + len(block) > 65536:
+                    return None
+                data += block
+            result = json.loads(data)
+            if isinstance(result, dict) and result.get('status') == 'success' and isinstance(result.get('output'), dict):
+                return result
+    except (OSError, ValueError):
+        return None
+    return None

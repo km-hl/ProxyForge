@@ -4,7 +4,9 @@ import uuid
 
 from agent.adoption import valid_adopt_output
 from agent.deployment_spec import node_name
+from agent.landing_spec import METHOD
 from proxyforge.control.deployment_store import PROJECTABLE_LANDING_PROTOCOLS
+from proxyforge.control.job_store import JobConflict, JobNotFound
 
 _KIND_ORDER = {'direct': 0, 'chain': 1, 'adopted': 2}
 
@@ -70,11 +72,27 @@ class ManagedInventoryMixin:
                     json.dumps({'services': scan['services']}), discovered_at, now,
                 ),
             )
-        if seen_keys:
-            placeholders = ','.join('?' for _ in seen_keys)
-            db.execute(f'DELETE FROM adopted_nodes WHERE agent_id=? AND source_key NOT IN ({placeholders})', (agent_id, *seen_keys))
+        active_adopted_keys = [
+            row['source_key']
+            for row in db.execute(
+                "SELECT source_key FROM adopted_node_secrets WHERE agent_id=? AND adopted_status='adopted'",
+                (agent_id,),
+            )
+        ]
+        keep_keys = list(dict.fromkeys(seen_keys + active_adopted_keys))
+        if keep_keys:
+            placeholders = ','.join('?' for _ in keep_keys)
+            db.execute(
+                f'DELETE FROM adopted_nodes WHERE agent_id=? AND source_key NOT IN ({placeholders})',
+                (agent_id, *keep_keys),
+            )
+            db.execute(
+                f'DELETE FROM adopted_node_secrets WHERE agent_id=? AND source_key NOT IN ({placeholders})',
+                (agent_id, *keep_keys),
+            )
         else:
             db.execute('DELETE FROM adopted_nodes WHERE agent_id=?', (agent_id,))
+            db.execute('DELETE FROM adopted_node_secrets WHERE agent_id=?', (agent_id,))
         self._audit(db, 'adoption_scanned', agent_id)
         return len(seen_keys)
 
@@ -89,23 +107,287 @@ class ManagedInventoryMixin:
             count = self._save_adopted_scan(db, agent_id, scan)
         return {'status': 'ok', 'agent_id': agent_id, 'adopted_count': count}
 
+    def record_adoption_secrets(self, token, instance_id, items):
+        from proxyforge.control.control_store import UnauthorizedAgent
+        if not isinstance(items, list) or len(items) > 32:
+            raise ValueError('Invalid adoption secrets payload')
+        with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            agent_id = self._authenticate(db, token)
+            agent = db.execute('SELECT * FROM agents WHERE id=?', (agent_id,)).fetchone()
+            if not agent or agent['instance_id'] != instance_id:
+                raise UnauthorizedAgent()
+            cipher = self._cipher(db)
+            now = self.clock()
+            saved = 0
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                sk = str(item.get('source_key') or '').strip()
+                if not sk:
+                    continue
+                creds = item.get('credentials') if isinstance(item.get('credentials'), dict) else {}
+                inbound = item.get('inbound') if isinstance(item.get('inbound'), dict) else {}
+                if not creds and not inbound:
+                    continue
+                secret_blob = cipher.encrypt(
+                    json.dumps({'credentials': creds, 'inbound': inbound}).encode('utf-8')
+                ).decode('utf-8')
+                existing = db.execute(
+                    'SELECT adopted_status,custom_name,server_override FROM adopted_node_secrets WHERE agent_id=? AND source_key=?',
+                    (agent_id, sk),
+                ).fetchone()
+                status = existing['adopted_status'] if existing else 'discovered'
+                custom_name = existing['custom_name'] if existing else ''
+                server_override = existing['server_override'] if existing else ''
+                db.execute(
+                    '''INSERT INTO adopted_node_secrets(
+                           agent_id,source_key,secret_spec,adopted_status,custom_name,server_override,updated_at
+                       ) VALUES(?,?,?,?,?,?,?)
+                       ON CONFLICT(agent_id, source_key) DO UPDATE SET
+                           secret_spec=excluded.secret_spec,updated_at=excluded.updated_at''',
+                    (agent_id, sk, secret_blob, status, custom_name, server_override, now),
+                )
+                saved += 1
+            self._audit(db, 'adoption_secrets_recorded', agent_id)
+        return {'status': 'ok', 'agent_id': agent_id, 'saved_count': saved}
+
+    def adopt_endpoint(self, agent_id, source_key, request_id, *, custom_name='', server_override=''):
+        with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            ep = db.execute(
+                'SELECT * FROM adopted_nodes WHERE agent_id=? AND source_key=?',
+                (agent_id, source_key),
+            ).fetchone()
+            if not ep:
+                raise JobNotFound()
+            if not ep['adoptable']:
+                raise ValueError('Endpoint is not adoptable')
+            sec = db.execute(
+                'SELECT * FROM adopted_node_secrets WHERE agent_id=? AND source_key=?',
+                (agent_id, source_key),
+            ).fetchone()
+            if not sec or not sec['secret_spec']:
+                raise ValueError('Missing extracted credentials for this endpoint; re-run privileged scan first')
+            decrypted = self._decrypt_spec(db, sec['secret_spec'])
+            if not isinstance(decrypted.get('inbound'), dict) or not decrypted['inbound'].get('listen_port'):
+                raise ValueError('Endpoint inbound configuration cannot be merged into sing-box')
+            db.execute(
+                '''UPDATE adopted_node_secrets
+                   SET adopted_status='adopted',
+                       custom_name=CASE WHEN ? != '' THEN ? ELSE custom_name END,
+                       server_override=CASE WHEN ? != '' THEN ? ELSE server_override END,
+                       updated_at=?
+                   WHERE agent_id=? AND source_key=?''',
+                (custom_name, custom_name, server_override, server_override, self.clock(), agent_id, source_key),
+            )
+            self._audit(db, 'adoption_applied', agent_id)
+            return self._dispatch_aggregated_runtime(db, agent_id, request_id)
+
+    def return_adopted_endpoint(self, agent_id, source_key, request_id):
+        with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            ep = db.execute(
+                'SELECT * FROM adopted_nodes WHERE agent_id=? AND source_key=?',
+                (agent_id, source_key),
+            ).fetchone()
+            if not ep:
+                raise JobNotFound()
+            db.execute(
+                "UPDATE adopted_node_secrets SET adopted_status='discovered', updated_at=? WHERE agent_id=? AND source_key=?",
+                (self.clock(), agent_id, source_key),
+            )
+            self._audit(db, 'adoption_returned', agent_id)
+            return self._dispatch_aggregated_runtime(
+                db, agent_id, request_id, returned_adoptions=[source_key]
+            )
+
+    @staticmethod
+    def _adopted_node_display_name(ep_row, custom_name=''):
+        base = (custom_name or '').strip() or f"{ep_row['tag'] or ep_row['protocol'].upper()}-{ep_row['listen_port']}"
+        return node_name(ep_row['id'], base)
+
+    def _adopted_node_names(self, db):
+        rows = db.execute(
+            '''SELECT a.id,a.tag,a.protocol,a.listen_port,s.custom_name
+               FROM adopted_nodes a
+               JOIN adopted_node_secrets s ON s.agent_id=a.agent_id AND s.source_key=a.source_key
+               WHERE s.adopted_status='adopted' '''
+        ).fetchall()
+        return [self._adopted_node_display_name(r, r['custom_name']) for r in rows]
+
+    def _adopted_client_nodes(self, db):
+        rows = db.execute(
+            '''SELECT a.*, s.secret_spec, s.custom_name, s.server_override,
+                      ag.observed_ip, ag.metadata, ag.name AS agent_name
+               FROM adopted_nodes a
+               JOIN adopted_node_secrets s ON s.agent_id=a.agent_id AND s.source_key=a.source_key
+               JOIN agents ag ON ag.id=a.agent_id
+               WHERE s.adopted_status='adopted' AND ag.revoked_at IS NULL
+               ORDER BY a.listen_port ASC, a.id ASC'''
+        ).fetchall()
+        nodes = []
+        for row in rows:
+            if not row['secret_spec']:
+                continue
+            try:
+                sec = self._decrypt_spec(db, row['secret_spec'])
+            except Exception:
+                continue
+            creds = sec.get('credentials') or {}
+            view = self._view({
+                'id': row['agent_id'],
+                'name': row['agent_name'],
+                'metadata': row['metadata'],
+                'tags': '[]',
+                'revoked_at': None,
+                'last_seen': 0,
+                'observed_ip': row['observed_ip'],
+            })
+            default_srv = view['public_ipv4'] or view['public_ipv6'] or row['observed_ip'] or row['sni']
+            srv = (row['server_override'] or '').strip() or (
+                row['sni'] if (row['tls_mode'] != 'reality' and row['sni']) else default_srv
+            ) or default_srv
+            if not srv:
+                continue
+            label = self._adopted_node_display_name(row, row['custom_name'])
+            managed = {
+                'type': 'adopted',
+                'agent_id': row['agent_id'],
+                'adoption_id': row['id'],
+                'source_key': row['source_key'],
+            }
+            proto = row['protocol']
+            port = row['listen_port']
+            if proto == 'vless' and row['tls_mode'] == 'reality':
+                if not creds.get('uuid') or not creds.get('reality_public_key'):
+                    continue
+                nodes.append({
+                    'name': label,
+                    'type': 'vless',
+                    'server': srv,
+                    'port': port,
+                    'uuid': creds['uuid'],
+                    'network': 'tcp',
+                    'tls': True,
+                    'udp': True,
+                    'flow': creds.get('flow') or 'xtls-rprx-vision',
+                    'servername': row['sni'] or srv,
+                    'client-fingerprint': 'chrome',
+                    'reality-opts': {
+                        'public-key': creds['reality_public_key'],
+                        'short-id': creds.get('reality_short_id', ''),
+                    },
+                    '_managed_by': managed,
+                })
+            elif proto == 'vless':
+                if not creds.get('uuid'):
+                    continue
+                node = {
+                    'name': label,
+                    'type': 'vless',
+                    'server': srv,
+                    'port': port,
+                    'uuid': creds['uuid'],
+                    'network': row['network'] if row['network'] in ('tcp', 'ws', 'grpc') else 'tcp',
+                    'tls': row['tls_mode'] != 'none',
+                    'udp': True,
+                    '_managed_by': managed,
+                }
+                if row['sni']:
+                    node['servername'] = row['sni']
+                if row['network'] == 'ws':
+                    node['ws-opts'] = {
+                        'path': row['ws_path'] or '/',
+                        'headers': {'Host': row['sni'] or srv},
+                    }
+                nodes.append(node)
+            elif proto == 'trojan':
+                if not creds.get('password'):
+                    continue
+                nodes.append({
+                    'name': label,
+                    'type': 'trojan',
+                    'server': srv,
+                    'port': port,
+                    'password': creds['password'],
+                    'sni': row['sni'] or srv,
+                    'udp': True,
+                    '_managed_by': managed,
+                })
+            elif proto == 'anytls':
+                if not creds.get('password'):
+                    continue
+                nodes.append({
+                    'name': label,
+                    'type': 'anytls',
+                    'server': srv,
+                    'port': port,
+                    'password': creds['password'],
+                    'sni': row['sni'] or srv,
+                    'udp': True,
+                    'client-fingerprint': 'chrome',
+                    '_managed_by': managed,
+                })
+            elif proto == 'hysteria2':
+                if not creds.get('password'):
+                    continue
+                node = {
+                    'name': label,
+                    'type': 'hysteria2',
+                    'server': srv,
+                    'port': port,
+                    'password': creds['password'],
+                    'sni': row['sni'] or srv,
+                    '_managed_by': managed,
+                }
+                if creds.get('obfs') == 'salamander' and creds.get('obfs_password'):
+                    node['obfs'] = 'salamander'
+                    node['obfs-password'] = creds['obfs_password']
+                nodes.append(node)
+            elif proto == 'shadowsocks':
+                if not creds.get('password'):
+                    continue
+                nodes.append({
+                    'name': label,
+                    'type': 'ss',
+                    'server': srv,
+                    'port': port,
+                    'cipher': creds.get('method') or METHOD,
+                    'password': creds['password'],
+                    'udp': True,
+                    '_managed_by': managed,
+                })
+        return nodes
+
     def list_adopted_nodes(self, agent_id=None):
         with self.connection() as db:
+            secrets_map = {
+                (r['agent_id'], r['source_key']): dict(r)
+                for r in db.execute(
+                    'SELECT agent_id,source_key,secret_spec,adopted_status,custom_name,server_override FROM adopted_node_secrets'
+                )
+            }
             if agent_id is not None:
                 rows = db.execute('SELECT * FROM adopted_nodes WHERE agent_id=? ORDER BY listen_port,id', (agent_id,)).fetchall()
             else:
                 rows = db.execute('SELECT * FROM adopted_nodes ORDER BY agent_id,listen_port,id').fetchall()
-            return [
-                {
+            result = []
+            for row in rows:
+                s_info = secrets_map.get((row['agent_id'], row['source_key'])) or {}
+                result.append({
                     **{k: row[k] for k in (
                         'id', 'agent_id', 'source_key', 'core', 'service_name', 'config_path',
                         'config_sha256', 'tag', 'protocol', 'listen', 'listen_port',
                         'tls_mode', 'sni', 'network', 'ws_path', 'discovered_at', 'updated_at',
                     )},
                     'adoptable': bool(row['adoptable']),
-                }
-                for row in rows
-            ]
+                    'has_credentials': bool(s_info.get('secret_spec')),
+                    'adopted_status': s_info.get('adopted_status', 'discovered'),
+                    'custom_name': s_info.get('custom_name', ''),
+                    'server_override': s_info.get('server_override', ''),
+                })
+            return result
 
     def managed_inventory(self):
         with self.connection() as db:
@@ -117,19 +399,30 @@ class ManagedInventoryMixin:
             for row in db.execute('SELECT * FROM agents'):
                 view = self._view(row)
                 agents[row['id']] = {key: view[key] for key in ('id', 'name', 'status', 'last_seen', 'compatible')}
-                agent_ips[row['id']] = row['observed_ip'] or view['name']
+                agent_ips[row['id']] = view['public_ipv4'] or view['public_ipv6'] or row['observed_ip'] or view['name']
             jobs = {row['id']: dict(row) for row in db.execute('''SELECT id,type,status,error FROM jobs
                 WHERE id IN (SELECT job_id FROM deployments UNION SELECT job_id FROM chains)''')}
             # Never load or decrypt secret_spec; this page also works during key recovery.
             deployments = {row['agent_id']: dict(row) for row in db.execute(
                 'SELECT id,agent_id,protocol,settings,revision,job_id,updated_at FROM deployments')}
+            extra_nodes = [dict(row) for row in db.execute(
+                'SELECT id,agent_id,protocol,settings,revision,updated_at FROM agent_nodes')]
             chains = [dict(row) for row in db.execute(
                 'SELECT id,agent_id,landing_agent_id,settings,revision,job_id,updated_at FROM chains')]
             adopted = [dict(row) for row in db.execute('SELECT * FROM adopted_nodes')]
-            projectable = ('vless-reality', *PROJECTABLE_LANDING_PROTOCOLS)
+            adopted_secrets = {
+                (r['agent_id'], r['source_key']): dict(r)
+                for r in db.execute(
+                    'SELECT agent_id,source_key,secret_spec,adopted_status,custom_name,server_override FROM adopted_node_secrets'
+                )
+            }
             items = []
-            for record, kind in [(row, 'direct') for row in deployments.values() if row['protocol'] in projectable] + [
-                    (row, 'chain') for row in chains]:
+            direct_records = [
+                (row, 'direct')
+                for row in deployments.values()
+                if self._is_projectable_record(row['protocol'], json.loads(row['settings']))
+            ]
+            for record, kind in direct_records + [(row, 'chain') for row in chains]:
                 agent, job = agents[record['agent_id']], jobs[record['job_id']]
                 settings = json.loads(record['settings'])
                 landing = agents[record['landing_agent_id']] if kind == 'chain' else None
@@ -142,28 +435,62 @@ class ManagedInventoryMixin:
                                   for row in chains if row['agent_id'] == agent['id'] and not (
                                       jobs[row['job_id']]['type'] == 'chain.remove' and jobs[row['job_id']]['status'] == 'success')]
                 source = deployments.get(record['agent_id'])
-                endpoint = json.loads(source['settings'])['server'] if source else ''
+                endpoint = settings.get('server') or (json.loads(source['settings'])['server'] if source else '')
                 items.append({
                     'id': record['id'], 'kind': kind, 'name': node_name(record['id'], settings['name']),
+                    'protocol': record.get('protocol', 'reality' if kind == 'chain' else ''),
                     'agent': agent, 'landing': landing, 'server': endpoint, 'port': settings['listen_port'],
                     'revision': record['revision'], 'job_id': record['job_id'], 'action': job['type'],
                     'status': job['status'], 'error': job['error'], 'removed': removed,
                     'publishable': publishable, 'blocked_by': blocked_by, 'updated_at': record['updated_at'],
                 })
 
+            for erow in extra_nodes:
+                settings = json.loads(erow['settings'])
+                if not self._is_projectable_record(erow['protocol'], settings):
+                    continue
+                agent = agents[erow['agent_id']]
+                p_dep = deployments.get(erow['agent_id'])
+                p_job = jobs.get(p_dep['job_id']) if p_dep else None
+                j_status = p_job['status'] if p_job else 'success'
+                j_type = p_job['type'] if p_job else 'landing.apply'
+                j_err = p_job['error'] if p_job else None
+                removed = bool(p_job and j_type.endswith('.remove') and j_status == 'success')
+                publishable = (j_status == 'success' and j_type.endswith('.apply') and agent['status'] != 'revoked')
+                items.append({
+                    'id': erow['id'], 'kind': 'direct', 'name': node_name(erow['id'], settings['name']),
+                    'protocol': erow['protocol'],
+                    'agent': agent, 'landing': None, 'server': settings.get('server', ''), 'port': settings['listen_port'],
+                    'revision': erow['revision'], 'job_id': p_dep['job_id'] if p_dep else '', 'action': j_type,
+                    'status': j_status, 'error': j_err, 'removed': removed,
+                    'publishable': publishable, 'blocked_by': [], 'updated_at': erow['updated_at'],
+                })
+
             for row in adopted:
                 agent = agents[row['agent_id']]
+                s_info = adopted_secrets.get((row['agent_id'], row['source_key'])) or {}
+                is_adopted_active = s_info.get('adopted_status') == 'adopted'
+                has_creds = bool(s_info.get('secret_spec'))
+                srv = (s_info.get('server_override') or '').strip() or agent_ips.get(row['agent_id'], '')
+                disp_name = (
+                    self._adopted_node_display_name(row, s_info.get('custom_name', ''))
+                    if is_adopted_active
+                    else f"{row['tag']} [{row['core']}:{row['listen_port']}]"
+                )
                 items.append({
                     'id': row['id'], 'kind': 'adopted',
-                    'name': f"{row['tag']} [{row['core']}:{row['listen_port']}]",
+                    'name': disp_name,
                     'agent': agent, 'landing': None,
-                    'server': agent_ips.get(row['agent_id'], ''), 'port': row['listen_port'],
+                    'server': srv, 'port': row['listen_port'],
                     'core': row['core'], 'protocol': row['protocol'], 'tls_mode': row['tls_mode'],
                     'sni': row['sni'], 'network': row['network'], 'ws_path': row['ws_path'],
                     'service_name': row['service_name'], 'source_key': row['source_key'],
                     'adoptable': bool(row['adoptable']),
-                    'revision': 1, 'job_id': '', 'action': 'adopt_scan',
+                    'has_credentials': has_creds,
+                    'adopted_status': s_info.get('adopted_status', 'discovered'),
+                    'revision': 1, 'job_id': '', 'action': 'adopt.apply' if is_adopted_active else 'adopt_scan',
                     'status': 'adopted', 'error': None, 'removed': False,
-                    'publishable': False, 'blocked_by': [], 'updated_at': row['updated_at'],
+                    'publishable': bool(is_adopted_active and has_creds and agent['status'] != 'revoked'),
+                    'blocked_by': [], 'updated_at': row['updated_at'],
                 })
             return sorted(items, key=lambda item: (item['agent']['name'], item['agent']['id'], _KIND_ORDER[item['kind']], item['id']))

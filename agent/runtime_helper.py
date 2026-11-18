@@ -39,6 +39,8 @@ def receive_job(connection):
             raise ValueError('Invalid runtime request')
         data += block
     job = json.loads(data)
+    if isinstance(job, dict) and set(job) == {'type'} and job.get('type') == 'adopt.scan_privileged':
+        return job
     expected = {'id', 'type', 'payload', 'deployment_revision'}
     if isinstance(job, dict) and job.get('type') in CONFIG_ACTIONS:
         expected.add('deployment')
@@ -87,20 +89,30 @@ def serve_connection(connection, engine, agent_uid):
         if uid != agent_uid:
             raise ValueError('Unauthorized local peer')
         job = receive_job(connection)
-        deadline = time.monotonic() + 600
-        def guard():
-            if time.monotonic() >= deadline:
-                raise RuntimeCancelled()
-            try:
-                connection.setblocking(False)
-                if connection.recv(1, socket.MSG_PEEK) == b'':
+        if job.get('type') == 'adopt.scan_privileged':
+            from .adoption import last_extracted_credentials, scan_host
+            scan_out = scan_host(privileged=False)
+            result = {
+                'status': 'success',
+                'output': scan_out,
+                'credentials': last_extracted_credentials(),
+                'error': None,
+            }
+        else:
+            deadline = time.monotonic() + 600
+            def guard():
+                if time.monotonic() >= deadline:
                     raise RuntimeCancelled()
-                raise ValueError('Unexpected request data')
-            except BlockingIOError:
-                pass
-            finally:
-                connection.settimeout(5)
-        result = engine.apply(job, guard)
+                try:
+                    connection.setblocking(False)
+                    if connection.recv(1, socket.MSG_PEEK) == b'':
+                        raise RuntimeCancelled()
+                    raise ValueError('Unexpected request data')
+                except BlockingIOError:
+                    pass
+                finally:
+                    connection.settimeout(5)
+            result = engine.apply(job, guard)
     except RuntimeCancelled:
         result = {'status': 'failed', 'output': None, 'error': 'runtime_cancelled'}
     except RollbackFailed:

@@ -36,6 +36,13 @@ async function fetchAgentJson(url, options) {
     return data;
 }
 
+function _escHtml(v) {
+    if (typeof ProxyForgeHtmlUtils !== 'undefined' && typeof ProxyForgeHtmlUtils.escapeHtml === 'function') {
+        return ProxyForgeHtmlUtils.escapeHtml(v);
+    }
+    return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 function formatAgentBytes(bytes) {
     const val = Number(bytes || 0);
     if (!val) return '0 B';
@@ -44,20 +51,44 @@ function formatAgentBytes(bytes) {
     return +(val / Math.pow(1024, i)).toFixed(2) + ' ' + units[i];
 }
 
+function _agentRegionPickerHtml(id, currentVal, label) {
+    if (typeof ProxyForgeRegions !== 'undefined' && typeof ProxyForgeRegions.renderRegionPickerHtml === 'function') {
+        return ProxyForgeRegions.renderRegionPickerHtml(id, currentVal, label);
+    }
+    return '';
+}
+
+function _bindAgentRegionPicker(pickerId, targetInputId) {
+    if (typeof ProxyForgeRegions === 'undefined' || typeof ProxyForgeRegions.bindRegionPicker !== 'function') return;
+    ProxyForgeRegions.bindRegionPicker(pickerId, (regionObj, rawVal) => {
+        const nameEl = document.getElementById(targetInputId);
+        if (!nameEl || nameEl.readOnly) return;
+        const base = nameEl.value.trim() || (regionObj ? `${regionObj.code} Node` : '');
+        if (base) {
+            nameEl.value = ProxyForgeRegions.applyRegionPrefix(base, regionObj ? regionObj.code : rawVal);
+        }
+    });
+}
+
 async function showAgentChain(agent) {
     const url = '/agents/' + agent.id + '/chain';
     let chain = (await (await fetchAuth(url)).json()).chain;
     const direct = (await (await fetchAuth('/agents/' + agent.id + '/deployment')).json()).deployment;
     const { landings } = await (await fetchAuth('/agents/deployments/landings')).json();
+    const initialRegion = chain?.settings?.name && typeof ProxyForgeRegions !== 'undefined'
+        ? (ProxyForgeRegions.matchRegion(chain.settings.name)?.code || '')
+        : (agent.region || '');
     openModal('入口 → SS2022 落地',
         '<p>在此入口新增独立 VLESS Reality 监听，保留原直连节点。每个入口支持一条附加链路，成功后生成第二个客户端节点。</p>' +
+        _agentRegionPickerHtml('chain-region', initialRegion, '选择地区 (自动在链路节点名称前添加小国旗)') +
         '<label>链路名称（创建后固定）</label><input id="chain-name" maxlength="64">' +
         '<label>链路入口端口（不同于直连端口）</label><input id="chain-port" type="number" min="1" max="65535" value="8443">' +
         '<label>已部署的 SS2022 落地（创建后固定）</label><select id="chain-landing"></select>' +
-        '<p>沿用入口公网地址和 SNI，自动生成独立凭据。关联期间如需修改入口或落地部署，先成功移除链路。应用会重启入口托管实例。</p>' +
+        '<p>沿用入口公网地址和 SNI，自动生成独立凭据。关联期间如需修改入口或落地部署，先成功移除链路。应用仅重载/重启入口代理服务进程（不会重启服务器）。</p>' +
         '<button class="btn" id="chain-apply">应用 / 重试</button> ' +
         '<button class="btn btn-danger" id="chain-remove">移除链路（保留直连）</button> ' +
         '<button class="btn" id="chain-refresh">刷新状态</button><pre id="chain-state" style="white-space:pre-wrap"></pre>', closeModal);
+    _bindAgentRegionPicker('chain-region', 'chain-name');
     const selector = document.getElementById('chain-landing');
     for (const landing of landings.filter(item => item.agent_id !== agent.id)) {
         const option = document.createElement('option');
@@ -77,7 +108,10 @@ async function showAgentChain(agent) {
         }
         selector.disabled = !!chain;
         document.getElementById('chain-name').readOnly = !!chain;
-        const ready = direct && direct.protocol === 'vless-reality' && direct.action === 'deployment.apply' && direct.status === 'success';
+        const ready = direct &&
+            ((direct.protocol === 'vless-reality' && direct.action === 'deployment.apply') ||
+             (direct.protocol === 'reality' && direct.action === 'landing.apply')) &&
+            direct.status === 'success';
         const busy = chain && ['pending', 'assigned', 'running'].includes(chain.status);
         const allowed = agentCanChain(agent) && ready && !busy;
         apply.disabled = !allowed || !landings.some(item => item.agent_id === selector.value);
@@ -88,9 +122,15 @@ async function showAgentChain(agent) {
             landings.length ? '选择已成功部署的落地。成功状态表示配置已应用，不代表公网端到端可达。' : '请先在另一台 Agent 成功部署 SS2022 落地。';
     }
     async function submit(removing) {
-        if (!confirm(removing ? '确认移除链路监听并保留直连？' : '确认应用链路并重启入口托管实例？')) return;
+        if (!confirm(removing ? '确认移除链路监听并保留直连？' : '确认应用链路并重载/重启入口代理服务进程（不会重启服务器）？')) return;
         apply.disabled = true; remove.disabled = true;
-        const settings = removing ? chain.settings : { name: document.getElementById('chain-name').value.trim(), listen_port: Number(document.getElementById('chain-port').value) };
+        let chainName = document.getElementById('chain-name').value.trim();
+        const regionVal = document.getElementById('chain-region')?.value?.trim() || '';
+        if (!removing && regionVal && typeof ProxyForgeRegions !== 'undefined') {
+            chainName = ProxyForgeRegions.applyRegionPrefix(chainName, regionVal);
+            document.getElementById('chain-name').value = chainName;
+        }
+        const settings = removing ? chain.settings : { name: chainName, listen_port: Number(document.getElementById('chain-port').value) };
         const data = { expected_revision: chain ? chain.revision : 0, landing_agent_id: selector.value, settings, remove: removing };
         const key = url + ':' + JSON.stringify(data);
         let requestId = pendingAgentJobRequests.get(key);
@@ -113,50 +153,108 @@ async function showAgentChain(agent) {
 }
 
 const LANDING_PROTO_META = {
-    'vless-reality': { label: 'VLESS Reality 直连节点', defaultPort: 443, landing: false, tlsModes: ['reality'] },
-    reality: { label: 'Reality 落地 / 直连 (新规格)', defaultPort: 443, landing: true, tlsModes: ['reality', 'acme_http', 'acme_dns'], canKeygen: true },
-    ss2022: { label: 'Shadowsocks-2022 落地', defaultPort: 8388, landing: true, tlsModes: ['none'], canKeygen: true },
-    trojan: { label: 'Trojan + TLS / Caddy 伪装', defaultPort: 443, landing: true, tlsModes: ['acme_http', 'acme_dns'] },
-    'vless-ws': { label: 'VLESS + WebSocket (+ TLS/Caddy)', defaultPort: 443, landing: true, tlsModes: ['none', 'acme_http', 'acme_dns'] },
-    hysteria2: { label: 'Hysteria2 + ACME/混淆', defaultPort: 443, landing: true, tlsModes: ['acme_http', 'acme_dns'] },
+    reality: {
+        label: 'VLESS Reality (XTLS-Vision · 自建回环偷自己 / 外部目标)',
+        defaultPort: 443,
+        landing: true,
+        tlsModes: [
+            ['reality', '外部目标模式 (免域名 · 借用大厂 TLS 1.3 SNI)'],
+            ['acme_http', '自建回环“偷自己” (HTTP-01 自动证书 + Caddy 伪装)'],
+            ['acme_dns', '自建回环“偷自己” (DNS-01 自动证书 + Caddy 伪装)'],
+        ],
+        canKeygen: true,
+    },
+    hysteria2: {
+        label: 'Hysteria2 (QUIC/UDP · ACME 自动证书 · 端口跳跃)',
+        defaultPort: 443,
+        landing: true,
+        tlsModes: [
+            ['acme_http', 'ACME HTTP-01 自动证书'],
+            ['acme_dns', 'ACME DNS-01 自动证书'],
+        ],
+        canKeygen: true,
+    },
+    ss2022: {
+        label: 'Shadowsocks 2022 (2022-blake3 · 内部落地 / 直连订阅)',
+        defaultPort: 8388,
+        landing: true,
+        tlsModes: [['none', '无 TLS (SS2022 AEAD 原生加密)']],
+        canKeygen: true,
+    },
+    anytls: {
+        label: 'AnyTLS (TLS 1.3 + 原生 Padding 消除 TLS-in-TLS 特征)',
+        defaultPort: 443,
+        landing: true,
+        tlsModes: [
+            ['acme_http', 'ACME HTTP-01 自动证书'],
+            ['acme_dns', 'ACME DNS-01 自动证书'],
+        ],
+        canKeygen: true,
+    },
+    trojan: {
+        label: 'Trojan (TLS 1.3 + 本机 Caddy 防主动探测 Fallback)',
+        defaultPort: 443,
+        landing: true,
+        tlsModes: [
+            ['acme_http', 'ACME HTTP-01 自动证书 + Caddy 回环伪装'],
+            ['acme_dns', 'ACME DNS-01 自动证书 + Caddy 回环伪装'],
+        ],
+        canKeygen: true,
+    },
 };
 
 async function showAgentDeployment(agent) {
-    const url = '/agents/' + agent.id + '/deployment';
-    let deployment = (await fetchAgentJson(url)).deployment;
+    const nodesUrl = '/agents/' + agent.id + '/nodes';
+    let nodesPayload = await fetchAgentJson(nodesUrl);
+    let agentNodes = nodesPayload.nodes || [];
+    let pubIpv4 = nodesPayload.public_ipv4 || agent.public_ipv4 || agent.observed_ip || '';
+    let pubIpv6 = nodesPayload.public_ipv6 || agent.public_ipv6 || '';
+    let currentNodeId = agentNodes.length ? agentNodes[0].id : null;
     let generatedKeyRef = null;
-    openModal('节点 / 落地部署',
-        '<p>每台 Agent 当前支持一种部署，创建后不能切换协议。支持 VLESS-Reality、SS2022、Trojan、VLESS-WS 与 Hysteria2 及 ACME / Caddy 伪装编排。</p>' +
-        '<label>部署类型</label><select id="deployment-protocol">' +
-        '<option value="vless-reality">VLESS Reality 直连节点</option>' +
-        '<option value="reality">Reality 落地 / 直连 (Node-Pilot 规格)</option>' +
-        '<option value="ss2022">SS2022 落地</option>' +
-        '<option value="trojan">Trojan + TLS/Caddy</option>' +
-        '<option value="vless-ws">VLESS-WS + TLS/Caddy</option>' +
-        '<option value="hysteria2">Hysteria2</option></select>' +
-        '<p id="deployment-help" class="hint"></p>' +
+
+    openModal('节点 / 落地部署 · ' + agent.name,
+        '<p class="hint">单台 Agent 支持多协议节点共存（例如 TCP 443 VLESS Reality + UDP 443 Hysteria2 + AnyTLS + Trojan + SS2022），统一编译至本机 proxyforge-singbox 实例。</p>' +
+        '<div id="deployment-nodes-bar" style="margin-bottom:12px;"></div>' +
         '<div class="form-grid">' +
-        '<div class="form-group"><label>名称（创建后固定）</label><input id="deployment-name" maxlength="64"></div>' +
-        '<div class="form-group"><label>公网 IP / 域名</label><input id="deployment-server" placeholder="vps.example.com"></div>' +
-        '<div class="form-group"><label>监听端口</label><input id="deployment-port" type="number" min="1" max="65535" value="443"></div>' +
+        '<div class="form-group full-width"><label>部署协议类型 (五大抗封锁协议)</label><select id="deployment-protocol">' +
+        '<option value="reality">VLESS Reality (XTLS-Vision · 自建回环偷自己 / 外部目标)</option>' +
+        '<option value="hysteria2">Hysteria2 (QUIC/UDP · ACME 自动证书 · 端口跳跃)</option>' +
+        '<option value="ss2022">Shadowsocks 2022 (2022-blake3 · 内部落地 / 直连订阅)</option>' +
+        '<option value="anytls">AnyTLS (TLS 1.3 · 消除 TLS-in-TLS 特征)</option>' +
+        '<option value="trojan">Trojan (TLS 1.3 + 本机 Caddy 防探测回落)</option></select></div>' +
         '</div>' +
-        '<div id="deployment-vless-reality-fields"><label>Reality 握手域名 / SNI</label><input id="deployment-sni" placeholder="支持 TLS 1.3 的目标域名"></div>' +
-        '<div id="deployment-tls-section" hidden><div class="form-grid">' +
-        '<div class="form-group"><label>TLS 模式</label><select id="deployment-tls-mode"></select></div>' +
-        '<div class="form-group"><label>域名 / SNI</label><input id="deployment-domain" placeholder="node.example.com"></div>' +
-        '<div class="form-group full-width"><label>伪装回落站点 URL (可选，需 https://)</label><input id="deployment-camouflage" placeholder="https://www.apple.com"></div>' +
+        '<p id="deployment-help" class="hint"></p>' +
+        _agentRegionPickerHtml('deployment-region', agent.region || '', '节点地区 / 国旗 (可输入搜索或选择，自动添加在节点名称前)') +
+        '<div class="form-grid">' +
+        '<div class="form-group"><label>节点名称</label><input id="deployment-name" maxlength="64" placeholder="如 🇭🇰 HK Reality"></div>' +
+        '<div class="form-group"><label>监听端口</label><input id="deployment-port" type="number" min="1" max="65535" value="443"></div>' +
+        '<div class="form-group full-width"><label>公网 IP / 域名 (客户端连接地址)</label>' +
+        '<div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px;" id="deployment-ip-quick">' +
+        (pubIpv4 ? `<button type="button" class="btn btn-sm" data-ip-val="${_escHtml(pubIpv4)}">📡 自动 IPv4 (${_escHtml(pubIpv4)})</button>` : '') +
+        (pubIpv6 ? `<button type="button" class="btn btn-sm" data-ip-val="${_escHtml(pubIpv6)}">🌐 自动 IPv6 (${_escHtml(pubIpv6)})</button>` : '') +
+        '</div>' +
+        '<input id="deployment-server" placeholder="自动填入公网 IP 或手动输入绑定域名"></div>' +
+        '</div>' +
+        '<div id="deployment-tls-section"><div class="form-grid">' +
+        '<div class="form-group"><label>TLS / 伪装模式</label><select id="deployment-tls-mode"></select></div>' +
+        '<div class="form-group"><label id="deployment-domain-label">证书域名 / SNI</label><input id="deployment-domain" placeholder="如 www.amazon.com 或自有时效域名"></div>' +
+        '<div class="form-group full-width"><label>伪装目标 / 反代上游 URL (可选，需 https://)</label><input id="deployment-camouflage" placeholder="https://www.apple.com (留空使用内置静态伪装页或 SNI 域名)"></div>' +
         '</div></div>' +
         '<div id="deployment-reality-ext-fields" hidden><div class="form-grid">' +
-        '<div class="form-group"><label>客户端指纹</label><select id="deployment-fingerprint"><option value="chrome">chrome</option><option value="firefox">firefox</option><option value="safari">safari</option><option value="edge">edge</option><option value="ios">ios</option><option value="android">android</option><option value="random">random</option></select></div>' +
-        '<div class="form-group"><label>Reality Public Key</label><input id="deployment-reality-pubkey" placeholder="可点击下方按钮由服务端生成"></div>' +
-        '<div class="form-group full-width"><label>Short IDs (逗号分隔 hex)</label><input id="deployment-reality-shortids" placeholder="留空自动生成或填写如 a1b2c3d4"></div>' +
+        '<div class="form-group"><label>uTLS 客户端指纹</label><select id="deployment-fingerprint"><option value="chrome">chrome (推荐)</option><option value="firefox">firefox</option><option value="safari">safari</option><option value="edge">edge</option><option value="ios">ios</option><option value="android">android</option><option value="random">random</option></select></div>' +
+        '<div class="form-group"><label>Reality Public Key</label><input id="deployment-reality-pubkey" placeholder="留空自动生成或点击下方按钮预生成"></div>' +
+        '<div class="form-group full-width"><label>Short IDs (逗号分隔 hex，留空自动生成)</label><input id="deployment-reality-shortids" placeholder="如 a1b2c3d4"></div>' +
         '</div></div>' +
-        '<div id="deployment-ss2022-fields" hidden><label>SS2022 加密套件</label><select id="deployment-ss2022-method"><option value="2022-blake3-aes-256-gcm">2022-blake3-aes-256-gcm</option><option value="2022-blake3-aes-128-gcm">2022-blake3-aes-128-gcm</option></select></div>' +
-        '<div id="deployment-ws-fields" hidden><label>WebSocket Path</label><input id="deployment-ws-path" value="/ws" placeholder="/ws"></div>' +
+        '<div id="deployment-ss2022-fields" hidden><div class="form-grid">' +
+        '<div class="form-group"><label>SS2022 加密套件</label><select id="deployment-ss2022-method"><option value="2022-blake3-aes-256-gcm">2022-blake3-aes-256-gcm</option><option value="2022-blake3-aes-128-gcm">2022-blake3-aes-128-gcm</option></select></div>' +
+        '<div class="form-group" style="display:flex; align-items:flex-end;"><label class="inline-check"><input type="checkbox" id="deployment-ss2022-publish"> 同时投影至客户端订阅 (允许客户端直连此 SS2022 节点)</label></div>' +
+        '</div></div>' +
         '<div id="deployment-hy2-fields" hidden><div class="form-grid">' +
-        '<div class="form-group"><label>上行限速 Mbps (可选)</label><input id="deployment-hy2-up" type="number" min="1" max="100000"></div>' +
-        '<div class="form-group"><label>下行限速 Mbps (可选)</label><input id="deployment-hy2-down" type="number" min="1" max="100000"></div>' +
-        '<div class="form-group"><label>混淆</label><select id="deployment-hy2-obfs"><option value="none">none</option><option value="salamander">salamander</option></select></div>' +
+        '<div class="form-group"><label>端口跳跃范围 mport (可选)</label><input id="deployment-hy2-mport" placeholder="如 20000-50000"></div>' +
+        '<div class="form-group"><label>跳跃间隔秒数 (5-3600)</label><input id="deployment-hy2-hop" type="number" min="5" max="3600" placeholder="30"></div>' +
+        '<div class="form-group"><label>上行带宽 Mbps (可选)</label><input id="deployment-hy2-up" type="number" min="1" max="100000" placeholder="100"></div>' +
+        '<div class="form-group"><label>下行带宽 Mbps (可选)</label><input id="deployment-hy2-down" type="number" min="1" max="100000" placeholder="500"></div>' +
+        '<div class="form-group"><label>QUIC 混淆 (Salamander)</label><select id="deployment-hy2-obfs"><option value="none">none (推荐依靠端口跳跃)</option><option value="salamander">salamander</option></select></div>' +
         '</div></div>' +
         '<div id="deployment-acme-fields" hidden><div class="form-grid">' +
         '<div class="form-group"><label>ACME 联系邮箱 (可选)</label><input id="deployment-acme-email" type="email" placeholder="admin@example.com"></div>' +
@@ -165,93 +263,212 @@ async function showAgentDeployment(agent) {
         '<div class="form-group"><label>DNS 服务商</label><select id="deployment-dns-provider"><option value="cloudflare">cloudflare</option><option value="alidns">alidns</option><option value="dnspod">dnspod</option></select></div>' +
         '<div class="form-group"><label>DNS Zone ID (Cloudflare 需 32 位 hex)</label><input id="deployment-dns-zone" placeholder="0123456789abcdef0123456789abcdef"></div>' +
         '<div class="form-group"><label>DNS 传播等待秒数</label><input id="deployment-dns-prop" type="number" min="10" max="600" value="60"></div>' +
-        '<div class="form-group"><label>DNS API Token (仅写入不回显)</label><input id="deployment-dns-token" type="password" autocomplete="off" placeholder="留空表示保持原有凭据或无"></div>' +
+        '<div class="form-group"><label>DNS API Token (仅写入不回显)</label><input id="deployment-dns-token" type="password" autocomplete="off" placeholder="留空表示保持原有凭据"></div>' +
         '</div></div>' +
-        '<div style="margin:8px 0;"><button type="button" class="btn btn-sm" id="deployment-keygen-btn" hidden>🔑 服务端生成密钥对</button> <span id="deployment-keyref-status" class="hint"></span></div>' +
-        '<p class="hint">应用会重启该托管实例，可能中断连接；失败或取消后请重新应用以核实状态。</p>' +
-        '<button type="button" class="btn btn-primary" id="deployment-apply">应用 / 重试</button> ' +
-        '<button type="button" class="btn btn-danger" id="deployment-remove">移除监听</button> ' +
+        '<details style="margin:10px 0;"><summary>🌐 出站双栈策略与外部 Socks5 / SS 落地出站 (家宽 ISP 解锁)</summary>' +
+        '<div class="form-grid" style="margin-top:8px;">' +
+        '<div class="form-group"><label>出站 IP 协议栈策略</label><select id="deployment-outbound-strategy">' +
+        '<option value="prefer_ipv4">双栈 IPv4 优先 (prefer_ipv4 · 默认)</option>' +
+        '<option value="prefer_ipv6">双栈 IPv6 优先 (prefer_ipv6)</option>' +
+        '<option value="ipv4_only">仅 IPv4 出站 (ipv4_only)</option>' +
+        '<option value="ipv6_only">仅 IPv6 出站 (ipv6_only)</option></select></div>' +
+        '<div class="form-group"><label>节点出站方式</label><select id="deployment-outbound-mode">' +
+        '<option value="direct">本机直连出站 (Direct)</option>' +
+        '<option value="socks5">外部 Socks5 落地出站 (对接第三方住宅家宽)</option>' +
+        '<option value="ss">外部 Shadowsocks 落地出站</option></select></div>' +
+        '</div>' +
+        '<div id="deployment-outbound-proxy-fields" hidden><div class="form-grid">' +
+        '<div class="form-group"><label>外部落地服务器地址</label><input id="deployment-out-server" placeholder="isp.example.com 或 IP"></div>' +
+        '<div class="form-group"><label>外部落地端口</label><input id="deployment-out-port" type="number" min="1" max="65535" placeholder="1080"></div>' +
+        '<div class="form-group" id="deployment-out-user-wrap"><label>Socks5 用户名 (可选)</label><input id="deployment-out-user" placeholder="username"></div>' +
+        '<div class="form-group" id="deployment-out-method-wrap" hidden><label>SS 加密方式</label><select id="deployment-out-method">' +
+        '<option value="2022-blake3-aes-256-gcm">2022-blake3-aes-256-gcm</option>' +
+        '<option value="2022-blake3-aes-128-gcm">2022-blake3-aes-128-gcm</option>' +
+        '<option value="aes-256-gcm">aes-256-gcm</option>' +
+        '<option value="chacha20-ietf-poly1305">chacha20-ietf-poly1305</option></select></div>' +
+        '<div class="form-group"><label>外部落地密码 (仅写入不回显)</label><input id="deployment-out-pass" type="password" autocomplete="off" placeholder="留空保持原密码"></div>' +
+        '</div></div></details>' +
+        '<div style="margin:8px 0;"><button type="button" class="btn btn-sm" id="deployment-keygen-btn">🔑 服务端预生成密钥对</button> <span id="deployment-keyref-status" class="hint"></span></div>' +
+        '<p class="hint">应用仅重载/重启代理服务进程（不会重启服务器），可能短暂中断当前节点连接。</p>' +
+        '<button type="button" class="btn btn-primary" id="deployment-apply">保存并应用节点</button> ' +
+        '<button type="button" class="btn btn-danger" id="deployment-remove">删除当前节点</button> ' +
         '<button type="button" class="btn" id="deployment-refresh">刷新状态</button><pre id="deployment-state" style="white-space:pre-wrap; margin-top:8px;"></pre>', closeModal);
 
+    _bindAgentRegionPicker('deployment-region', 'deployment-name');
     const status = document.getElementById('deployment-state');
     const apply = document.getElementById('deployment-apply');
     const remove = document.getElementById('deployment-remove');
     const protocol = document.getElementById('deployment-protocol');
     const tlsModeEl = document.getElementById('deployment-tls-mode');
+    const outModeEl = document.getElementById('deployment-outbound-mode');
     const keygenBtn = document.getElementById('deployment-keygen-btn');
     const keyrefStatus = document.getElementById('deployment-keyref-status');
+    const nodesBar = document.getElementById('deployment-nodes-bar');
+
+    document.querySelectorAll('#deployment-ip-quick button[data-ip-val]').forEach(btn => {
+        btn.onclick = () => {
+            document.getElementById('deployment-server').value = btn.getAttribute('data-ip-val') || '';
+        };
+    });
+
+    function getSelectedNode() {
+        return agentNodes.find(n => n.id === currentNodeId) || null;
+    }
 
     function syncTlsOptions(proto, preferred) {
-        const meta = LANDING_PROTO_META[proto] || LANDING_PROTO_META['vless-reality'];
+        const meta = LANDING_PROTO_META[proto] || LANDING_PROTO_META.reality;
         tlsModeEl.replaceChildren();
-        for (const mode of meta.tlsModes) {
+        for (const [modeVal, modeLabel] of meta.tlsModes) {
             const opt = document.createElement('option');
-            opt.value = mode;
-            opt.textContent = mode;
+            opt.value = modeVal;
+            opt.textContent = modeLabel;
             tlsModeEl.append(opt);
         }
-        if (preferred && meta.tlsModes.includes(preferred)) tlsModeEl.value = preferred;
-        else tlsModeEl.value = meta.tlsModes[0];
+        const validValues = meta.tlsModes.map(m => m[0]);
+        if (preferred && validValues.includes(preferred)) tlsModeEl.value = preferred;
+        else tlsModeEl.value = validValues[0];
+    }
+
+    function renderNodesBar() {
+        nodesBar.replaceChildren();
+        const wrap = document.createElement('div');
+        wrap.style.display = 'flex';
+        wrap.style.flexWrap = 'wrap';
+        wrap.style.gap = '6px';
+        wrap.style.alignItems = 'center';
+        for (const n of agentNodes) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            const isSel = n.id === currentNodeId;
+            btn.className = isSel ? 'btn btn-primary btn-sm' : 'btn btn-sm';
+            const s = n.settings || {};
+            btn.textContent = `${s.name || n.protocol} (${n.protocol} :${s.listen_port || '?'})`;
+            btn.onclick = () => {
+                currentNodeId = n.id;
+                generatedKeyRef = null;
+                render(true);
+            };
+            wrap.append(btn);
+        }
+        const addBtn = document.createElement('button');
+        addBtn.type = 'button';
+        addBtn.className = currentNodeId === null ? 'btn btn-primary btn-sm' : 'btn btn-sm';
+        addBtn.textContent = '➕ 新增共存节点';
+        addBtn.onclick = () => {
+            currentNodeId = null;
+            generatedKeyRef = null;
+            protocol.value = 'reality';
+            syncTlsOptions('reality', 'reality');
+            const usedPorts = new Set(agentNodes.map(x => Number(x.settings?.listen_port)));
+            const defaultP = !usedPorts.has(443) ? 443 : (!usedPorts.has(8443) ? 8443 : 2053);
+            document.getElementById('deployment-name').value = '';
+            document.getElementById('deployment-port').value = String(defaultP);
+            document.getElementById('deployment-server').value = pubIpv4 || pubIpv6 || '';
+            document.getElementById('deployment-domain').value = 'www.amazon.com';
+            document.getElementById('deployment-camouflage').value = '';
+            document.getElementById('deployment-reality-pubkey').value = '';
+            document.getElementById('deployment-reality-shortids').value = '';
+            document.getElementById('deployment-hy2-mport').value = '';
+            document.getElementById('deployment-hy2-hop').value = '';
+            document.getElementById('deployment-ss2022-publish').checked = false;
+            document.getElementById('deployment-outbound-strategy').value = 'prefer_ipv4';
+            outModeEl.value = 'direct';
+            render(false);
+        };
+        wrap.append(addBtn);
+        nodesBar.append(wrap);
+        if (typeof window !== 'undefined' && window.twemoji) {
+            window.twemoji.parse(nodesBar, { folder: 'svg', ext: '.svg' });
+        }
     }
 
     function render(fill) {
-        if (fill && deployment) {
-            const p = deployment.protocol || 'vless-reality';
-            protocol.value = LANDING_PROTO_META[p] ? p : 'vless-reality';
-            const s = deployment.settings || {};
-            syncTlsOptions(protocol.value, s.tls_mode);
-            document.getElementById('deployment-name').value = s.name ?? '';
-            document.getElementById('deployment-server').value = s.server ?? '';
-            document.getElementById('deployment-port').value = s.listen_port ?? 443;
-            document.getElementById('deployment-sni').value = s.server_name ?? '';
-            document.getElementById('deployment-domain').value = s.domain ?? '';
-            document.getElementById('deployment-camouflage').value = s.camouflage_url ?? '';
-            document.getElementById('deployment-fingerprint').value = s.fingerprint ?? 'chrome';
-            document.getElementById('deployment-reality-pubkey').value = s.reality_public_key ?? '';
-            document.getElementById('deployment-reality-shortids').value = Array.isArray(s.reality_short_ids) ? s.reality_short_ids.join(', ') : '';
-            document.getElementById('deployment-ss2022-method').value = s.method ?? '2022-blake3-aes-256-gcm';
-            document.getElementById('deployment-ws-path').value = s.ws_path ?? '/ws';
-            document.getElementById('deployment-hy2-up').value = s.up_mbps ?? '';
-            document.getElementById('deployment-hy2-down').value = s.down_mbps ?? '';
-            document.getElementById('deployment-hy2-obfs').value = s.obfs ?? 'none';
-            document.getElementById('deployment-acme-email').value = s.acme_email ?? '';
-            document.getElementById('deployment-dns-provider').value = s.dns_provider ?? 'cloudflare';
-            document.getElementById('deployment-dns-zone').value = s.dns_zone_id ?? '';
-            document.getElementById('deployment-dns-prop').value = s.dns_propagation_seconds ?? 60;
+        renderNodesBar();
+        const current = getSelectedNode();
+        if (fill) {
+            if (current) {
+                const p = LANDING_PROTO_META[current.protocol] ? current.protocol : 'reality';
+                protocol.value = p;
+                const s = current.settings || {};
+                syncTlsOptions(p, s.tls_mode);
+                document.getElementById('deployment-name').value = s.name ?? '';
+                document.getElementById('deployment-server').value = s.server ?? (pubIpv4 || pubIpv6 || '');
+                document.getElementById('deployment-port').value = s.listen_port ?? 443;
+                document.getElementById('deployment-domain').value = s.domain ?? s.server_name ?? '';
+                document.getElementById('deployment-camouflage').value = s.camouflage_url ?? '';
+                document.getElementById('deployment-fingerprint').value = s.fingerprint ?? 'chrome';
+                document.getElementById('deployment-reality-pubkey').value = s.reality_public_key ?? '';
+                document.getElementById('deployment-reality-shortids').value = Array.isArray(s.reality_short_ids) ? s.reality_short_ids.join(', ') : '';
+                document.getElementById('deployment-ss2022-method').value = s.method ?? '2022-blake3-aes-256-gcm';
+                document.getElementById('deployment-ss2022-publish').checked = Boolean(s.publish_to_subscription);
+                document.getElementById('deployment-hy2-up').value = s.up_mbps ?? '';
+                document.getElementById('deployment-hy2-down').value = s.down_mbps ?? '';
+                document.getElementById('deployment-hy2-obfs').value = s.obfs ?? 'none';
+                document.getElementById('deployment-hy2-mport').value = s.mport ?? '';
+                document.getElementById('deployment-hy2-hop').value = s.hop_interval ?? '';
+                document.getElementById('deployment-acme-email').value = s.acme_email ?? '';
+                document.getElementById('deployment-dns-provider').value = s.dns_provider ?? 'cloudflare';
+                document.getElementById('deployment-dns-zone').value = s.dns_zone_id ?? '';
+                document.getElementById('deployment-dns-prop').value = s.dns_propagation_seconds ?? 60;
+                document.getElementById('deployment-outbound-strategy').value = s.outbound_strategy ?? 'prefer_ipv4';
+                outModeEl.value = s.outbound_mode ?? 'direct';
+                document.getElementById('deployment-out-server').value = s.outbound_server ?? '';
+                document.getElementById('deployment-out-port').value = s.outbound_port ?? '';
+                document.getElementById('deployment-out-user').value = s.outbound_username ?? '';
+                document.getElementById('deployment-out-method').value = s.outbound_method ?? '2022-blake3-aes-256-gcm';
+            } else if (!document.getElementById('deployment-server').value) {
+                document.getElementById('deployment-server').value = pubIpv4 || pubIpv6 || '';
+                syncTlsOptions(protocol.value);
+            }
         }
         const proto = protocol.value;
-        const meta = LANDING_PROTO_META[proto] || LANDING_PROTO_META['vless-reality'];
-        protocol.disabled = !!deployment;
-        const tlsMode = tlsModeEl.value || meta.tlsModes[0];
-        document.getElementById('deployment-vless-reality-fields').hidden = proto !== 'vless-reality';
-        document.getElementById('deployment-tls-section').hidden = proto === 'vless-reality';
-        document.getElementById('deployment-reality-ext-fields').hidden = proto !== 'reality';
+        const meta = LANDING_PROTO_META[proto] || LANDING_PROTO_META.reality;
+        const tlsMode = tlsModeEl.value || meta.tlsModes[0][0];
+        document.getElementById('deployment-tls-section').hidden = proto === 'ss2022';
+        document.getElementById('deployment-reality-ext-fields').hidden = proto === 'ss2022' || proto === 'hysteria2' || proto === 'trojan';
+        document.getElementById('deployment-reality-pubkey').closest('.form-group').hidden = proto !== 'reality';
+        document.getElementById('deployment-reality-shortids').closest('.form-group').hidden = proto !== 'reality';
         document.getElementById('deployment-ss2022-fields').hidden = proto !== 'ss2022';
-        document.getElementById('deployment-ws-fields').hidden = proto !== 'vless-ws';
         document.getElementById('deployment-hy2-fields').hidden = proto !== 'hysteria2';
-        const usesAcme = proto !== 'vless-reality' && (tlsMode === 'acme_http' || tlsMode === 'acme_dns');
+        const usesAcme = tlsMode === 'acme_http' || tlsMode === 'acme_dns';
         document.getElementById('deployment-acme-fields').hidden = !usesAcme;
-        document.getElementById('deployment-dns-fields').hidden = proto === 'vless-reality' || tlsMode !== 'acme_dns';
-        keygenBtn.hidden = !meta.canKeygen || !!deployment;
+        document.getElementById('deployment-dns-fields').hidden = tlsMode !== 'acme_dns';
+        document.getElementById('deployment-domain-label').textContent =
+            (proto === 'reality' && tlsMode === 'reality') ? '偷取目标域名 SNI (需支持 TLS 1.3 + H2，如 www.amazon.com)' : '证书域名 / SNI (需解析到本机或配置 DNS-01)';
+
+        const outMode = outModeEl.value || 'direct';
+        document.getElementById('deployment-outbound-proxy-fields').hidden = outMode === 'direct';
+        document.getElementById('deployment-out-user-wrap').hidden = outMode !== 'socks5';
+        document.getElementById('deployment-out-method-wrap').hidden = outMode !== 'ss';
+
+        keygenBtn.hidden = !meta.canKeygen;
         keyrefStatus.textContent = generatedKeyRef ? '已生成服务端密钥引用，提交部署时将自动注入（私钥不落地浏览器）。' : '';
-        document.getElementById('deployment-help').textContent = proto === 'ss2022'
-            ? 'SS2022 落地自动保管密钥，不直接暴露到订阅；部署成功后可在“链路”或 go-gost 转发中关联。'
-            : proto === 'vless-reality'
-                ? '经典 Phase 0 直连部署，自动生成只读客户端节点。'
-                : '支持 Caddy 自动伪装回落与 ACME 自动申请/续期 TLS 证书；部署成功后投影至客户端订阅。';
-        const capable = meta.landing ? agentCanLand(agent) : agentCanDeploy(agent);
-        document.getElementById('deployment-name').readOnly = !!deployment;
-        const busy = deployment && ['pending', 'assigned', 'running'].includes(deployment.status);
-        apply.disabled = !capable || !!busy;
-        remove.disabled = apply.disabled || !deployment;
-        status.textContent = !capable ? '请升级 Agent 和本地运行环境辅助服务以支持所选部署。' :
-            deployment ? '版本 ' + deployment.revision + ' · ' + deployment.action + ' · ' + deployment.status +
-                (deployment.error ? '\n' + deployment.error : '') : '尚未创建部署。';
+        const helpMap = {
+            reality: 'VLESS + XTLS-Vision + REALITY（开启 max_time_difference 1m）。可选“自建回环偷自己”（Caddy 在 127.0.0.1 提供真实 TLS 1.3 证书与伪装站）或“外部目标模式”（免域名）。',
+            hysteria2: 'Hysteria2 (QUIC/UDP + TLS 1.3 ALPN h3)，支持 ACME 自动证书、上下行带宽提示与多端口跳跃 (mport) 防 UDP QoS 限速。',
+            ss2022: 'Shadowsocks 2022 AEAD (TCP+UDP)，既可作为中转/链式代理的高性能内部落地，也可勾选直接加入客户端订阅。',
+            anytls: 'sing-box 原生 AnyTLS 入站 + TLS 1.3 自动证书，内置分段填充方案 (padding_scheme) 彻底消除 TLS-in-TLS 长度特征。',
+            trojan: 'Trojan + TLS 1.3 自动证书，自动编排本机回环 Caddy 提供真实网页 Fallback，抵御主动探测。',
+        };
+        document.getElementById('deployment-help').textContent = helpMap[proto] || '';
+        const capable = agentCanLand(agent) || agentCanDeploy(agent);
+        const busy = agentNodes.some(n => ['pending', 'assigned', 'running'].includes(n.status));
+        apply.disabled = !capable || busy;
+        remove.disabled = apply.disabled || !current;
+        status.textContent = !capable ? '请升级 Agent 和本地运行环境辅助服务以支持节点部署。' :
+            current ? `[${current.is_primary ? '主节点' : '共存节点'}] 版本 ${current.revision} · ${current.action} · ${current.status}` +
+                (current.error ? '\n' + current.error : '') : '正在创建新节点（保存后将与本机已有节点共同运行）。';
     }
 
     async function refresh() {
         generatedKeyRef = null;
-        deployment = (await fetchAgentJson(url)).deployment;
+        nodesPayload = await fetchAgentJson(nodesUrl);
+        agentNodes = nodesPayload.nodes || [];
+        if (currentNodeId && !agentNodes.some(n => n.id === currentNodeId)) {
+            currentNodeId = agentNodes.length ? agentNodes[0].id : null;
+        } else if (!currentNodeId && agentNodes.length) {
+            currentNodeId = agentNodes[0].id;
+        }
         render(true);
     }
 
@@ -275,22 +492,31 @@ async function showAgentDeployment(agent) {
 
     function buildPayloadSettings() {
         const proto = protocol.value;
-        const base = {
-            name: document.getElementById('deployment-name').value.trim(),
+        let nodeName = document.getElementById('deployment-name').value.trim();
+        const regionVal = document.getElementById('deployment-region')?.value?.trim() || '';
+        if (regionVal && typeof ProxyForgeRegions !== 'undefined') {
+            nodeName = ProxyForgeRegions.applyRegionPrefix(nodeName, regionVal);
+            document.getElementById('deployment-name').value = nodeName;
+        }
+        const tlsMode = proto === 'ss2022' ? 'none' : tlsModeEl.value;
+        const settings = {
+            name: nodeName,
             server: document.getElementById('deployment-server').value.trim(),
             listen_port: Number(document.getElementById('deployment-port').value),
+            protocol: proto,
+            tls_mode: tlsMode,
+            outbound_strategy: document.getElementById('deployment-outbound-strategy').value || 'prefer_ipv4',
+            outbound_mode: outModeEl.value || 'direct',
         };
-        if (proto === 'vless-reality') {
-            base.server_name = document.getElementById('deployment-sni').value.trim();
-            return { settings: base, secrets: null };
-        }
-        const tlsMode = tlsModeEl.value;
-        const settings = { ...base, protocol: proto, tls_mode: tlsMode };
+        if (regionVal) settings.region = regionVal;
         const domain = document.getElementById('deployment-domain').value.trim();
         const cam = document.getElementById('deployment-camouflage').value.trim();
         if (domain) settings.domain = domain;
         if (cam) settings.camouflage_url = cam;
-        if (proto === 'ss2022') settings.method = document.getElementById('deployment-ss2022-method').value;
+        if (proto === 'ss2022') {
+            settings.method = document.getElementById('deployment-ss2022-method').value;
+            settings.publish_to_subscription = Boolean(document.getElementById('deployment-ss2022-publish').checked);
+        }
         if (proto === 'reality') {
             settings.fingerprint = document.getElementById('deployment-fingerprint').value;
             const pub = document.getElementById('deployment-reality-pubkey').value.trim();
@@ -298,9 +524,8 @@ async function showAgentDeployment(agent) {
             if (pub) settings.reality_public_key = pub;
             if (sids.length) settings.reality_short_ids = sids;
         }
-        if (proto === 'vless-ws') {
-            const wp = document.getElementById('deployment-ws-path').value.trim();
-            if (wp) settings.ws_path = wp;
+        if (proto === 'anytls') {
+            settings.fingerprint = document.getElementById('deployment-fingerprint').value;
         }
         if (proto === 'hysteria2') {
             const up = Number(document.getElementById('deployment-hy2-up').value);
@@ -308,8 +533,12 @@ async function showAgentDeployment(agent) {
             if (up > 0) settings.up_mbps = Math.round(up);
             if (down > 0) settings.down_mbps = Math.round(down);
             settings.obfs = document.getElementById('deployment-hy2-obfs').value;
+            const mport = document.getElementById('deployment-hy2-mport').value.trim();
+            if (mport) settings.mport = mport;
+            const hop = Number(document.getElementById('deployment-hy2-hop').value);
+            if (hop >= 5) settings.hop_interval = Math.round(hop);
         }
-        let secrets = null;
+        const secrets = {};
         if (tlsMode === 'acme_http' || tlsMode === 'acme_dns') {
             const email = document.getElementById('deployment-acme-email').value.trim();
             if (email) settings.acme_email = email;
@@ -321,50 +550,80 @@ async function showAgentDeployment(agent) {
             const prop = Number(document.getElementById('deployment-dns-prop').value);
             if (prop >= 10) settings.dns_propagation_seconds = Math.round(prop);
             const tok = document.getElementById('deployment-dns-token').value.trim();
-            if (tok) secrets = { dns_api_token: tok };
+            if (tok) secrets.dns_api_token = tok;
         }
-        return { settings, secrets };
+        if (settings.outbound_mode === 'socks5' || settings.outbound_mode === 'ss') {
+            settings.outbound_server = document.getElementById('deployment-out-server').value.trim();
+            settings.outbound_port = Number(document.getElementById('deployment-out-port').value);
+            if (settings.outbound_mode === 'socks5') {
+                const u = document.getElementById('deployment-out-user').value.trim();
+                if (u) settings.outbound_username = u;
+            } else {
+                settings.outbound_method = document.getElementById('deployment-out-method').value;
+            }
+            const outPw = document.getElementById('deployment-out-pass').value.trim();
+            if (outPw) secrets.outbound_password = outPw;
+        }
+        return { settings, secrets: Object.keys(secrets).length ? secrets : null };
     }
 
     async function submit(removing) {
-        if (!confirm(removing ? '确认移除该托管实例的公网监听？' : '确认应用配置并重启该托管实例？')) return;
+        const current = getSelectedNode();
+        if (removing && !current) return;
+        if (!confirm(removing ? `确认删除节点 ${current.settings?.name || ''} 并重载代理服务进程？` : '确认保存配置并重载/重启代理服务进程（不会重启服务器）？')) return;
         apply.disabled = true; remove.disabled = true;
-        const built = removing ? { settings: deployment.settings, secrets: null } : buildPayloadSettings();
-        const data = { expected_revision: deployment ? deployment.revision : 0, settings: built.settings, remove: removing, protocol: protocol.value };
-        if (!removing && built.secrets) data.secrets = built.secrets;
-        if (!removing && generatedKeyRef) data.key_ref = generatedKeyRef;
-        const key = url + ':' + JSON.stringify({ expected_revision: data.expected_revision, protocol: data.protocol, remove: removing, settings: data.settings, key_ref: generatedKeyRef || '' });
-        let requestId = pendingAgentJobRequests.get(key);
-        if (!requestId) {
-            requestId = randomRequestId();
-            pendingAgentJobRequests.set(key, requestId);
-        }
         try {
-            deployment = await fetchAgentJson(url, { method: 'PUT', body: JSON.stringify({ ...data, request_id: requestId }) });
-            const tokField = document.getElementById('deployment-dns-token');
-            if (tokField) tokField.value = '';
-            generatedKeyRef = null;
-            pendingAgentJobRequests.delete(key);
-            render(true);
+            if (removing) {
+                await fetchAgentJson('/agents/' + agent.id + '/nodes/' + encodeURIComponent(current.id), {
+                    method: 'DELETE',
+                    body: JSON.stringify({ request_id: randomRequestId() }),
+                });
+                currentNodeId = null;
+            } else {
+                const built = buildPayloadSettings();
+                const body = {
+                    request_id: randomRequestId(),
+                    protocol: protocol.value,
+                    settings: built.settings,
+                };
+                if (built.secrets) body.secrets = built.secrets;
+                if (generatedKeyRef) body.key_ref = generatedKeyRef;
+                const endpoint = current
+                    ? '/agents/' + agent.id + '/nodes/' + encodeURIComponent(current.id)
+                    : '/agents/' + agent.id + '/nodes';
+                await fetchAgentJson(endpoint, {
+                    method: current ? 'PUT' : 'POST',
+                    body: JSON.stringify(body),
+                });
+                const tokField = document.getElementById('deployment-dns-token');
+                if (tokField) tokField.value = '';
+                const outPassField = document.getElementById('deployment-out-pass');
+                if (outPassField) outPassField.value = '';
+                generatedKeyRef = null;
+            }
+            await refresh();
+            if (typeof ProxyForgeManagedNodes !== 'undefined') ProxyForgeManagedNodes.refresh();
         } catch (error) {
             render(false);
-            status.textContent = error.message + '；可重试相同请求。若版本冲突，请刷新后再操作。';
+            status.textContent = error.message + '；请检查端口冲突或字段格式后重试。';
         }
     }
     apply.onclick = () => submit(false);
     remove.onclick = () => submit(true);
     protocol.onchange = () => {
-        if (!deployment) {
-            const meta = LANDING_PROTO_META[protocol.value] || LANDING_PROTO_META['vless-reality'];
+        const meta = LANDING_PROTO_META[protocol.value] || LANDING_PROTO_META.reality;
+        if (!getSelectedNode()) {
             document.getElementById('deployment-port').value = String(meta.defaultPort);
-            syncTlsOptions(protocol.value);
-            generatedKeyRef = null;
         }
+        syncTlsOptions(protocol.value);
+        generatedKeyRef = null;
         render(false);
     };
     tlsModeEl.onchange = () => render(false);
+    outModeEl.onchange = () => render(false);
     document.getElementById('deployment-refresh').onclick = () => refresh().catch(error => { status.textContent = error.message; });
-    syncTlsOptions(deployment?.protocol || protocol.value, deployment?.settings?.tls_mode);
+    const firstProto = getSelectedNode()?.protocol || protocol.value;
+    syncTlsOptions(LANDING_PROTO_META[firstProto] ? firstProto : 'reality', getSelectedNode()?.settings?.tls_mode);
     render(true);
 }
 
@@ -475,12 +734,16 @@ function parseForwardTargetsInput(raw) {
 }
 
 async function showAgentAdoptions(agent) {
-    openModal('存量节点接管 · ' + agent.name,
-        '<p class="hint">扫描目标主机已运行的 sing-box / xray / caddy 服务，解析端口、协议、TLS 与 SNI 并注册到控制台资产视图。</p>' +
+    let pollTimer = null;
+    openModal('存量节点完全接管 · ' + agent.name,
+        '<p class="hint">经由 root 权限 runtime_helper 扫描目标主机已运行的 sing-box / xray / caddy 服务，自动提取认证凭据（UUID、密码、私钥推导 Reality 公钥、shortId）。点击「完全接管」将备份并停止原服务，无缝迁入 proxyforge-singbox 统一托管并直接加入客户端订阅（支持一键归还原服务）。</p>' +
         '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">' +
-        '<button type="button" class="btn btn-primary btn-sm" id="adopt-scan-trigger">🔍 一键接管扫描 (adopt_scan)</button>' +
+        '<button type="button" class="btn btn-primary btn-sm" id="adopt-scan-trigger">🔍 一键特权扫描 (adopt_scan)</button>' +
         '<button type="button" class="btn btn-sm" id="adopt-scan-refresh">刷新扫描结果</button></div>' +
-        '<p id="adopt-scan-status" class="hint"></p><div id="adopt-scan-list"></div>', closeModal);
+        '<p id="adopt-scan-status" class="hint"></p><div id="adopt-scan-list"></div>', () => {
+            if (pollTimer) clearInterval(pollTimer);
+            closeModal();
+        });
     const statusEl = document.getElementById('adopt-scan-status');
     const listEl = document.getElementById('adopt-scan-list');
     const triggerBtn = document.getElementById('adopt-scan-trigger');
@@ -490,35 +753,131 @@ async function showAgentAdoptions(agent) {
         const { adoptions } = await fetchAgentJson('/agents/' + agent.id + '/adoptions');
         listEl.replaceChildren();
         if (!adoptions || !adoptions.length) {
-            listEl.textContent = '暂无接管扫描记录，点击上方「一键接管扫描」下发探测任务。';
+            listEl.textContent = '暂无接管扫描记录，点击上方「一键特权扫描」下发探测任务（扫描完成后将自动刷新）。';
             return;
         }
         for (const item of adoptions) {
             const card = document.createElement('div');
             card.className = 'sub-user-card';
-            card.style.marginBottom = '8px';
+            card.style.marginBottom = '10px';
+            const head = document.createElement('div');
+            head.className = 'sub-user-header';
             const title = document.createElement('strong');
-            title.textContent = `[${item.core}] ${item.tag || item.service_name} (${item.protocol} :${item.listen_port})`;
+            title.textContent = `[${item.core}] ${item.custom_name || item.tag || item.service_name} (${item.protocol} :${item.listen_port})`;
+            const badge = document.createElement('span');
+            const isAdopted = item.adopted_status === 'adopted';
+            badge.className = `status-pill ${isAdopted ? 'is-online' : (item.has_credentials ? 'is-degraded' : 'is-offline')}`;
+            badge.textContent = isAdopted ? '已完全接管 · 已入订阅' : (item.has_credentials ? '已提取凭据 · 可一键接管' : (item.adoptable ? '待特权提取凭据' : '仅观测'));
+            head.append(title, badge);
+
             const meta = document.createElement('div');
             meta.className = 'hint';
             meta.textContent = `监听: ${item.listen}:${item.listen_port} · TLS: ${item.tls_mode || 'none'}` +
                 (item.sni ? ` · SNI: ${item.sni}` : '') + (item.ws_path ? ` · WS: ${item.ws_path}` : '') +
-                ` · ${item.adoptable ? '可接管' : '仅观测'}`;
+                (item.service_name ? ` · 原服务: ${item.service_name}` : '');
             const cfg = document.createElement('div');
             cfg.className = 'hint';
-            cfg.textContent = `配置: ${item.config_path}`;
-            card.append(title, meta, cfg);
+            cfg.textContent = `原配置: ${item.config_path}`;
+
+            const actions = document.createElement('div');
+            actions.className = 'item-actions';
+            actions.style.marginTop = '6px';
+            if (isAdopted) {
+                const retBtn = document.createElement('button');
+                retBtn.type = 'button';
+                retBtn.className = 'btn btn-danger btn-sm';
+                retBtn.textContent = '↩️ 归还原服务';
+                retBtn.onclick = async () => {
+                    if (!confirm(`确认从 proxyforge-singbox 移除 ${item.tag || item.listen_port} 并恢复启动原服务 ${item.service_name || ''}？`)) return;
+                    retBtn.disabled = true;
+                    try {
+                        await fetchAgentJson(`/agents/${agent.id}/adoptions/${encodeURIComponent(item.source_key)}/return`, {
+                            method: 'POST',
+                            body: JSON.stringify({ request_id: randomRequestId() }),
+                        });
+                        statusEl.textContent = '已下发归还原服务任务，代理服务重载后原服务将自动恢复运行。';
+                        await loadAdoptions();
+                        if (typeof ProxyForgeManagedNodes !== 'undefined') ProxyForgeManagedNodes.refresh();
+                    } catch (e) {
+                        statusEl.textContent = '归还失败：' + e.message;
+                        retBtn.disabled = false;
+                    }
+                };
+                actions.append(retBtn);
+            } else if (item.adoptable) {
+                const adoptBtn = document.createElement('button');
+                adoptBtn.type = 'button';
+                adoptBtn.className = 'btn btn-primary btn-sm';
+                adoptBtn.disabled = !item.has_credentials;
+                adoptBtn.textContent = item.has_credentials ? '🚀 完全接管 (停用原服务并加入订阅)' : '请先点击上方特权扫描提取凭据';
+                adoptBtn.onclick = async () => {
+                    if (!confirm(`确认完全接管 [${item.core}] :${item.listen_port}？系统将备份并停止原服务 ${item.service_name || ''}，将其无缝并入 proxyforge-singbox 并直接加入客户端订阅。`)) return;
+                    adoptBtn.disabled = true;
+                    try {
+                        const defaultName = item.custom_name || `${agent.name}-${item.protocol}-${item.listen_port}`;
+                        const finalName = typeof ProxyForgeRegions !== 'undefined' && agent.region
+                            ? ProxyForgeRegions.applyRegionPrefix(defaultName, agent.region)
+                            : defaultName;
+                        await fetchAgentJson(`/agents/${agent.id}/adoptions/${encodeURIComponent(item.source_key)}/adopt`, {
+                            method: 'POST',
+                            body: JSON.stringify({
+                                request_id: randomRequestId(),
+                                custom_name: finalName,
+                                server_override: agent.public_ipv4 || agent.public_ipv6 || agent.observed_ip || '',
+                            }),
+                        });
+                        statusEl.textContent = '已下发完全接管任务，该存量节点已加入受管清单与客户端订阅！';
+                        await loadAdoptions();
+                        if (typeof ProxyForgeManagedNodes !== 'undefined') ProxyForgeManagedNodes.refresh();
+                    } catch (e) {
+                        statusEl.textContent = '接管失败：' + e.message;
+                        adoptBtn.disabled = false;
+                    }
+                };
+                actions.append(adoptBtn);
+            }
+            card.append(head, meta, cfg, actions);
             listEl.append(card);
         }
+    }
+
+    function startPollingForScan(jobId) {
+        if (pollTimer) clearInterval(pollTimer);
+        let rounds = 0;
+        pollTimer = setInterval(async () => {
+            rounds += 1;
+            if (!listEl.isConnected || !modalOverlay.classList.contains('active') || rounds > 15) {
+                clearInterval(pollTimer);
+                pollTimer = null;
+                return;
+            }
+            try {
+                await loadAdoptions();
+                const { jobs } = await fetchAgentJson('/agents/' + agent.id + '/jobs');
+                const matched = (jobs || []).find(j => j.id === jobId);
+                if (matched && ['success', 'failed', 'cancelled'].includes(matched.status)) {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                    await loadAdoptions();
+                    if (matched.status === 'success') {
+                        setTimeout(() => { loadAdoptions().catch(() => {}); }, 800);
+                    }
+                    statusEl.textContent = matched.status === 'success'
+                        ? '✅ 存量节点特权扫描与凭据提取已完成！'
+                        : `扫描任务结束：${matched.status} ${matched.error || ''}`;
+                }
+            } catch (_) {}
+        }, 2000);
     }
 
     triggerBtn.onclick = async () => {
         try {
             triggerBtn.disabled = true;
-            await fetchAgentJson('/agents/' + agent.id + '/adopt-scan', {
+            const created = await fetchAgentJson('/agents/' + agent.id + '/adopt-scan', {
                 method: 'POST', body: JSON.stringify({ request_id: randomRequestId() })
             });
-            statusEl.textContent = '已下发存量扫描任务，等待 Agent 上报后点击「刷新扫描结果」。';
+            statusEl.textContent = '⏳ 已下发存量特权扫描任务，正在自动轮询等待 Agent 上报结果…';
+            startPollingForScan(created.id);
         } catch (error) {
             statusEl.textContent = '扫描下发失败：' + error.message;
         } finally {
@@ -846,40 +1205,299 @@ function agentStatusLabel(agent) {
         (!agent.metadata.supported ? ' · 未支持的系统' : '');
 }
 
+function _osBadgeElement(osName) {
+    const osLower = String(osName || '').toLowerCase();
+    const badge = document.createElement('span');
+    badge.className = 'komari-os-badge';
+    if (osLower.includes('debian')) badge.title = 'Debian';
+    else if (osLower.includes('ubuntu')) badge.title = 'Ubuntu';
+    else if (osLower.includes('alpine')) badge.title = 'Alpine Linux';
+    else badge.title = osName || 'Linux';
+    const label = osLower.includes('debian') ? '🌀' : (osLower.includes('ubuntu') ? '🟠' : (osLower.includes('alpine') ? '🏔️' : '🐧'));
+    badge.textContent = label;
+    return badge;
+}
+
+function _formatUptimeCompact(seconds) {
+    const s = Math.max(0, Number(seconds || 0));
+    if (s >= 86400) return `${Math.floor(s / 86400)} 天`;
+    if (s >= 3600) return `${Math.floor(s / 3600)} 小时`;
+    return `${Math.max(1, Math.floor(s / 60))} 分钟`;
+}
+
+function _formatExpireDays(expireAt) {
+    if (!expireAt || Number(expireAt) <= 0) return '长期有效';
+    const days = Math.ceil((Number(expireAt) - Date.now() / 1000) / 86400);
+    return days > 0 ? `${days} 天` : '已到期';
+}
+
+function _buildSegBar(ratio, active) {
+    const bar = document.createElement('div');
+    bar.className = 'komari-seg-bar';
+    const litCount = ratio > 0 ? Math.max(1, Math.min(20, Math.round(ratio * 20))) : 0;
+    const toneClass = ratio >= 0.9 ? 'is-danger' : (ratio >= 0.7 ? 'is-warn' : 'is-good');
+    for (let i = 0; i < 20; i += 1) {
+        const seg = document.createElement('span');
+        seg.className = 'komari-seg' + (active && i < litCount ? ' ' + toneClass : '');
+        bar.append(seg);
+    }
+    return bar;
+}
+
+function _buildTrafficDots(active, colorClass) {
+    const row = document.createElement('div');
+    row.className = 'komari-dot-track';
+    for (let i = 0; i < 12; i += 1) {
+        const d = document.createElement('span');
+        d.className = 'komari-mini-dot' + (active && i >= 6 ? ' ' + colorClass : '');
+        row.append(d);
+    }
+    return row;
+}
+
 async function refreshAgents() {
     const target = document.getElementById('agent-list');
     try {
-        const { agents } = await (await fetchAuth('/agents')).json();
+        const [agentsRes, trafficRes, nodesRes] = await Promise.all([
+            fetchAuth('/agents'),
+            fetchAuth('/agents/traffic/summary').catch(() => null),
+            fetchAuth('/agents/managed/nodes').catch(() => null),
+        ]);
+        const { agents } = await agentsRes.json();
+        const trafficData = trafficRes && trafficRes.ok !== false ? await trafficRes.json().catch(() => ({})) : {};
+        const nodesData = nodesRes && nodesRes.ok !== false ? await nodesRes.json().catch(() => ({})) : {};
+        const trafficByAgent = new Map((trafficData.agents || []).map(item => [item.agent_id, item]));
+        const nodesByAgent = new Map();
+        for (const node of (nodesData.nodes || [])) {
+            const aid = node?.agent?.id;
+            if (!aid || node.removed) continue;
+            if (!nodesByAgent.has(aid)) nodesByAgent.set(aid, []);
+            nodesByAgent.get(aid).push(node);
+        }
+
         target.replaceChildren();
         if (!agents.length) { target.textContent = '尚无 Agent。点击「添加服务器」获取安装命令，在目标机器执行。'; return; }
-        const table = document.createElement('table'); table.className = 'agent-table';
-        const headings = document.createElement('tr');
-        const labels = ['名称 / 主机', '连接来源 IP', '系统 / 架构', 'Agent / 运行时', '状态 / 角色', '最后在线', '操作'];
-        for (const name of labels) {
-            const cell = document.createElement('th'); cell.textContent = name; cell.setAttribute('scope', 'col'); headings.append(cell);
-        }
-        const head = document.createElement('thead'); head.append(headings); table.append(head);
-        const body = document.createElement('tbody'); table.append(body);
+
+        const grid = document.createElement('div');
+        grid.className = 'komari-agent-grid';
+
         for (const agent of agents) {
-            const row = document.createElement('tr');
-            const m = agent.metadata;
-            for (const value of [agent.name + ' / ' + m.hostname, agent.observed_ip,
-                m.os + ' ' + m.os_version + ' / ' + m.arch,
-                agentRuntimeSummary(m),
-                agentStatusLabel(agent) + ' / ' + agent.role,
-                agent.last_seen ? new Date(agent.last_seen * 1000).toLocaleString() : '—']) {
-                const cell = document.createElement('td'); cell.textContent = value; cell.setAttribute('data-label', labels[row.children.length]); row.append(cell);
+            const m = agent.metadata || {};
+            const tr = trafficByAgent.get(agent.id) || { rx_bytes: 0, tx_bytes: 0, total_bytes: 0 };
+            const agentNodes = nodesByAgent.get(agent.id) || [];
+
+            const card = document.createElement('article');
+            card.className = 'komari-agent-card';
+
+            // Header row: flag + os + name + status dot + expand detail button
+            const head = document.createElement('div');
+            head.className = 'komari-card-head';
+            const headLeft = document.createElement('div');
+            headLeft.className = 'komari-head-left';
+
+            let flagChar = '🌐';
+            if (typeof ProxyForgeRegions !== 'undefined') {
+                const reg = ProxyForgeRegions.matchRegion(agent.region || agent.name);
+                if (reg) flagChar = reg.flag;
             }
-            const actions = document.createElement('td');
-            actions.setAttribute('data-label', labels[6]);
-            for (const [label, action] of [['详情', 'details'], ['任务', 'jobs'], ['部署', 'deployment'], ['链路', 'chain'], ['转发', 'forwards'], ['接管', 'adoptions'], ['编辑', 'edit'], ['撤销', 'revoke'], ['移除', 'remove']]) {
-                const button = document.createElement('button'); button.textContent = label; button.className = 'btn';
+            const flagEl = document.createElement('span');
+            flagEl.className = 'komari-flag';
+            flagEl.textContent = flagChar;
+
+            const titleEl = document.createElement('span');
+            titleEl.className = 'komari-card-title';
+            titleEl.textContent = agent.name;
+
+            headLeft.append(flagEl, _osBadgeElement(m.os), titleEl);
+
+            const headRight = document.createElement('div');
+            headRight.className = 'komari-head-right';
+            const dot = document.createElement('span');
+            dot.className = `komari-status-dot is-${agent.status || 'offline'}`;
+            dot.title = agentStatusLabel(agent);
+            const expandBtn = document.createElement('button');
+            expandBtn.type = 'button';
+            expandBtn.className = 'komari-expand-btn';
+            expandBtn.title = '查看 Agent 详情';
+            expandBtn.textContent = '↗';
+            expandBtn.onclick = () => agentAction(agent, 'details').catch(error => showToast(error.message, 'error'));
+            headRight.append(dot, expandBtn);
+            head.append(headLeft, headRight);
+            card.append(head);
+
+            // Subtitle: OS Version · Arch · IP
+            const sub = document.createElement('div');
+            sub.className = 'komari-card-sub';
+            const primaryIp = agent.public_ipv4 || agent.observed_ip || m.hostname || '';
+            sub.textContent = `${m.os || 'linux'} ${m.os_version || ''} · ${m.arch || ''}` +
+                (primaryIp ? ` · ${primaryIp}` : '') +
+                (agent.public_ipv6 ? ' · IPv6' : '');
+            card.append(sub);
+
+            // Traffic section (Komari style without hardware bars)
+            const trafficBox = document.createElement('div');
+            trafficBox.className = 'komari-traffic-box';
+            const tRow = document.createElement('div');
+            tRow.className = 'komari-traffic-cols';
+
+            const upCol = document.createElement('div');
+            upCol.className = 'komari-traffic-col';
+            const upHead = document.createElement('div');
+            upHead.className = 'komari-traffic-line';
+            const upLbl = document.createElement('span'); upLbl.className = 'komari-lbl-up'; upLbl.textContent = '↑ 出站';
+            const upVal = document.createElement('span'); upVal.className = 'komari-val-up'; upVal.textContent = formatAgentBytes(tr.tx_bytes);
+            upHead.append(upLbl, upVal);
+            upCol.append(upHead, _buildTrafficDots(agent.status === 'online', 'is-up'));
+
+            const dnCol = document.createElement('div');
+            dnCol.className = 'komari-traffic-col';
+            const dnHead = document.createElement('div');
+            dnHead.className = 'komari-traffic-line';
+            const dnLbl = document.createElement('span'); dnLbl.className = 'komari-lbl-dn'; dnLbl.textContent = '↓ 入站';
+            const dnVal = document.createElement('span'); dnVal.className = 'komari-val-dn'; dnVal.textContent = formatAgentBytes(tr.rx_bytes);
+            dnHead.append(dnLbl, dnVal);
+            dnCol.append(dnHead, _buildTrafficDots(agent.status === 'online', 'is-dn'));
+
+            tRow.append(upCol, dnCol);
+            trafficBox.append(tRow);
+
+            const sumRow = document.createElement('div');
+            sumRow.className = 'komari-traffic-summary';
+            const totalLeft = document.createElement('span');
+            totalLeft.textContent = `🌐 总计 ${formatAgentBytes(tr.total_bytes)}`;
+            const statRight = document.createElement('span');
+            statRight.textContent = agentStatusLabel(agent);
+            sumRow.append(totalLeft, statRight);
+            trafficBox.append(sumRow);
+            card.append(trafficBox);
+
+            // Managed cores & active nodes badges
+            const coreStrip = document.createElement('div');
+            coreStrip.className = 'komari-core-strip';
+            const sbPill = document.createElement('span');
+            sbPill.className = `komari-core-pill ${m.singbox?.running ? 'is-running' : ''}`;
+            sbPill.textContent = m.singbox?.installed ? (m.singbox.running ? 'sing-box 运行中' : 'sing-box 已停') : 'sing-box 未装';
+            coreStrip.append(sbPill);
+            if (m.caddy?.installed) {
+                const cPill = document.createElement('span');
+                cPill.className = `komari-core-pill ${m.caddy.running ? 'is-running' : ''}`;
+                cPill.textContent = m.caddy.running ? 'caddy ✓' : 'caddy ■';
+                coreStrip.append(cPill);
+            }
+            if (m.gost?.installed) {
+                const gPill = document.createElement('span');
+                gPill.className = `komari-core-pill ${m.gost.running ? 'is-running' : ''}`;
+                gPill.textContent = m.gost.running ? 'go-gost ✓' : 'go-gost ■';
+                coreStrip.append(gPill);
+            }
+            for (const n of agentNodes.slice(0, 4)) {
+                const nPill = document.createElement('span');
+                nPill.className = `komari-node-pill ${n.kind === 'adopted' ? 'is-adopted' : ''}`;
+                const pLabel = n.protocol ? n.protocol.toUpperCase() : (n.kind === 'chain' ? 'CHAIN' : 'NODE');
+                nPill.textContent = `${pLabel} :${n.port}`;
+                nPill.title = n.name;
+                coreStrip.append(nPill);
+            }
+            if (agentNodes.length > 4) {
+                const morePill = document.createElement('span');
+                morePill.className = 'komari-node-pill';
+                morePill.textContent = `+${agentNodes.length - 4}`;
+                coreStrip.append(morePill);
+            }
+            card.append(coreStrip);
+
+            // Expiry + Uptime + Quota segmented bar (matching Komari screenshot bottom)
+            const metaBox = document.createElement('div');
+            metaBox.className = 'komari-meta-box';
+            const lifeRow = document.createElement('div');
+            lifeRow.className = 'komari-life-row';
+            const expSpan = document.createElement('span');
+            expSpan.innerHTML = '';
+            const expLbl = document.createElement('span'); expLbl.className = 'komari-muted'; expLbl.textContent = '📅 到期 ';
+            const expVal = document.createElement('strong'); expVal.className = 'komari-green'; expVal.textContent = _formatExpireDays(agent.expire_at);
+            expSpan.append(expLbl, expVal);
+
+            const upSpan = document.createElement('span');
+            const uLbl = document.createElement('span'); uLbl.className = 'komari-muted'; uLbl.textContent = '🔄 在线 ';
+            const uVal = document.createElement('strong'); uVal.className = 'komari-blue'; uVal.textContent = _formatUptimeCompact(m.uptime);
+            upSpan.append(uLbl, uVal);
+            lifeRow.append(expSpan, upSpan);
+            metaBox.append(lifeRow);
+
+            const qHead = document.createElement('div');
+            qHead.className = 'komari-quota-head';
+            const quotaBytes = Number(agent.quota_bytes || 0);
+            const usedBytes = Number(tr.total_bytes || 0);
+            const qLeft = document.createElement('span');
+            const qRight = document.createElement('span');
+            qRight.className = 'komari-muted';
+            let segRatio = 0;
+            if (quotaBytes > 0) {
+                const remain = Math.max(0, quotaBytes - usedBytes);
+                qLeft.textContent = `🗄️ 剩余流量 ${formatAgentBytes(remain)}`;
+                qRight.textContent = `${formatAgentBytes(usedBytes)} / ${formatAgentBytes(quotaBytes)}`;
+                segRatio = Math.min(1, usedBytes / quotaBytes);
+            } else {
+                qLeft.textContent = '🗄️ 流量配额 不限';
+                qRight.textContent = `已用 ${formatAgentBytes(usedBytes)}`;
+                segRatio = usedBytes > 0 ? 0.1 : 0;
+            }
+            qHead.append(qLeft, qRight);
+            metaBox.append(qHead, _buildSegBar(segRatio, usedBytes > 0 || quotaBytes > 0));
+            card.append(metaBox);
+
+            // Tags row (colored pills matching Komari)
+            const tagsRow = document.createElement('div');
+            tagsRow.className = 'komari-tags-row';
+            const pillList = [];
+            if (agent.role && agent.role !== 'unassigned') {
+                pillList.push({ text: agent.role, cls: 'is-purple' });
+            }
+            for (const t of (agent.tags || [])) {
+                pillList.push({ text: t, cls: 'is-cyan' });
+            }
+            if (agent.billing_label) {
+                pillList.push({ text: agent.billing_label, cls: 'is-green' });
+            }
+            if (!pillList.length) {
+                pillList.push({ text: m.agent_version ? `Agent v${m.agent_version}` : 'ProxyForge', cls: 'is-slate' });
+            }
+            pillList.forEach((p, idx) => {
+                const el = document.createElement('span');
+                const cycle = ['is-purple', 'is-cyan', 'is-green'];
+                el.className = `komari-tag-pill ${p.cls || cycle[idx % cycle.length]}`;
+                el.textContent = p.text;
+                tagsRow.append(el);
+            });
+            card.append(tagsRow);
+
+            // Card action buttons
+            const actionsRow = document.createElement('div');
+            actionsRow.className = 'komari-card-actions';
+            for (const [label, action, extraCls] of [
+                ['部署', 'deployment', 'komari-btn-primary'],
+                ['转发', 'forwards', ''],
+                ['接管', 'adoptions', ''],
+                ['链路', 'chain', ''],
+                ['任务', 'jobs', ''],
+                ['编辑', 'edit', ''],
+                ['撤销', 'revoke', ''],
+                ['移除', 'remove', 'komari-btn-danger'],
+            ]) {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.textContent = label;
+                button.className = `komari-btn ${extraCls}`.trim();
                 button.onclick = () => agentAction(agent, action).catch(error => showToast(error.message, 'error'));
-                actions.append(button);
+                actionsRow.append(button);
             }
-            row.append(actions); body.append(row);
+            card.append(actionsRow);
+            grid.append(card);
         }
-        target.append(table);
+        target.append(grid);
+        if (typeof window !== 'undefined' && window.twemoji) {
+            window.twemoji.parse(grid, { folder: 'svg', ext: '.svg' });
+        }
     } catch (error) { target.textContent = '读取 Agent 失败：' + error.message; }
 }
 
@@ -911,22 +1529,48 @@ async function agentAction(agent, action) {
         return;
     }
     if (action === 'edit') {
-        openModal('编辑 Agent', '<label>名称</label><input id="agent-name">' +
-            '<label>角色（仅标签，不改变远端配置）</label><select id="agent-role">' +
-            '<option>unassigned</option><option>node</option><option>landing</option><option>both</option></select>' +
-            '<label>标签（逗号分隔）</label><input id="agent-tags">', async () => {
+        const expDateStr = agent.expire_at ? new Date(Number(agent.expire_at) * 1000).toISOString().slice(0, 10) : '';
+        const quotaGbStr = agent.quota_bytes ? String(+(Number(agent.quota_bytes) / (1024 * 1024 * 1024)).toFixed(2)) : '';
+        openModal('编辑 Agent · ' + agent.name,
+            _agentRegionPickerHtml('agent-edit-region', agent.region || agent.name, '地区 / 国旗 (用于卡片国旗与部署节点自动前缀)') +
+            '<div class="form-grid">' +
+            '<div class="form-group"><label>名称</label><input id="agent-name"></div>' +
+            '<div class="form-group"><label>角色（仅标签）</label><select id="agent-role"><option>unassigned</option><option>node</option><option>landing</option><option>both</option></select></div>' +
+            '<div class="form-group"><label>到期日期 (可选)</label><input type="date" id="agent-expire" value="' + _escHtml(expDateStr) + '"></div>' +
+            '<div class="form-group"><label>月流量配额 GiB (可选，留空不限)</label><input type="number" min="0" step="1" id="agent-quota-gb" value="' + _escHtml(quotaGbStr) + '" placeholder="如 2000"></div>' +
+            '<div class="form-group"><label>账单 / 费用标签 (可选)</label><input id="agent-billing" value="' + _escHtml(agent.billing_label || '') + '" placeholder="如 $6.75 / 年付"></div>' +
+            '<div class="form-group"><label>标签（逗号分隔）</label><input id="agent-tags" placeholder="如 CN2 GIA, 家宽"></div>' +
+            '</div>', async () => {
                 try {
+                    const regionInput = (document.getElementById('agent-edit-region')?.value || '').trim();
+                    let regionCode = '';
+                    if (typeof ProxyForgeRegions !== 'undefined' && regionInput) {
+                        const matched = ProxyForgeRegions.matchRegion(regionInput);
+                        regionCode = matched ? matched.code : regionInput.slice(0, 32);
+                    } else {
+                        regionCode = regionInput.slice(0, 32);
+                    }
+                    const expVal = document.getElementById('agent-expire')?.value?.trim() || '';
+                    const expireAt = expVal ? Math.floor(Date.parse(expVal + 'T23:59:59Z') / 1000) : null;
+                    const quotaGbRaw = document.getElementById('agent-quota-gb')?.value?.trim() || '';
+                    const quotaBytes = quotaGbRaw && Number(quotaGbRaw) > 0 ? Math.round(Number(quotaGbRaw) * 1024 * 1024 * 1024) : null;
+                    const billingLabel = document.getElementById('agent-billing')?.value?.trim() || '';
                     await fetchAuth('/agents/' + agent.id, { method: 'PATCH', body: JSON.stringify({
                         name: document.getElementById('agent-name').value,
                         role: document.getElementById('agent-role').value,
-                        tags: document.getElementById('agent-tags').value.split(',').map(s => s.trim()).filter(Boolean)
+                        tags: document.getElementById('agent-tags').value.split(',').map(s => s.trim()).filter(Boolean),
+                        region: regionCode,
+                        expire_at: expireAt,
+                        quota_bytes: quotaBytes,
+                        billing_label: billingLabel,
                     }) });
                     closeModal(); await refreshAgents();
                 } catch (error) { showToast(error.message, 'error'); }
             });
         document.getElementById('agent-name').value = agent.name;
         document.getElementById('agent-role').value = agent.role;
-        document.getElementById('agent-tags').value = agent.tags.join(', ');
+        document.getElementById('agent-tags').value = (agent.tags || []).join(', ');
+        if (typeof ProxyForgeRegions !== 'undefined') ProxyForgeRegions.bindRegionPicker('agent-edit-region');
         return;
     }
     if (!confirm(action === 'remove' ? '移除会撤销凭据并删除控制台记录。远端服务不会卸载。继续？' :
@@ -990,7 +1634,8 @@ async function addAgent() {
     openModal('添加服务器',
         '<p class="hint">支持 Komari 风格一条命令完成下载校验、安装与自动注册，并按需勾选 Runtime / 预装内核 / 存量接管。</p>' +
         '<div id="agent-quick-box" class="quick-install-box" hidden>' +
-        '<div class="form-group"><label for="new-agent-name">服务器名称</label><input id="new-agent-name" maxlength="128" autocomplete="off" placeholder="例如: hk-landing-01"></div>' +
+        _agentRegionPickerHtml('new-agent-region', '', '服务器地区 / 国旗 (可选，自动添加到名称前)') +
+        '<div class="form-group"><label for="new-agent-name">服务器名称</label><input id="new-agent-name" maxlength="128" autocomplete="off" placeholder="例如: 🇭🇰 hk-landing-01"></div>' +
         '<div class="quick-option-chips">' +
         '<label class="inline-check"><input type="checkbox" id="qi-runtime" checked> 启用托管 Runtime</label>' +
         '<label class="inline-check"><input type="checkbox" id="qi-inline-token" checked> 内联一次性凭据</label>' +
@@ -1027,6 +1672,7 @@ async function addAgent() {
         });
 
     const name = document.getElementById('new-agent-name');
+    _bindAgentRegionPicker('new-agent-region', 'new-agent-name');
     const quickBox = document.getElementById('agent-quick-box');
     const quickCmdField = document.getElementById('agent-quick-command');
     const quickCopyBtn = document.getElementById('agent-quick-copy-btn');

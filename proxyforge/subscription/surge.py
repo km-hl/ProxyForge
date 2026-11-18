@@ -62,6 +62,10 @@ def convert_proxy_to_surge(proxy: Dict[str, Any]) -> str:
 
     if kind == 'hysteria2':
         params = [f'{name} = hysteria2', server, str(port), f"password={proxy['password']}"]
+        if proxy.get('ports'):
+            params.append(f"port-hopping={proxy['ports']}")
+        if proxy.get('hop-interval'):
+            params.append(f"port-hopping-interval={proxy['hop-interval']}")
         return ', '.join(params + common)
 
     if kind == 'tuic':
@@ -183,12 +187,36 @@ def build_surge_config(
             no_resolve = ',no-resolve' if 'no-resolve' in parts[3:] else ''
             rule_lines.append(f'{kind},{parts[1]},{policy}{no_resolve}')
 
-    sections = [
+    dns_cfg = config.get('dns') if isinstance(config.get('dns'), dict) else {}
+    ipv6_enabled = config.get('ipv6') is not False and dns_cfg.get('ipv6') is not False
+
+    plain_dns: List[str] = []
+    doh_dns: List[str] = []
+    for raw_list in (dns_cfg.get('default-nameserver'), dns_cfg.get('nameserver'), dns_cfg.get('fallback')):
+        if not isinstance(raw_list, list):
+            continue
+        for entry in raw_list:
+            text = str(entry or '').strip()
+            if not text:
+                continue
+            if text.startswith('https://'):
+                if text not in doh_dns:
+                    doh_dns.append(text)
+            elif '://' not in text and text not in plain_dns:
+                plain_dns.append(text)
+    dns_server_line = f"dns-server = {', '.join(plain_dns[:4])}" if plain_dns else 'dns-server = 223.5.5.5, 1.1.1.1'
+    general_lines = [
         '[General]',
         'loglevel = notify',
         'skip-proxy = 127.0.0.1, 192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12, localhost, *.local',
-        'dns-server = 223.5.5.5, 1.1.1.1',
-        'ipv6 = true',
+        dns_server_line,
+    ]
+    if doh_dns:
+        general_lines.append(f"encrypted-dns-server = {', '.join(doh_dns[:2])}")
+    general_lines.append(f"ipv6 = {'true' if ipv6_enabled else 'false'}")
+
+    sections = [
+        *general_lines,
         '',
         '[Proxy]',
         'DIRECT = direct',

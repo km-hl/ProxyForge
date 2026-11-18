@@ -203,6 +203,7 @@ function openModal(title, htmlContent, onConfirm) {
     modalReturnFocus = document.activeElement;
     modalTitle.textContent = title;
     modalBody.innerHTML = htmlContent;
+    if (typeof window !== 'undefined' && window.twemoji) window.twemoji.parse(modalBody, { folder: 'svg', ext: '.svg' });
     modalConfirmAction = onConfirm;
     modalOverlay.classList.add('active');
     setTimeout(() => (modalBody.querySelector('input, select, textarea, button') || modalConfirm).focus(), 0);
@@ -727,32 +728,164 @@ function formatDate(timestamp) {
     return d.toLocaleDateString();
 }
 
-function getFlagEmoji(name) {
-    if (!name) return name;
-    if (/[\uD83C-\uDBFF\uDC00-\uDFFF]+/.test(name)) return name; // Already has emoji
-    const flags = {
-        'hk': '🇭🇰', '香港': '🇭🇰',
-        'jp': '🇯🇵', '日本': '🇯🇵',
-        'us': '🇺🇸', '美国': '🇺🇸', '美': '🇺🇸',
-        'sg': '🇸🇬', '新加坡': '🇸🇬', '狮城': '🇸🇬',
-        'tw': '🇹🇼', '台湾': '🇹🇼', '台': '🇹🇼',
-        'uk': '🇬🇧', '英国': '🇬🇧',
-        'kr': '🇰🇷', '韩国': '🇰🇷',
-        'de': '🇩🇪', '德国': '🇩🇪',
-        'fr': '🇫🇷', '法国': '🇫🇷',
-        'ru': '🇷🇺', '俄罗斯': '🇷🇺',
-        'in': '🇮🇳', '印度': '🇮🇳'
-    };
-    let found = null;
-    let lowerName = name.toLowerCase();
-    for (const [key, flag] of Object.entries(flags)) {
-        if (lowerName.includes(key)) {
-            found = flag;
-            break;
+const ProxyForgeRegions = (() => {
+    const REGIONS = [
+        { code: 'HK', flag: '🇭🇰', label: '香港', keywords: ['hk', 'hkg', 'hong kong', 'hongkong', '香港', '港'] },
+        { code: 'MO', flag: '🇲🇴', label: '澳门', keywords: ['mo', 'macau', 'macao', '澳门', '澳門'] },
+        { code: 'TW', flag: '🇹🇼', label: '台湾', keywords: ['tw', 'twn', 'taiwan', 'taipei', '台湾', '台灣', '台北', '新北', '台中', '高雄'] },
+        { code: 'JP', flag: '🇯🇵', label: '日本', keywords: ['jp', 'jpn', 'japan', 'tokyo', 'osaka', 'nagoya', '日本', '东京', '東京', '大阪', '名古屋'] },
+        { code: 'SG', flag: '🇸🇬', label: '新加坡', keywords: ['sg', 'sgp', 'singapore', '新加坡', '狮城', '獅城'] },
+        { code: 'US', flag: '🇺🇸', label: '美国', keywords: ['us', 'usa', 'united states', 'america', 'los angeles', 'san jose', 'seattle', 'silicon valley', 'new york', 'dallas', 'chicago', '美国', '美國', '洛杉矶', '洛杉磯', '圣何塞', '聖何塞', '西雅图', '硅谷', '纽约'] },
+        { code: 'KR', flag: '🇰🇷', label: '韩国', keywords: ['kr', 'kor', 'korea', 'seoul', 'busan', '韩国', '韓國', '首尔', '首爾', '釜山'] },
+        { code: 'GB', flag: '🇬🇧', label: '英国', keywords: ['uk', 'gb', 'gbr', 'united kingdom', 'britain', 'england', 'london', 'manchester', '英国', '英國', '伦敦', '倫敦'] },
+        { code: 'DE', flag: '🇩🇪', label: '德国', keywords: ['de', 'deu', 'germany', 'frankfurt', 'berlin', 'munich', '德国', '德國', '法兰克福', '法蘭克福', '柏林'] },
+        { code: 'FR', flag: '🇫🇷', label: '法国', keywords: ['fr', 'fra', 'france', 'paris', 'marseille', '法国', '法國', '巴黎'] },
+        { code: 'NL', flag: '🇳🇱', label: '荷兰', keywords: ['nl', 'nld', 'netherlands', 'holland', 'amsterdam', '荷兰', '荷蘭', '阿姆斯特丹'] },
+        { code: 'RU', flag: '🇷🇺', label: '俄罗斯', keywords: ['ru', 'rus', 'russia', 'moscow', '俄罗斯', '俄羅斯', '莫斯科'] },
+        { code: 'IN', flag: '🇮🇳', label: '印度', keywords: ['in', 'ind', 'india', 'mumbai', '印度', '孟买'] },
+        { code: 'CA', flag: '🇨🇦', label: '加拿大', keywords: ['ca', 'can', 'canada', 'toronto', 'vancouver', '加拿大', '多伦多', '温哥华'] },
+        { code: 'AU', flag: '🇦🇺', label: '澳大利亚', keywords: ['au', 'aus', 'australia', 'sydney', 'melbourne', '澳大利亚', '澳洲', '悉尼', '墨尔本'] },
+        { code: 'CH', flag: '🇨🇭', label: '瑞士', keywords: ['ch', 'che', 'switzerland', 'zurich', 'geneva', '瑞士', '苏黎世'] },
+        { code: 'SE', flag: '🇸🇪', label: '瑞典', keywords: ['se', 'swe', 'sweden', 'stockholm', '瑞典', '斯德哥尔摩'] },
+        { code: 'TR', flag: '🇹🇷', label: '土耳其', keywords: ['tr', 'tur', 'turkey', 'istanbul', '土耳其', '伊斯坦布尔'] },
+        { code: 'BR', flag: '🇧🇷', label: '巴西', keywords: ['br', 'bra', 'brazil', 'sao paulo', '巴西', '圣保罗'] },
+        { code: 'MY', flag: '🇲🇾', label: '马来西亚', keywords: ['my', 'mys', 'malaysia', 'kuala lumpur', '马来西亚', '馬來西亞', '吉隆坡'] },
+        { code: 'TH', flag: '🇹🇭', label: '泰国', keywords: ['th', 'tha', 'thailand', 'bangkok', '泰国', '泰國', '曼谷'] },
+        { code: 'VN', flag: '🇻🇳', label: '越南', keywords: ['vn', 'vnm', 'vietnam', 'hanoi', '越南', '河内', '胡志明'] },
+        { code: 'PH', flag: '🇵🇭', label: '菲律宾', keywords: ['ph', 'phl', 'philippines', 'manila', '菲律宾', '菲律賓', '马尼拉'] },
+        { code: 'ID', flag: '🇮🇩', label: '印尼', keywords: ['id', 'idn', 'indonesia', 'jakarta', '印尼', '印度尼西亚', '雅加达'] },
+        { code: 'AE', flag: '🇦🇪', label: '阿联酋', keywords: ['ae', 'are', 'uae', 'dubai', '阿联酋', '阿聯酋', '迪拜'] },
+        { code: 'ZA', flag: '🇿🇦', label: '南非', keywords: ['za', 'zaf', 'south africa', 'johannesburg', '南非'] },
+        { code: 'IT', flag: '🇮🇹', label: '意大利', keywords: ['it', 'ita', 'italy', 'milan', 'rome', '意大利', '米兰', '罗马'] },
+        { code: 'ES', flag: '🇪🇸', label: '西班牙', keywords: ['es', 'esp', 'spain', 'madrid', '西班牙', '马德里'] },
+        { code: 'PL', flag: '🇵🇱', label: '波兰', keywords: ['pl', 'pol', 'poland', 'warsaw', '波兰', '波蘭', '华沙'] },
+        { code: 'FI', flag: '🇫🇮', label: '芬兰', keywords: ['fi', 'fin', 'finland', 'helsinki', '芬兰', '芬蘭', '赫尔辛基'] },
+        { code: 'NO', flag: '🇳🇴', label: '挪威', keywords: ['no', 'nor', 'norway', 'oslo', '挪威', '奥斯陆'] },
+        { code: 'AT', flag: '🇦🇹', label: '奥地利', keywords: ['at', 'aut', 'austria', 'vienna', '奥地利', '奧地利', '维也纳'] },
+        { code: 'IE', flag: '🇮🇪', label: '爱尔兰', keywords: ['ie', 'irl', 'ireland', 'dublin', '爱尔兰', '愛爾蘭', '都柏林'] },
+        { code: 'AR', flag: '🇦🇷', label: '阿根廷', keywords: ['ar', 'arg', 'argentina', 'buenos aires', '阿根廷'] },
+        { code: 'CL', flag: '🇨🇱', label: '智利', keywords: ['cl', 'chl', 'chile', 'santiago', '智利'] },
+        { code: 'MX', flag: '🇲🇽', label: '墨西哥', keywords: ['mx', 'mex', 'mexico', '墨西哥'] },
+    ];
+    const QUICK_CODES = ['HK', 'JP', 'US', 'SG', 'TW', 'KR', 'GB', 'DE'];
+    const FLAG_PAIR_RE = /[\u{1F1E6}-\u{1F1FF}]{2}/u;
+    const LEADING_FLAG_RE = /^\s*([\u{1F1E6}-\u{1F1FF}]{2})\s*/u;
+
+    function hasCountryFlag(text) {
+        return FLAG_PAIR_RE.test(String(text || ''));
+    }
+
+    function keywordMatchesName(lowerName, keyword) {
+        if (/[^\x00-\x7F]/.test(keyword)) return lowerName.includes(keyword);
+        const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, 'i').test(lowerName);
+    }
+
+    function matchRegion(text) {
+        const raw = String(text || '').trim();
+        if (!raw) return null;
+        const flagMatch = raw.match(FLAG_PAIR_RE);
+        if (flagMatch) {
+            const byFlag = REGIONS.find(r => r.flag === flagMatch[0]);
+            if (byFlag) return byFlag;
+        }
+        const lower = raw.toLowerCase();
+        for (const r of REGIONS) {
+            if (r.code.toLowerCase() === lower || r.label === raw) return r;
+        }
+        for (const r of REGIONS) {
+            if (r.keywords.some(kw => keywordMatchesName(lower, kw))) return r;
+        }
+        return null;
+    }
+
+    function stripLeadingFlag(name) {
+        return String(name || '').replace(LEADING_FLAG_RE, '').trim();
+    }
+
+    function applyRegionPrefix(name, regionInput) {
+        const clean = stripLeadingFlag(name);
+        const matched = matchRegion(regionInput);
+        if (!matched) return clean;
+        return clean ? `${matched.flag} ${clean}` : matched.flag;
+    }
+
+    function getFlagEmoji(name) {
+        if (!name) return name;
+        if (hasCountryFlag(name)) return name;
+        const matched = matchRegion(name);
+        return matched ? `${matched.flag} ${name}` : name;
+    }
+
+    function renderRegionPickerHtml(pickerId, currentVal = '', label = '地区 / 国旗 (可输入搜索或直接选择)') {
+        const matched = matchRegion(currentVal);
+        const initialText = matched ? `${matched.flag} ${matched.code} · ${matched.label}` : String(currentVal || '');
+        const quickHtml = QUICK_CODES.map(code => {
+            const r = REGIONS.find(item => item.code === code);
+            return r ? `<button type="button" class="btn btn-sm region-quick-btn" data-region-code="${escapeHtml(r.code)}" style="padding:2px 8px; font-size:0.78rem;">${r.flag} ${escapeHtml(r.label)}</button>` : '';
+        }).join('');
+        const optionsHtml = REGIONS.map(r =>
+            `<option value="${escapeHtml(`${r.flag} ${r.code} · ${r.label}`)}">${escapeHtml(r.keywords.slice(0, 4).join(' / '))}</option>`
+        ).join('');
+        return `
+            <div class="form-group full-width region-picker-group" data-picker-id="${escapeHtml(pickerId)}">
+                <label for="${escapeHtml(pickerId)}">${escapeHtml(label)}</label>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <input type="text" id="${escapeHtml(pickerId)}" list="${escapeHtml(pickerId)}-datalist" value="${escapeHtml(initialText)}" placeholder="输入国家/地区或代码 (如 HK / 香港 / US / 日本 / NL) 自动添加小国旗" style="flex:1;">
+                    <button type="button" class="btn btn-sm region-clear-btn" data-clear-for="${escapeHtml(pickerId)}" title="清除国旗前缀">清除</button>
+                </div>
+                <datalist id="${escapeHtml(pickerId)}-datalist">${optionsHtml}</datalist>
+                <div class="region-quick-bar" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:6px;">${quickHtml}</div>
+            </div>
+        `;
+    }
+
+    function bindRegionPicker(pickerId, onRegionChange) {
+        const input = document.getElementById(pickerId);
+        if (!input) return;
+        const wrap = input.closest('.region-picker-group') || input.parentElement;
+        const notify = (rawVal) => {
+            const r = matchRegion(rawVal);
+            if (typeof onRegionChange === 'function') onRegionChange(r, rawVal);
+            if (window.twemoji && wrap) twemoji.parse(wrap, { folder: 'svg', ext: '.svg' });
+        };
+        input.addEventListener('input', () => notify(input.value));
+        input.addEventListener('change', () => notify(input.value));
+        if (wrap) {
+            wrap.querySelectorAll('.region-quick-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const code = btn.getAttribute('data-region-code');
+                    const r = matchRegion(code);
+                    if (r) {
+                        input.value = `${r.flag} ${r.code} · ${r.label}`;
+                        notify(r.code);
+                    }
+                });
+            });
+            const clearBtn = wrap.querySelector('.region-clear-btn');
+            if (clearBtn) {
+                clearBtn.addEventListener('click', () => {
+                    input.value = '';
+                    notify('');
+                });
+            }
+            if (window.twemoji) twemoji.parse(wrap, { folder: 'svg', ext: '.svg' });
         }
     }
-    return found ? `${found} ${name}` : name;
-}
+
+    return {
+        REGIONS,
+        hasCountryFlag,
+        matchRegion,
+        stripLeadingFlag,
+        applyRegionPrefix,
+        getFlagEmoji,
+        renderRegionPickerHtml,
+        bindRegionPicker,
+    };
+})();
+globalThis.ProxyForgeRegions = ProxyForgeRegions;
+const getFlagEmoji = ProxyForgeRegions.getFlagEmoji;
 
 // Helper for checkboxes
 function getCheckboxHTML(cls, idx) {
@@ -1695,8 +1828,11 @@ document.getElementById('btn-bulk-smart-filter').addEventListener('click', () =>
 window.editNode = function(index) {
     if (index >= 0 && state.nodes[index]._managed_by) return showToast('请在 Agent 的部署页面修改此节点', 'error');
     let isNew = index < 0;
-    let yamlStr = isNew ? "name: New Node\ntype: vmess\nserver: 1.1.1.1\nport: 443" : jsyaml.dump(state.nodes[index]);
+    let currentObj = isNew ? { name: 'New Node', type: 'vmess', server: '1.1.1.1', port: 443 } : state.nodes[index];
+    let yamlStr = isNew ? "name: New Node\ntype: vmess\nserver: 1.1.1.1\nport: 443" : jsyaml.dump(currentObj);
+    const initialRegion = currentObj && currentObj.name ? (ProxyForgeRegions.matchRegion(currentObj.name)?.code || '') : '';
     const html = `
+        ${ProxyForgeRegions.renderRegionPickerHtml('m-node-region', initialRegion, '选择地区 (可输入搜索或直接选择，自动在节点名称前添加小国旗)')}
         <div class="form-group full-width">
             <label>节点配置 (YAML格式) - 或者直接粘贴 vless://、tuic://、anytls://、wireguard:// 等分享链接</label>
             <textarea id="m-node-raw" style="min-height:250px; font-family:monospace;">${escapeHtml(yamlStr)}</textarea>
@@ -1705,6 +1841,7 @@ window.editNode = function(index) {
     openModal(isNew ? '新建自建节点' : '编辑自建节点', html, async () => {
         try {
             let val = document.getElementById('m-node-raw').value.trim();
+            const regionRaw = (document.getElementById('m-node-region')?.value || '').trim();
             let parsed;
             if (SHARE_LINK_PATTERN.test(val)) {
                 const res = await fetchAuth('/parse-links', {
@@ -1720,17 +1857,32 @@ window.editNode = function(index) {
             } else {
                 parsed = jsyaml.load(val);
             }
+            if (parsed && parsed.name && regionRaw) {
+                parsed.name = ProxyForgeRegions.applyRegionPrefix(parsed.name, regionRaw);
+            }
             if(isNew) state.nodes.push(parsed);
             else state.nodes[index] = parsed;
             closeModal();
             saveNodesObj();
         } catch(e) { alert('YAML 解析失败'); }
     });
+    ProxyForgeRegions.bindRegionPicker('m-node-region', (regionObj, rawVal) => {
+        const rawEl = document.getElementById('m-node-raw');
+        if (!rawEl || SHARE_LINK_PATTERN.test(rawEl.value.trim())) return;
+        try {
+            const obj = jsyaml.load(rawEl.value);
+            if (obj && typeof obj === 'object' && typeof obj.name === 'string') {
+                obj.name = ProxyForgeRegions.applyRegionPrefix(obj.name, regionObj ? regionObj.code : rawVal);
+                rawEl.value = jsyaml.dump(obj);
+            }
+        } catch (_) {}
+    });
 };
 document.getElementById('btn-add-node').addEventListener('click', () => editNode(-1));
 
 document.getElementById('btn-import-nodes').addEventListener('click', () => {
     const html = `
+        ${ProxyForgeRegions.renderRegionPickerHtml('m-nodes-import-region', '', '统一地区前缀 (可选：若所选节点未带国旗，导入时自动添加所选地区小国旗)')}
         <div class="form-group full-width">
             <label>选择 YAML 文件上传，或在下方直接粘贴 (支持 YAML / JSON / 分享链接 vless:// 等)</label>
             <input type="file" id="m-nodes-file" accept=".yaml,.yml,.txt,.json" style="margin-bottom: 10px; cursor: pointer;">
@@ -1740,6 +1892,7 @@ document.getElementById('btn-import-nodes').addEventListener('click', () => {
     openModal('批量导入自建节点', html, async () => {
         try {
             let text = document.getElementById('m-nodes-import').value;
+            const regionRaw = (document.getElementById('m-nodes-import-region')?.value || '').trim();
             let lines = text.split('\n').map(s=>s.trim()).filter(s=>s);
             let links = lines.filter(s => SHARE_LINK_PATTERN.test(s));
             let nonLinksText = lines.filter(s => !SHARE_LINK_PATTERN.test(s)).join('\n');
@@ -1764,6 +1917,11 @@ document.getElementById('btn-import-nodes').addEventListener('click', () => {
             }
             
             if (toAdd.length) {
+                if (regionRaw) {
+                    toAdd.forEach(item => {
+                        if (item && item.name) item.name = ProxyForgeRegions.applyRegionPrefix(item.name, regionRaw);
+                    });
+                }
                 state.nodes = state.nodes.concat(toAdd);
                 closeModal();
                 saveNodesObj();
@@ -1773,6 +1931,7 @@ document.getElementById('btn-import-nodes').addEventListener('click', () => {
             }
         } catch(e) { alert('解析失败: ' + e.message); }
     });
+    ProxyForgeRegions.bindRegionPicker('m-nodes-import-region');
 
     document.getElementById('m-nodes-file').addEventListener('change', (e) => {
         const file = e.target.files[0];

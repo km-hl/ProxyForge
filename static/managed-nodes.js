@@ -4,6 +4,7 @@ const ProxyForgeManagedNodes = (() => {
         if (node.agent.status === 'revoked') return '入口已撤销';
         if (node.removed) return '已移除监听';
         if (node.landing && node.landing.status === 'revoked') return '落地已撤销';
+        if (node.status === 'adopted' && node.adopted_status === 'adopted') return '已完全接管';
         const labels = { pending: '等待执行', assigned: '已分配', running: '执行中', success: '配置已应用', failed: '执行失败', cancelled: '已取消', adopted: '接管扫描' };
         return labels[node.status] || '状态未知';
     }
@@ -42,9 +43,10 @@ const ProxyForgeManagedNodes = (() => {
         }
         for (const node of visible) {
             const card = document.createElement('article'); card.className = 'managed-node-card';
-            const badgeText = node.kind === 'chain' ? 'Agent 托管 · 经落地' : (node.kind === 'adopted' ? 'Agent 接管 · 存量资产' : 'Agent 托管 · 直连');
+            const badgeText = node.kind === 'chain' ? 'Agent 托管 · 经落地' : (node.kind === 'adopted' ? (node.adopted_status === 'adopted' ? 'Agent 接管 · 已托管' : 'Agent 接管 · 存量资产') : 'Agent 托管 · 直连');
             text(card, 'span', badgeText, 'type-badge');
-            text(card, 'h4', node.name);
+            const displayTitle = typeof getFlagEmoji === 'function' ? getFlagEmoji(node.name) : node.name;
+            text(card, 'h4', displayTitle);
             text(card, 'p', '预期地址：' + node.server + ':' + node.port);
             text(card, 'p', '入口：' + node.agent.name + ' · ' + connectionLabel(node.agent));
             if (node.kind === 'adopted') {
@@ -68,6 +70,9 @@ const ProxyForgeManagedNodes = (() => {
                 };
             }
             target.append(card);
+        }
+        if (typeof window !== 'undefined' && window.twemoji) {
+            window.twemoji.parse(target, { folder: 'svg', ext: '.svg' });
         }
     }
     async function refresh() {

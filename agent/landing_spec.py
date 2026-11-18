@@ -1,4 +1,4 @@
-"""Unified landing protocol specs (SS2022, Reality, Trojan, VLESS-WS, Hysteria2)."""
+"""Unified landing protocol specs (SS2022, Reality, Trojan, AnyTLS, VLESS-WS, Hysteria2)."""
 import base64
 import binascii
 import os
@@ -15,47 +15,76 @@ SS2022_METHODS = {
     '2022-blake3-aes-256-gcm': 32,
     '2022-blake3-aes-128-gcm': 16,
 }
-LANDING_PROTOCOLS = ('ss2022', 'reality', 'trojan', 'vless-ws', 'hysteria2')
+OUTBOUND_SS_METHODS = (
+    '2022-blake3-aes-256-gcm',
+    '2022-blake3-aes-128-gcm',
+    'aes-256-gcm',
+    'aes-128-gcm',
+    'chacha20-ietf-poly1305',
+)
+LANDING_PROTOCOLS = ('ss2022', 'reality', 'trojan', 'anytls', 'vless-ws', 'hysteria2')
+ACTIVE_UI_PROTOCOLS = ('reality', 'hysteria2', 'ss2022', 'anytls', 'trojan')
 TLS_MODES = ('none', 'reality', 'acme_http', 'acme_dns')
+OUTBOUND_STRATEGIES = ('prefer_ipv4', 'prefer_ipv6', 'ipv4_only', 'ipv6_only')
+OUTBOUND_MODES = ('direct', 'socks5', 'ss')
 FINGERPRINTS = ('chrome', 'firefox', 'safari', 'edge', 'ios', 'android', 'random', 'randomized')
 DNS_PROVIDERS = ('cloudflare', 'alidns', 'dnspod')
 CAMOUFLAGE_UNSAFE = re.compile(r'[\x00-\x1f\x7f{};"\'\\\r\n]')
 EMAIL_RE = re.compile(r'[^\s@]+@[^\s@]+\.[^\s@]+\Z')
+MPORT_RE = re.compile(r'\d{1,5}(?:[-:]\d{1,5})?(?:,\d{1,5}(?:[-:]\d{1,5})?)*\Z')
+DEFAULT_ANYTLS_PADDING = (
+    'stop=8',
+    '0=30-30',
+    '1=100-400',
+    '2=400-500,c,500-1000,c,500-1000,c,500-1000,c,500-1000',
+    '3=9-9,500-1000',
+    '4=500-1000',
+    '5=500-1000',
+    '6=500-1000',
+    '7=500-1000',
+)
 
 PROTOCOL_SPEC = {
     'ss2022': {
         'tls_modes': ('none',),
         'default_tls': 'none',
         'requires_domain': False,
-        'secret_fields': frozenset(('password',)),
+        'secret_fields': frozenset(('password', 'outbound_password')),
         'project_client': False,
     },
     'reality': {
         'tls_modes': ('reality', 'acme_http', 'acme_dns'),
         'default_tls': 'reality',
         'requires_domain': True,
-        'secret_fields': frozenset(('uuid', 'reality_private_key', 'dns_api_token')),
+        'secret_fields': frozenset(('uuid', 'reality_private_key', 'dns_api_token', 'outbound_password')),
         'project_client': True,
     },
     'trojan': {
         'tls_modes': ('acme_http', 'acme_dns'),
         'default_tls': 'acme_http',
         'requires_domain': True,
-        'secret_fields': frozenset(('password', 'dns_api_token')),
+        'secret_fields': frozenset(('password', 'dns_api_token', 'outbound_password')),
+        'project_client': True,
+    },
+    'anytls': {
+        'tls_modes': ('acme_http', 'acme_dns'),
+        'default_tls': 'acme_http',
+        'requires_domain': True,
+        'secret_fields': frozenset(('password', 'dns_api_token', 'outbound_password')),
         'project_client': True,
     },
     'vless-ws': {
         'tls_modes': ('none', 'acme_http', 'acme_dns'),
         'default_tls': 'acme_http',
         'requires_domain': False,
-        'secret_fields': frozenset(('uuid', 'dns_api_token')),
+        'secret_fields': frozenset(('uuid', 'dns_api_token', 'outbound_password')),
         'project_client': True,
     },
     'hysteria2': {
         'tls_modes': ('acme_http', 'acme_dns'),
         'default_tls': 'acme_http',
         'requires_domain': True,
-        'secret_fields': frozenset(('password', 'obfs_password', 'dns_api_token')),
+        'secret_fields': frozenset(('password', 'obfs_password', 'dns_api_token', 'outbound_password')),
         'project_client': True,
     },
 }
@@ -63,15 +92,19 @@ PROTOCOL_SPEC = {
 _COMMON_OPTIONAL = {
     'protocol', 'domain', 'tls_mode', 'camouflage_url',
     'acme_email', 'dns_provider', 'dns_zone_id', 'dns_propagation_seconds',
+    'region', 'outbound_strategy', 'outbound_mode',
+    'outbound_server', 'outbound_port', 'outbound_username', 'outbound_method',
+    'publish_to_subscription', 'node_id',
 }
 _PROTOCOL_ALLOWED_SETTINGS = {
     'ss2022': {'name', 'server', 'listen_port', 'method', *_COMMON_OPTIONAL},
     'reality': {'name', 'server', 'listen_port', 'reality_public_key', 'reality_short_ids', 'fingerprint', *_COMMON_OPTIONAL},
     'trojan': {'name', 'server', 'listen_port', *_COMMON_OPTIONAL},
+    'anytls': {'name', 'server', 'listen_port', 'fingerprint', 'padding_scheme', *_COMMON_OPTIONAL},
     'vless-ws': {'name', 'server', 'listen_port', 'ws_path', *_COMMON_OPTIONAL},
-    'hysteria2': {'name', 'server', 'listen_port', 'up_mbps', 'down_mbps', 'obfs', *_COMMON_OPTIONAL},
+    'hysteria2': {'name', 'server', 'listen_port', 'up_mbps', 'down_mbps', 'obfs', 'mport', 'hop_interval', *_COMMON_OPTIONAL},
 }
-_SECRET_INPUT_KEYS = frozenset(('password', 'private_key', 'reality_private_key', 'dns_api_token', 'obfs_password'))
+_SECRET_INPUT_KEYS = frozenset(('password', 'private_key', 'reality_private_key', 'dns_api_token', 'obfs_password', 'outbound_password'))
 
 
 def _validate_camouflage_url(value):
@@ -124,6 +157,81 @@ def _validate_ss2022_password(password, key_bytes):
         raise ValueError('Invalid SS2022 key') from None
 
 
+def _validate_mport(value):
+    if value in (None, ''):
+        return ''
+    if not isinstance(value, str) or len(value) > 64 or not MPORT_RE.fullmatch(value):
+        raise ValueError('Invalid Hysteria2 mport range')
+    normalized_parts = []
+    for chunk in value.split(','):
+        if '-' in chunk or ':' in chunk:
+            sep = '-' if '-' in chunk else ':'
+            start_s, end_s = chunk.split(sep, 1)
+            start, end = int(start_s), int(end_s)
+            if not (1 <= start < end <= 65535):
+                raise ValueError('Invalid Hysteria2 mport range')
+            normalized_parts.append(f'{start}-{end}')
+        else:
+            port = int(chunk)
+            if not 1 <= port <= 65535:
+                raise ValueError('Invalid Hysteria2 mport range')
+            normalized_parts.append(str(port))
+    return ','.join(normalized_parts)
+
+
+def _validate_hop_interval(value):
+    if value is None:
+        return
+    if type(value) is not int or not 5 <= value <= 3600:
+        raise ValueError('Invalid Hysteria2 hop_interval')
+
+
+def _validate_padding_scheme(value):
+    if value is None:
+        return
+    if not isinstance(value, list) or not 1 <= len(value) <= 32:
+        raise ValueError('Invalid AnyTLS padding_scheme')
+    for item in value:
+        if not isinstance(item, str) or not 1 <= len(item) <= 128 or CAMOUFLAGE_UNSAFE.search(item):
+            raise ValueError('Invalid AnyTLS padding_scheme line')
+
+
+def _validate_outbound_settings(mapping):
+    if 'region' in mapping and mapping['region'] is not None:
+        reg = mapping['region']
+        if not isinstance(reg, str) or len(reg) > 32 or CAMOUFLAGE_UNSAFE.search(reg):
+            raise ValueError('Invalid region')
+    if 'node_id' in mapping and mapping['node_id'] is not None:
+        nid = mapping['node_id']
+        if not isinstance(nid, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', nid):
+            raise ValueError('Invalid node_id')
+    if 'publish_to_subscription' in mapping and type(mapping['publish_to_subscription']) is not bool:
+        raise ValueError('Invalid publish_to_subscription')
+    if 'outbound_strategy' in mapping and mapping['outbound_strategy'] is not None:
+        if mapping['outbound_strategy'] not in OUTBOUND_STRATEGIES:
+            raise ValueError('Unsupported outbound_strategy')
+    mode = mapping.get('outbound_mode', 'direct')
+    if mode not in OUTBOUND_MODES:
+        raise ValueError('Unsupported outbound_mode')
+    if mode in ('socks5', 'ss'):
+        host(mapping.get('outbound_server', ''))
+        out_port = mapping.get('outbound_port')
+        if type(out_port) is not int or not 1 <= out_port <= 65535:
+            raise ValueError('Invalid outbound_port')
+        if mode == 'socks5' and 'outbound_username' in mapping and mapping['outbound_username']:
+            u = mapping['outbound_username']
+            if not isinstance(u, str) or len(u) > 128 or any(ord(c) < 32 for c in u):
+                raise ValueError('Invalid outbound_username')
+        if mode == 'ss':
+            m = mapping.get('outbound_method', METHOD)
+            if m not in OUTBOUND_SS_METHODS:
+                raise ValueError('Unsupported outbound_method')
+    else:
+        for forbidden in ('outbound_server', 'outbound_port', 'outbound_username', 'outbound_method'):
+            if forbidden in mapping and mapping[forbidden] not in (None, ''):
+                raise ValueError('Outbound proxy fields require outbound_mode=socks5 or ss')
+
+
 def _validate_acme_fields(mapping, tls_mode):
     if 'acme_email' in mapping:
         email = mapping['acme_email']
@@ -166,7 +274,9 @@ def validate_settings(settings, protocol=None):
         raise ValueError('Mismatched landing protocol')
 
     # Legacy 0.6.0 ss2022 exact 4-key contract check.
-    if resolved == 'ss2022' and 'tls_mode' not in settings and 'domain' not in settings and 'protocol' not in settings:
+    if (resolved == 'ss2022' and 'tls_mode' not in settings and 'domain' not in settings and
+            'protocol' not in settings and 'publish_to_subscription' not in settings and
+            'outbound_strategy' not in settings and 'outbound_mode' not in settings and 'region' not in settings):
         if set(settings) != {'name', 'server', 'listen_port', 'method'}:
             raise ValueError('Invalid landing settings')
         validate_endpoint(settings)
@@ -193,6 +303,7 @@ def validate_settings(settings, protocol=None):
     camouflage = settings.get('camouflage_url', '')
     _validate_camouflage_url(camouflage)
     _validate_acme_fields(settings, tls_mode)
+    _validate_outbound_settings(settings)
 
     if resolved == 'ss2022':
         method = settings.get('method', METHOD)
@@ -205,6 +316,11 @@ def validate_settings(settings, protocol=None):
             _validate_short_ids(settings['reality_short_ids'])
         if 'fingerprint' in settings and settings['fingerprint'] not in FINGERPRINTS:
             raise ValueError('Unsupported client fingerprint')
+    elif resolved == 'anytls':
+        if 'fingerprint' in settings and settings['fingerprint'] not in FINGERPRINTS:
+            raise ValueError('Unsupported client fingerprint')
+        if 'padding_scheme' in settings:
+            _validate_padding_scheme(settings['padding_scheme'])
     elif resolved == 'vless-ws':
         if 'ws_path' in settings:
             _validate_ws_path(settings['ws_path'])
@@ -214,17 +330,15 @@ def validate_settings(settings, protocol=None):
                 raise ValueError('Invalid Hysteria2 bandwidth limit')
         if 'obfs' in settings and settings['obfs'] not in ('none', 'salamander'):
             raise ValueError('Unsupported Hysteria2 obfuscation')
+        if 'mport' in settings:
+            _validate_mport(settings['mport'])
+        if 'hop_interval' in settings:
+            _validate_hop_interval(settings['hop_interval'])
 
 
-def validate_spec(action, spec):
-    """Validate full landing specification (including encrypted secrets) sent to Agents."""
-    if action == 'landing.remove':
-        if spec != {}:
-            raise ValueError('Removal takes no configuration')
-        return
-    if action != 'landing.apply' or not isinstance(spec, dict):
+def _validate_single_node_spec(spec):
+    if not isinstance(spec, dict):
         raise ValueError('Invalid landing specification')
-
     resolved = _resolved_protocol(spec, default='ss2022')
     # Legacy exact 5-key SS2022 shape for hash & test backward compatibility.
     if resolved == 'ss2022' and set(spec) == {'name', 'server', 'listen_port', 'method', 'password'}:
@@ -233,7 +347,11 @@ def validate_spec(action, spec):
         return
 
     rules = PROTOCOL_SPEC[resolved]
-    allowed = _PROTOCOL_ALLOWED_SETTINGS[resolved] | rules['secret_fields'] | {'reality_public_key', 'uuid'}
+    allowed = (
+        _PROTOCOL_ALLOWED_SETTINGS[resolved]
+        | rules['secret_fields']
+        | {'reality_public_key', 'uuid', 'extra_nodes', 'adopted_nodes', 'returned_adoptions'}
+    )
     if set(spec) - allowed:
         raise ValueError('Invalid landing specification')
 
@@ -246,6 +364,16 @@ def validate_spec(action, spec):
         if not isinstance(token, str) or not 12 <= len(token) <= 256 or any(ord(c) < 32 for c in token):
             raise ValueError('Missing or invalid ACME DNS API token')
 
+    out_mode = spec.get('outbound_mode', 'direct')
+    if out_mode == 'ss':
+        out_pw = spec.get('outbound_password', '')
+        if not isinstance(out_pw, str) or not 1 <= len(out_pw) <= 256 or any(ord(c) < 32 for c in out_pw):
+            raise ValueError('Missing or invalid outbound Shadowsocks password')
+    elif out_mode == 'socks5' and 'outbound_password' in spec and spec['outbound_password']:
+        out_pw = spec['outbound_password']
+        if not isinstance(out_pw, str) or len(out_pw) > 256 or any(ord(c) < 32 for c in out_pw):
+            raise ValueError('Invalid outbound Socks5 password')
+
     if resolved == 'ss2022':
         method = spec.get('method', METHOD)
         _validate_ss2022_password(spec.get('password', ''), SS2022_METHODS[method])
@@ -255,10 +383,10 @@ def validate_spec(action, spec):
         _validate_reality_key(spec.get('reality_private_key', ''))
         _validate_reality_key(spec.get('reality_public_key', ''))
         _validate_short_ids(spec.get('reality_short_ids', []))
-    elif resolved == 'trojan':
+    elif resolved in ('trojan', 'anytls'):
         pw = spec.get('password', '')
         if not isinstance(pw, str) or len(pw) < 16 or any(ord(c) < 32 for c in pw):
-            raise ValueError('Invalid Trojan password')
+            raise ValueError(f'Invalid {resolved} password')
     elif resolved == 'vless-ws':
         if not isinstance(spec.get('uuid'), str) or str(uuid.UUID(spec['uuid'])) != spec['uuid']:
             raise ValueError('Invalid UUID')
@@ -272,9 +400,76 @@ def validate_spec(action, spec):
                 raise ValueError('Invalid Hysteria2 salamander password')
 
 
+def _validate_adopted_inbound(item):
+    if not isinstance(item, dict):
+        raise ValueError('Invalid adopted node entry')
+    sk = item.get('source_key', '')
+    if not isinstance(sk, str) or not re.fullmatch(r'(?:adopt-[0-9a-f]{16}|[0-9a-f]{32})', sk):
+        raise ValueError('Invalid adopted source_key')
+    inbound = item.get('inbound')
+    if not isinstance(inbound, dict):
+        raise ValueError('Invalid adopted inbound object')
+    port = inbound.get('listen_port')
+    if type(port) is not int or not 1 <= port <= 65535:
+        raise ValueError('Invalid adopted inbound listen_port')
+    if not isinstance(inbound.get('type'), str) or not inbound['type']:
+        raise ValueError('Invalid adopted inbound type')
+
+
+def validate_spec(action, spec):
+    """Validate full landing specification (including encrypted secrets) sent to Agents."""
+    if action == 'landing.remove':
+        if spec != {}:
+            raise ValueError('Removal takes no configuration')
+        return
+    if action != 'landing.apply' or not isinstance(spec, dict):
+        raise ValueError('Invalid landing specification')
+
+    if spec.get('adopted_only') is True:
+        if set(spec) - {'adopted_only', 'adopted_nodes', 'returned_adoptions'}:
+            raise ValueError('Invalid adopted_only specification')
+    else:
+        _validate_single_node_spec(spec)
+
+    if 'extra_nodes' in spec:
+        extras = spec['extra_nodes']
+        if not isinstance(extras, list) or len(extras) > 32:
+            raise ValueError('Invalid extra_nodes list')
+        for item in extras:
+            if not isinstance(item, dict) or any(k in item for k in ('extra_nodes', 'adopted_nodes', 'returned_adoptions')):
+                raise ValueError('Nested extra_nodes are not allowed')
+            _validate_single_node_spec(item)
+
+    if 'adopted_nodes' in spec:
+        adopted = spec['adopted_nodes']
+        if not isinstance(adopted, list) or len(adopted) > 32:
+            raise ValueError('Invalid adopted_nodes list')
+        for item in adopted:
+            _validate_adopted_inbound(item)
+
+    if 'returned_adoptions' in spec:
+        returned = spec['returned_adoptions']
+        if not isinstance(returned, list) or len(returned) > 32:
+            raise ValueError('Invalid returned_adoptions list')
+        for sk in returned:
+            if not isinstance(sk, str) or not re.fullmatch(r'(?:adopt-[0-9a-f]{16}|[0-9a-f]{32})', sk):
+                raise ValueError('Invalid returned source_key')
+
+
 def deployment_tls_plan(spec, site_id='landing'):
     """Describe ACME certificate & Caddy site orchestration required for a validated landing spec."""
     validate_spec('landing.apply', spec)
+    if spec.get('adopted_only') is True:
+        return {
+            'protocol': 'adopted',
+            'tls_mode': 'none',
+            'needs_cert': False,
+            'needs_caddy': False,
+            'caddy_role': '',
+            'domain': '',
+            'camouflage_url': '',
+            'acme': None,
+        }
     protocol = _resolved_protocol(spec)
     rules = PROTOCOL_SPEC[protocol]
     tls_mode = spec.get('tls_mode', rules['default_tls'])
@@ -285,6 +480,9 @@ def deployment_tls_plan(spec, site_id='landing'):
     if protocol == 'reality' and tls_mode in ('acme_http', 'acme_dns'):
         needs_caddy = True
         caddy_role = 'loopback_camouflage'
+    elif protocol == 'trojan' and needs_cert:
+        needs_caddy = True
+        caddy_role = 'trojan_fallback'
     elif protocol == 'vless-ws' and needs_cert:
         needs_caddy = True
         caddy_role = 'frontdoor_ws'
@@ -321,6 +519,16 @@ def build_caddy_site_for_landing(spec, *, site_id='landing', listen_port=None, b
     plan = deployment_tls_plan(spec, site_id=site_id)
     if not plan['needs_caddy']:
         return None
+    if plan['caddy_role'] == 'trojan_fallback':
+        return {
+            'site_id': site_id,
+            'domain': plan['domain'],
+            'tls_mode': 'none',
+            'camouflage_url': plan['camouflage_url'],
+            'email': spec.get('acme_email', ''),
+            'listen_port': int(listen_port or 18443),
+            'bind_host': '127.0.0.1',
+        }
     base = {
         'site_id': site_id,
         'domain': plan['domain'],
@@ -361,27 +569,25 @@ def _default_cert_paths(site_id, cert_path=None, key_path=None):
     return str(base / 'fullchain.pem'), str(base / 'privkey.pem')
 
 
-def runtime_config(spec, *, cert_path=None, key_path=None, caddy_port=None, backend_port=None, site_id='landing'):
-    """Render official sing-box JSON configuration for any supported landing protocol."""
-    validate_spec('landing.apply', spec)
+def _render_single_inbound(spec, *, tag='managed-landing', site_id='landing', cert_path=None, key_path=None,
+                           caddy_port=None, backend_port=None):
     protocol = _resolved_protocol(spec)
-
     if protocol == 'ss2022':
         method = spec.get('method', METHOD)
-        inbound = {
+        return {
             'type': 'shadowsocks',
-            'tag': 'managed-landing',
+            'tag': tag,
             'listen': '::',
             'listen_port': spec['listen_port'],
             'method': method,
             'password': spec['password'],
         }
-    elif protocol == 'reality':
+    if protocol == 'reality':
         tls_mode = spec.get('tls_mode', 'reality')
         hs_caddy_port = (caddy_port or 18443) if tls_mode in ('acme_http', 'acme_dns') else caddy_port
-        inbound = {
+        return {
             'type': 'vless',
-            'tag': 'managed-landing',
+            'tag': tag,
             'listen': '::',
             'listen_port': spec['listen_port'],
             'users': [{'uuid': spec['uuid'], 'flow': 'xtls-rprx-vision'}],
@@ -393,14 +599,15 @@ def runtime_config(spec, *, cert_path=None, key_path=None, caddy_port=None, back
                     'handshake': _handshake_target(spec, hs_caddy_port),
                     'private_key': spec['reality_private_key'],
                     'short_id': list(spec['reality_short_ids']),
+                    'max_time_difference': '1m',
                 },
             },
         }
-    elif protocol == 'trojan':
+    if protocol == 'trojan':
         cert, key = _default_cert_paths(site_id, cert_path, key_path)
-        inbound = {
+        return {
             'type': 'trojan',
-            'tag': 'managed-landing',
+            'tag': tag,
             'listen': '::',
             'listen_port': spec['listen_port'],
             'users': [{'name': 'landing', 'password': spec['password']}],
@@ -412,20 +619,42 @@ def runtime_config(spec, *, cert_path=None, key_path=None, caddy_port=None, back
                 'certificate_path': cert,
                 'key_path': key,
             },
+            'fallback': {
+                'server': '127.0.0.1',
+                'server_port': int(caddy_port or 18443),
+            },
         }
-    elif protocol == 'vless-ws':
+    if protocol == 'anytls':
+        cert, key = _default_cert_paths(site_id, cert_path, key_path)
+        padding = spec.get('padding_scheme') or DEFAULT_ANYTLS_PADDING
+        return {
+            'type': 'anytls',
+            'tag': tag,
+            'listen': '::',
+            'listen_port': spec['listen_port'],
+            'users': [{'name': 'landing', 'password': spec['password']}],
+            'padding_scheme': list(padding),
+            'tls': {
+                'enabled': True,
+                'server_name': spec['domain'],
+                'min_version': '1.3',
+                'alpn': ['h2', 'http/1.1'],
+                'certificate_path': cert,
+                'key_path': key,
+            },
+        }
+    if protocol == 'vless-ws':
         tls_mode = spec.get('tls_mode', 'acme_http')
         ws_path = spec.get('ws_path', '/ws')
         if tls_mode in ('acme_http', 'acme_dns'):
-            # Front-door Caddy terminates TLS and proxies WS here on loopback.
             listen_host = '127.0.0.1'
             listen_port = int(backend_port or 18444)
         else:
             listen_host = '::'
             listen_port = spec['listen_port']
-        inbound = {
+        return {
             'type': 'vless',
-            'tag': 'managed-landing',
+            'tag': tag,
             'listen': listen_host,
             'listen_port': listen_port,
             'users': [{'uuid': spec['uuid']}],
@@ -434,11 +663,11 @@ def runtime_config(spec, *, cert_path=None, key_path=None, caddy_port=None, back
                 'path': ws_path,
             },
         }
-    elif protocol == 'hysteria2':
+    if protocol == 'hysteria2':
         cert, key = _default_cert_paths(site_id, cert_path, key_path)
         inbound = {
             'type': 'hysteria2',
-            'tag': 'managed-landing',
+            'tag': tag,
             'listen': '::',
             'listen_port': spec['listen_port'],
             'users': [{'name': 'landing', 'password': spec['password']}],
@@ -458,15 +687,146 @@ def runtime_config(spec, *, cert_path=None, key_path=None, caddy_port=None, back
                 inbound[field] = spec[field]
         if spec.get('camouflage_url'):
             inbound['masquerade'] = spec['camouflage_url']
-    else:
-        raise ValueError('Unsupported landing protocol')
+        return inbound
+    raise ValueError('Unsupported landing protocol')
 
-    return {'log': {'level': 'warn'}, 'inbounds': [inbound], 'outbounds': [{'type': 'direct', 'tag': 'direct'}]}
+
+def _build_node_outbound(node_spec, tag):
+    mode = node_spec.get('outbound_mode', 'direct')
+    strategy = node_spec.get('outbound_strategy')
+    if mode == 'socks5':
+        out = {
+            'type': 'socks',
+            'tag': tag,
+            'server': node_spec['outbound_server'],
+            'server_port': node_spec['outbound_port'],
+            'version': '5',
+        }
+        if node_spec.get('outbound_username'):
+            out['username'] = node_spec['outbound_username']
+        if node_spec.get('outbound_password'):
+            out['password'] = node_spec['outbound_password']
+        if strategy:
+            out['domain_strategy'] = strategy
+        return out
+    if mode == 'ss':
+        out = {
+            'type': 'shadowsocks',
+            'tag': tag,
+            'server': node_spec['outbound_server'],
+            'server_port': node_spec['outbound_port'],
+            'method': node_spec.get('outbound_method', METHOD),
+            'password': node_spec['outbound_password'],
+        }
+        if strategy:
+            out['domain_strategy'] = strategy
+        return out
+    out = {'type': 'direct', 'tag': tag}
+    if strategy:
+        out['domain_strategy'] = strategy
+    return out
+
+
+def runtime_config(spec, *, cert_path=None, key_path=None, caddy_port=None, backend_port=None, site_id='landing',
+                   extra_overrides=None):
+    """Render official sing-box JSON configuration for any supported landing protocol."""
+    validate_spec('landing.apply', spec)
+    extra_overrides = extra_overrides or {}
+
+    if spec.get('adopted_only') is True:
+        inbounds = []
+        for idx, adopted in enumerate(spec.get('adopted_nodes') or [], 1):
+            adopted_in = dict(adopted['inbound'])
+            adopted_in.setdefault('tag', f"adopted-{str(adopted.get('source_key', idx))[-8:]}")
+            inbounds.append(adopted_in)
+        return {'log': {'level': 'warn'}, 'inbounds': inbounds, 'outbounds': [{'type': 'direct', 'tag': 'direct'}]}
+
+    primary_inbound = _render_single_inbound(
+        spec,
+        tag='managed-landing',
+        site_id=site_id,
+        cert_path=cert_path,
+        key_path=key_path,
+        caddy_port=caddy_port,
+        backend_port=backend_port,
+    )
+    inbounds = [primary_inbound]
+    extra_nodes = spec.get('extra_nodes') or []
+    for idx, extra in enumerate(extra_nodes, 1):
+        nid = str(extra.get('node_id') or idx)
+        node_site_id = f'node-{nid}'
+        ov = extra_overrides.get(nid) or {}
+        inbounds.append(
+            _render_single_inbound(
+                extra,
+                tag=f'managed-node-{nid}',
+                site_id=node_site_id,
+                cert_path=ov.get('cert_path'),
+                key_path=ov.get('key_path'),
+                caddy_port=ov.get('caddy_port'),
+                backend_port=ov.get('backend_port'),
+            )
+        )
+    for idx, adopted in enumerate(spec.get('adopted_nodes') or [], 1):
+        adopted_in = dict(adopted['inbound'])
+        adopted_in.setdefault('tag', f"adopted-{str(adopted.get('source_key', idx))[-8:]}")
+        inbounds.append(adopted_in)
+
+    primary_mode = spec.get('outbound_mode', 'direct')
+    primary_strategy = spec.get('outbound_strategy')
+    has_custom_extra = any(
+        (item.get('outbound_mode', 'direct') != 'direct' or item.get('outbound_strategy'))
+        for item in extra_nodes
+    )
+
+    if primary_mode == 'direct' and not has_custom_extra:
+        direct_out = {'type': 'direct', 'tag': 'direct'}
+        if primary_strategy:
+            direct_out['domain_strategy'] = primary_strategy
+        return {'log': {'level': 'warn'}, 'inbounds': inbounds, 'outbounds': [direct_out]}
+
+    outbounds = []
+    route_rules = []
+    if primary_mode != 'direct' or primary_strategy:
+        p_out = _build_node_outbound(spec, 'out-primary')
+        outbounds.append(p_out)
+        route_rules.append({'inbound': ['managed-landing'], 'outbound': 'out-primary'})
+    for idx, extra in enumerate(extra_nodes, 1):
+        nid = str(extra.get('node_id') or idx)
+        e_mode = extra.get('outbound_mode', 'direct')
+        e_strategy = extra.get('outbound_strategy')
+        if e_mode != 'direct' or e_strategy:
+            out_tag = f'out-node-{nid}'
+            outbounds.append(_build_node_outbound(extra, out_tag))
+            route_rules.append({'inbound': [f'managed-node-{nid}'], 'outbound': out_tag})
+    outbounds.append({'type': 'direct', 'tag': 'direct'})
+    final_tag = 'out-primary' if (primary_mode != 'direct' and not extra_nodes) else 'direct'
+    return {
+        'log': {'level': 'warn'},
+        'inbounds': inbounds,
+        'outbounds': outbounds,
+        'route': {'rules': route_rules, 'final': final_tag},
+    }
 
 
 def client_node(identifier, agent_id, spec):
     """Project a client-facing Mihomo node dict when the landing protocol supports direct subscriptions."""
     protocol = _resolved_protocol(spec)
+    if protocol == 'ss2022':
+        if not spec.get('publish_to_subscription'):
+            return None
+        managed = {'type': 'agent', 'agent_id': agent_id, 'deployment_id': identifier}
+        label = node_name(identifier, spec['name'])
+        return {
+            'name': label,
+            'type': 'ss',
+            'server': spec['server'],
+            'port': spec['listen_port'],
+            'cipher': spec.get('method', METHOD),
+            'password': spec['password'],
+            'udp': True,
+            '_managed_by': managed,
+        }
     if not PROTOCOL_SPEC[protocol]['project_client']:
         return None
     managed = {'type': 'agent', 'agent_id': agent_id, 'deployment_id': identifier}
@@ -502,6 +862,18 @@ def client_node(identifier, agent_id, spec):
             'udp': True,
             '_managed_by': managed,
         }
+    if protocol == 'anytls':
+        return {
+            'name': label,
+            'type': 'anytls',
+            'server': spec['server'],
+            'port': spec['listen_port'],
+            'password': spec['password'],
+            'sni': spec['domain'],
+            'udp': True,
+            'client-fingerprint': spec.get('fingerprint', 'chrome'),
+            '_managed_by': managed,
+        }
     if protocol == 'vless-ws':
         tls_enabled = spec.get('tls_mode', 'acme_http') != 'none'
         node = {
@@ -532,6 +904,10 @@ def client_node(identifier, agent_id, spec):
             'sni': spec['domain'],
             '_managed_by': managed,
         }
+        if spec.get('mport'):
+            node['ports'] = _validate_mport(spec['mport'])
+        if spec.get('hop_interval'):
+            node['hop-interval'] = int(spec['hop_interval'])
         if spec.get('obfs') == 'salamander':
             node['obfs'] = 'salamander'
             node['obfs-password'] = spec['obfs_password']

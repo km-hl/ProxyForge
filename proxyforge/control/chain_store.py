@@ -59,6 +59,33 @@ class ChainStoreMixin:
             raise JobConflict()
         return row
 
+    def _ready_entry_deployment(self, db, agent_id):
+        self._job_agent(db, agent_id)
+        self._expire_jobs(db, agent_id)
+        row = db.execute('''SELECT d.* FROM deployments d JOIN jobs j ON j.id=d.job_id
+            WHERE d.agent_id=? AND (
+                (d.protocol='vless-reality' AND j.type='deployment.apply')
+                OR (d.protocol='reality' AND j.type='landing.apply')
+            ) AND j.status='success' ''', (agent_id,)).fetchone()
+        if not row:
+            raise JobConflict()
+        return row
+
+    @staticmethod
+    def _normalize_entry_spec(protocol, raw_spec):
+        if protocol == 'reality':
+            return {
+                'name': raw_spec['name'],
+                'server': raw_spec['server'],
+                'server_name': raw_spec['domain'],
+                'listen_port': raw_spec['listen_port'],
+                'uuid': raw_spec['uuid'],
+                'private_key': raw_spec['reality_private_key'],
+                'public_key': raw_spec['reality_public_key'],
+                'short_id': (raw_spec.get('reality_short_ids') or ['0123456789abcdef'])[0],
+            }
+        return raw_spec
+
     def put_chain(self, agent_id, request_id, expected_revision, landing_agent_id, settings, remove=False):
         validate_settings(settings)
         if agent_id == landing_agent_id:
@@ -84,8 +111,8 @@ class ChainStoreMixin:
             if db.execute("SELECT 1 FROM jobs WHERE agent_id=? AND type!='singbox.status' AND status IN ('pending','assigned','running')",
                           (agent_id,)).fetchone():
                 raise JobConflict()
-            direct = self._ready_deployment(db, agent_id, 'vless-reality', 'deployment.apply')
-            direct_spec = self._decrypt_spec(db, direct['secret_spec'])
+            direct = self._ready_entry_deployment(db, agent_id)
+            direct_spec = self._normalize_entry_spec(direct['protocol'], self._decrypt_spec(db, direct['secret_spec']))
             # Removing the entry association remains possible when the landing is revoked.
             previous = self._decrypt_spec(db, row['secret_spec']) if row else None
             if remove:
@@ -97,7 +124,13 @@ class ChainStoreMixin:
                 landing = self._ready_deployment(db, landing_agent_id, 'ss2022', 'landing.apply')
                 if settings['listen_port'] == direct_spec['listen_port']:
                     raise JobConflict()
-                entry_settings = {**json.loads(direct['settings']), **settings}
+                base_entry_settings = {
+                    'name': direct_spec['name'],
+                    'server': direct_spec['server'],
+                    'server_name': direct_spec['server_name'],
+                    'listen_port': direct_spec['listen_port'],
+                }
+                entry_settings = {**base_entry_settings, **settings}
                 entry = {**(previous['chain']['entry'] if previous else new_spec(entry_settings)), **entry_settings}
                 snapshot = {'direct': direct_spec, 'chain': {'entry': entry,
                             'landing': self._decrypt_spec(db, landing['secret_spec'])}}

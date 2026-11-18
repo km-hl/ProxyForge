@@ -532,6 +532,10 @@ def render_proxy_uri(proxy: dict) -> str:
             params["obfs"] = proxy["obfs"]
         if proxy.get("obfs-password"):
             params["obfs-password"] = proxy["obfs-password"]
+        if proxy.get("ports"):
+            params["mport"] = str(proxy["ports"])
+        if proxy.get("hop-interval"):
+            params["hop-interval"] = str(proxy["hop-interval"])
         if proxy.get("skip-cert-verify"):
             params["insecure"] = "1"
         port_part = str(proxy["ports"]) if proxy.get("ports") else str(port)

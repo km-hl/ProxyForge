@@ -39,6 +39,11 @@
     }
     function setField(config, name, key, value) {
         const result = clone(config);
+        if (name === '__root__') {
+            if (!mapping(result)) throw new Error('模板根节点必须是对象，请先修复底层配置');
+            if (value === undefined) delete result[key]; else put(result, key, clone(value));
+            return result;
+        }
         if (value === undefined && !own(result, name)) return result;
         const block = section(result, name);
         if (value === undefined) delete block[key]; else put(block, key, clone(value));
@@ -67,6 +72,18 @@
         if (!enabled) values = values.filter(v => !forms.includes(v));
         return setField(config, 'tun', 'dns-hijack', values);
     }
+    const PROVIDER_ALIASES = {
+        'https://223.5.5.5/dns-query': 'AliDNS',
+        'https://223.6.6.6/dns-query': 'AliDNS',
+        '223.6.6.6': 'AliDNS',
+        'https://1.12.12.12/dns-query': 'DNSPod',
+        'https://120.53.53.53/dns-query': 'DNSPod',
+        '1.12.12.12': 'DNSPod',
+        'https://1.0.0.1/dns-query': 'Cloudflare',
+        '1.0.0.1': 'Cloudflare',
+        'https://8.8.4.4/dns-query': 'Google',
+        '8.8.4.4': 'Google',
+    };
     function applyPreset(config, name) {
         if (!['compatible', 'protect', 'strict'].includes(name)) throw new Error('未知预设');
         let result = clone(config);
@@ -77,6 +94,18 @@
             nameserver: ['https://1.1.1.1/dns-query', 'https://8.8.8.8/dns-query'],
             'proxy-server-nameserver': ['https://223.5.5.5/dns-query', 'https://1.12.12.12/dns-query'] };
         Object.entries(values).forEach(([key, value]) => put(dns, key, value));
+        if (dns['prefer-h3'] !== true && !own(dns, 'respect-rules')) {
+            put(dns, 'respect-rules', true);
+        }
+        if (!own(dns, 'nameserver-policy')) {
+            put(dns, 'nameserver-policy', {});
+        }
+        if (mapping(dns['nameserver-policy'])) {
+            put(dns, 'nameserver-policy', clone(dns['nameserver-policy']));
+            for (const [k, v] of Object.entries(RECOMMENDED)) {
+                if (!own(dns['nameserver-policy'], k)) put(dns['nameserver-policy'], k, clone(v));
+            }
+        }
         Object.entries({ enable: true, stack: 'mixed', 'auto-route': true, 'auto-detect-interface': true })
             .forEach(([key, value]) => put(tun, key, value));
         if (name === 'strict') put(tun, 'strict-route', true);
@@ -114,7 +143,8 @@
             (/^[\d.[\]:]+$/.test(String(address)) ? 'UDP' : '自定义');
     }
     function provider(address) {
-        return Object.keys(PROVIDERS).find(name => Object.values(PROVIDERS[name]).includes(address)) || '自定义';
+        return Object.keys(PROVIDERS).find(name => Object.values(PROVIDERS[name]).includes(address)) ||
+            PROVIDER_ALIASES[address] || '自定义';
     }
     function providerOptions(name, bootstrap = false) {
         return Object.fromEntries(Object.entries(PROVIDERS[name] || {}).filter(([, address]) => {
@@ -125,6 +155,9 @@
     }
     function changes(before, after) {
         const result = [];
+        if (JSON.stringify(before.ipv6) !== JSON.stringify(after.ipv6)) {
+            result.push({ path: 'ipv6', before: before.ipv6, after: after.ipv6 });
+        }
         for (const name of ['dns', 'tun']) {
             const a = before[name] || {}, b = after[name] || {};
             for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
@@ -142,7 +175,7 @@
         return `<button type="button" class="btn btn-sm" data-action="${action}" ${extra}>${label}</button>`;
     }
     function field(name, key, label, options) {
-        const block = mapping(draft[name]) ? draft[name] : {};
+        const block = name === '__root__' ? (mapping(draft) ? draft : {}) : (mapping(draft[name]) ? draft[name] : {});
         const value = own(block, key) ? block[key] : undefined;
         const invalid = value !== undefined && value !== null && !options.some(([v]) => v === String(value));
         return `<div class="form-group"><label for="net-${name}-${key}">${label}</label><select id="net-${name}-${key}" data-section="${name}" data-field="${key}">
@@ -252,9 +285,9 @@
             ${button('🟢 兼容模式', 'preset', 'data-preset="compatible"')}${button('🛡️ 防 DNS 泄露', 'preset', 'data-preset="protect"')}${button('🔒 严格防泄露', 'preset', 'data-preset="strict"')}</div>
             <p class="hint">兼容模式仅关闭订阅内 TUN，保留 DNS。防护预设只调整列出的字段，Bootstrap 默认包含明文 DNS。确认后仍需保存。</p></section>
             <section class="card"><h3 class="card-title">DNS 基础设置</h3><div class="form-grid">
-            ${field('dns', 'enable', '启用 Mihomo DNS', BOOL)}${field('dns', 'ipv6', 'IPv6 DNS', BOOL)}
-            ${field('dns', 'enhanced-mode', 'DNS 模式', [['fake-ip', 'Fake-IP'], ['redir-host', 'Redir-Host']])}</div>
-            <p class="hint">关闭 IPv6 DNS 后不返回 AAAA 结果；不等于关闭系统 IPv6。未设置模式时，基线内核采用 Redir-Host。</p>
+            ${field('dns', 'enable', '启用 Mihomo DNS', BOOL)}${field('__root__', 'ipv6', '全局 IPv6 流量 (根级 ipv6)', BOOL)}${field('dns', 'ipv6', 'IPv6 DNS (AAAA 解析)', BOOL)}
+            ${field('dns', 'enhanced-mode', 'DNS 模式', [['fake-ip', 'Fake-IP'], ['redir-host', 'Redir-Host'], ['normal', 'Normal (标准 DNS)']])}</div>
+            <p class="hint">关闭 IPv6 DNS 后不返回 AAAA 结果；关闭全局 IPv6 流量后客户端将完全禁用 IPv6 栈。未设置模式时，基线内核采用 Redir-Host。</p>
             <details><summary>高级 DNS 选项</summary>${field('dns', 'respect-rules', 'DNS 查询遵循路由规则', BOOL)}<p class="hint">开启 respect-rules 必须配置代理节点域名 DNS，不建议同时开启 prefer-h3。</p></details></section>
             <section class="card"><h3 class="card-title">DNS 服务器</h3>
             ${rows('dns', 'nameserver', LISTS.nameserver, '用于普通域名解析；加密地址不代表查询一定经代理。')}
@@ -267,7 +300,10 @@
             ${policies != null && !mapping(policies) ? '<p class="network-status error">现有策略类型无效，请在底层配置中修复。</p>' : ''}
             ${button('+ 添加策略', 'policy', 'data-index="-1"')}${button('🇨🇳 国内 / 🌍 国外 DNS 分流', 'recommend')}</section>
             ${dns['enhanced-mode'] === 'fake-ip' ? `<section class="card"><h3 class="card-title">Fake-IP</h3>
+            <div class="form-grid">
             <div class="form-group"><label for="net-range">Fake-IP IPv4 网段</label><input id="net-range" data-section="dns" data-field="fake-ip-range" value="${escape(dns['fake-ip-range'] ?? '')}" placeholder="未设置 · 198.18.0.1/16">${button('恢复未设置', 'unset', 'data-section="dns" data-key="fake-ip-range"')}</div>
+            <div class="form-group"><label for="net-range6">Fake-IP IPv6 网段</label><input id="net-range6" data-section="dns" data-field="fake-ip-range6" value="${escape(dns['fake-ip-range6'] ?? '')}" placeholder="未设置 · fdfe:dcba:9876::1/64">${button('恢复未设置', 'unset', 'data-section="dns" data-key="fake-ip-range6"')}</div>
+            </div>
             ${filterEditable ? rows('dns', 'fake-ip-filter', filterMode === 'whitelist' ? 'Fake-IP 白名单' : 'Fake-IP 排除列表') + button('批量追加（每行一个）', 'import-filter') : '<p class="hint">当前为高级过滤模式，保留原值，请到 Raw YAML 编辑。</p>'}</section>` : ''}
             <section class="card"><h3 class="card-title">TUN 与 DNS 防泄露</h3><div class="form-grid">
             ${field('tun', 'enable', '启用 TUN', BOOL)}${field('tun', 'stack', 'TUN 协议栈', [['mixed', 'mixed'], ['system', 'system'], ['gvisor', 'gvisor']])}
@@ -279,7 +315,7 @@
             </fieldset><section class="card"><h3 class="card-title">配置检查 ${dirty ? '· 当前草稿' : '· 已保存模板'}</h3><div id="network-check" aria-live="polite"></div>${button('重新检查', 'validate')}</section>
             <section class="card"><details><summary>高级 DNS / TUN YAML · ${dirty ? '未保存预览' : '已保存'}</summary><pre class="network-yaml"></pre><p class="hint">只读预览。高级字段请在底层配置页编辑。字段值会保留，YAML 注释与排版不保证保留。</p></details></section>`;
         const network = {};
-        for (const key of ['dns', 'tun']) if (own(draft, key)) put(network, key, draft[key]);
+        for (const key of ['ipv6', 'dns', 'tun']) if (own(draft, key)) put(network, key, draft[key]);
         container.querySelector('.network-yaml').textContent = dump(network);
         diagnostics(container.querySelector('#network-check'), report);
         for (const details of container.querySelectorAll('details')) {
@@ -370,9 +406,39 @@
             }
         } catch (e) { hooks.toast(e.message, 'error'); }
     }
+    function syncToolbarInPlace() {
+        if (!container) return;
+        const toolbarStrong = container.querySelector('.network-toolbar strong');
+        if (toolbarStrong) toolbarStrong.textContent = saving ? '正在保存…' : dirty ? '● 有未保存修改' : '已与模板同步';
+        const saveBtn = container.querySelector('button[data-action="save"]');
+        if (saveBtn) saveBtn.disabled = !dirty || saving;
+        const yamlEl = container.querySelector('.network-yaml');
+        if (yamlEl) {
+            const network = {};
+            for (const key of ['ipv6', 'dns', 'tun']) if (own(draft, key)) put(network, key, draft[key]);
+            yamlEl.textContent = dump(network);
+        }
+    }
     function init(options) {
         hooks = options; container = document.getElementById('panel-network');
         container.addEventListener('click', action);
+        if (typeof container.addEventListener === 'function') {
+            container.addEventListener('input', event => {
+                if (saving) return;
+                const el = event.target;
+                if (!el || el.tagName !== 'INPUT' || el.type === 'checkbox' || !el.dataset?.field) return;
+                try {
+                    if (hooks.isBusy?.()) return;
+                    const value = el.value === '' ? undefined : el.value;
+                    draft = setField(draft, el.dataset.section, el.dataset.field, value);
+                    dirty = dump(draft) !== dump(saved);
+                    report = null;
+                    syncToolbarInPlace();
+                    scheduleValidation();
+                    hooks.onDirty?.(dirty);
+                } catch (e) { hooks.toast(e.message, 'error'); }
+            });
+        }
         container.addEventListener('change', event => {
             if (saving) return;
             const el = event.target;
@@ -381,7 +447,15 @@
                 if (el.dataset.hijack) update(setHijack(draft, el.dataset.hijack, el.checked));
                 else if (el.dataset.field && el.value !== '__preserve') {
                     const value = el.value === '' ? undefined : el.value === 'true' ? true : el.value === 'false' ? false : el.value;
-                    update(setField(draft, el.dataset.section, el.dataset.field, value));
+                    if (el.tagName === 'INPUT' && el.type !== 'checkbox') {
+                        draft = setField(draft, el.dataset.section, el.dataset.field, value);
+                        dirty = dump(draft) !== dump(saved);
+                        syncToolbarInPlace();
+                        scheduleValidation();
+                        hooks.onDirty?.(dirty);
+                    } else {
+                        update(setField(draft, el.dataset.section, el.dataset.field, value));
+                    }
                 }
             } catch (e) { hooks.toast(e.message, 'error'); }
         });

@@ -135,6 +135,18 @@ def convert_proxy_to_singbox(proxy: Dict[str, Any]) -> Dict[str, Any]:
             'server_port': port,
             'password': str(proxy.get('password') or ''),
         }
+        if proxy.get('ports'):
+            out['server_ports'] = [
+                p.strip().replace('-', ':')
+                for p in str(proxy['ports']).split(',')
+                if p.strip()
+            ]
+        if proxy.get('hop-interval'):
+            out['hop_interval'] = f"{int(proxy['hop-interval'])}s"
+        if proxy.get('up'):
+            out['up_mbps'] = int(proxy['up'])
+        if proxy.get('down'):
+            out['down_mbps'] = int(proxy['down'])
         if proxy.get('obfs') == 'salamander' and proxy.get('obfs-password'):
             out['obfs'] = {'type': 'salamander', 'password': str(proxy['obfs-password'])}
         tls = _tls_block(proxy, sni_default=server)
@@ -309,20 +321,76 @@ def build_singbox_config(
         route_rules.append(translated)
 
     outbounds_final = group_outbounds + outbounds + [{'type': 'direct', 'tag': 'direct'}]
+    dns_cfg = config.get('dns') if isinstance(config.get('dns'), dict) else {}
+    tun_cfg = config.get('tun') if isinstance(config.get('tun'), dict) else {}
+    ipv6_enabled = config.get('ipv6') is not False and dns_cfg.get('ipv6') is not False
+
+    remote_srv = '1.1.1.1'
+    for candidate_list in (dns_cfg.get('fallback'), dns_cfg.get('nameserver')):
+        if isinstance(candidate_list, list) and candidate_list:
+            first_ns = str(candidate_list[0]).strip()
+            if first_ns:
+                remote_srv = re.sub(r'^[a-z0-9+]+://', '', first_ns).split('/')[0] or '1.1.1.1'
+                break
+
+    local_srv_entry: Dict[str, Any] = {'type': 'local', 'tag': 'local'}
+    for local_list in (dns_cfg.get('default-nameserver'), dns_cfg.get('proxy-server-nameserver')):
+        if isinstance(local_list, list) and local_list:
+            first_local = str(local_list[0]).strip()
+            if first_local:
+                clean_local = re.sub(r'^[a-z0-9+]+://', '', first_local).split('/')[0]
+                if clean_local:
+                    local_srv_entry = {'type': 'udp', 'tag': 'local', 'server': clean_local}
+                break
+
+    dns_section: Dict[str, Any] = {
+        'servers': [
+            {
+                'type': 'https',
+                'tag': 'remote',
+                'server': remote_srv,
+                'detour': default_final if default_final != 'direct' else 'direct',
+            },
+            local_srv_entry,
+        ],
+        'rules': [{'clash_mode': 'direct', 'server': 'local'}],
+        'final': 'remote',
+    }
+    if not ipv6_enabled:
+        dns_section['strategy'] = 'ipv4_only'
+    if str(dns_cfg.get('enhanced-mode') or '').lower() == 'fake-ip':
+        inet4_range = str(dns_cfg.get('fake-ip-range') or '198.18.0.1/16')
+        fakeip_cfg: Dict[str, Any] = {'enabled': True, 'inet4_range': inet4_range}
+        if ipv6_enabled and dns_cfg.get('fake-ip-range6'):
+            fakeip_cfg['inet6_range'] = str(dns_cfg['fake-ip-range6'])
+        dns_section['fakeip'] = fakeip_cfg
+
+    inbounds_list: List[Dict[str, Any]] = []
+    if tun_cfg.get('enable') is not False:
+        tun_addrs = ['172.19.0.1/30']
+        if ipv6_enabled:
+            tun_addrs.append('fdfe:dcba:9876::1/126')
+        tun_in: Dict[str, Any] = {
+            'type': 'tun',
+            'tag': 'tun-in',
+            'address': tun_addrs if tun_cfg else ['172.19.0.1/30'],
+            'auto_route': bool(tun_cfg.get('auto-route', True)),
+            'strict_route': bool(tun_cfg.get('strict-route', True)),
+        }
+        if tun_cfg.get('stack'):
+            tun_in['stack'] = str(tun_cfg['stack']).lower()
+        if tun_cfg.get('mtu'):
+            try:
+                tun_in['mtu'] = int(tun_cfg['mtu'])
+            except (TypeError, ValueError):
+                pass
+        inbounds_list.append(tun_in)
+    inbounds_list.append({'type': 'mixed', 'tag': 'mixed-in', 'listen': '127.0.0.1', 'listen_port': 2080})
+
     profile = {
         'log': {'level': 'info', 'timestamp': True},
-        'dns': {
-            'servers': [
-                {'type': 'https', 'tag': 'remote', 'server': '1.1.1.1', 'detour': default_final if default_final != 'direct' else 'direct'},
-                {'type': 'local', 'tag': 'local'},
-            ],
-            'rules': [{'clash_mode': 'direct', 'server': 'local'}],
-            'final': 'remote',
-        },
-        'inbounds': [
-            {'type': 'tun', 'tag': 'tun-in', 'address': ['172.19.0.1/30'], 'auto_route': True, 'strict_route': True},
-            {'type': 'mixed', 'tag': 'mixed-in', 'listen': '127.0.0.1', 'listen_port': 2080},
-        ],
+        'dns': dns_section,
+        'inbounds': inbounds_list,
         'outbounds': outbounds_final,
         'route': {
             'rules': route_rules,

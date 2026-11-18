@@ -890,56 +890,122 @@ class RuntimeCoordinator:
             raise ValueError('Unsupported managed service')
         return self.engines[service].status()
 
+    def _prepare_node_tls_and_caddy(self, node_spec, site_id, job_id, guard):
+        plan = deployment_tls_plan(node_spec, site_id=site_id)
+        overrides = {}
+        staged_caddy_site_id = None
+        deferred_caddy = None
+        caddy_enabled = SERVICE_CADDY in self.engines or self._caddy_manager is not None
+
+        if plan['needs_cert'] and plan['caddy_role'] in ('', 'trojan_fallback'):
+            acme_params = plan['acme']
+            acme_kwargs = {k: v for k, v in acme_params.items() if k not in ('cert_name', 'domain')}
+            src_cert, src_key = self._get_acme_manager().ensure_certificate(
+                acme_params['cert_name'], acme_params['domain'], **acme_kwargs,
+            )
+            dest_cert, dest_key = self._stage_singbox_certs(src_cert, src_key, site_id=site_id)
+            overrides['cert_path'] = dest_cert
+            overrides['key_path'] = dest_key
+
+        if plan['needs_caddy']:
+            if plan['caddy_role'] == 'trojan_fallback' and not caddy_enabled:
+                return overrides, None, None
+            if not caddy_enabled:
+                raise ValueError('Caddy runtime service is not enabled')
+            caddy_manager = self._get_caddy_manager()
+            loopback_port = self.allocate_port(probe_host=False)
+            if plan['caddy_role'] in ('loopback_camouflage', 'trojan_fallback'):
+                site = build_caddy_site_for_landing(node_spec, site_id=site_id, listen_port=loopback_port)
+                caddy_manager.upsert_site(site, job_id=job_id, guard=guard)
+                overrides['caddy_port'] = loopback_port
+                staged_caddy_site_id = site_id
+            elif plan['caddy_role'] == 'frontdoor_ws':
+                site = build_caddy_site_for_landing(node_spec, site_id=site_id, backend_port=loopback_port)
+                sites = caddy_manager.load_sites()
+                sites[site['site_id']] = site
+                caddyfile = caddy_manager.render_all(sites)
+                overrides['backend_port'] = loopback_port
+                deferred_caddy = (job_id, caddyfile, sites)
+        return overrides, staged_caddy_site_id, deferred_caddy
+
     def _apply_landing_job(self, job, guard):
+        from .adoption import adopt_host_service, return_host_service
         singbox_engine = self.engines[SERVICE_SINGBOX]
         caddy_job_id = self._derived_caddy_job_id(job['id'])
         if job['type'] == 'landing.remove':
             result = singbox_engine.apply(job, guard)
             if SERVICE_CADDY in self.engines or self._caddy_manager is not None:
-                self._get_caddy_manager().remove_site('landing', job_id=caddy_job_id, guard=guard)
+                caddy_mgr = self._get_caddy_manager()
+                for sid in list(caddy_mgr.load_sites()):
+                    if sid == 'landing' or sid.startswith('node-'):
+                        caddy_mgr.remove_site(sid, job_id=self._derived_caddy_job_id(caddy_job_id + ':' + sid), guard=guard)
             return result
 
         spec = job['deployment']
-        plan = deployment_tls_plan(spec, site_id='landing')
-        if not plan['needs_cert'] and not plan['needs_caddy']:
-            return singbox_engine.apply(job, guard)
-
-        overrides = {}
-        if plan['needs_caddy']:
-            if SERVICE_CADDY not in self.engines and self._caddy_manager is None:
-                raise ValueError('Caddy runtime service is not enabled')
-            caddy_manager = self._get_caddy_manager()
-            loopback_port = self.allocate_port(probe_host=False)
-            if plan['caddy_role'] == 'loopback_camouflage':
-                site = build_caddy_site_for_landing(spec, site_id='landing', listen_port=loopback_port)
-                caddy_manager.upsert_site(site, job_id=caddy_job_id, guard=guard)
-                overrides['caddy_port'] = loopback_port
+        for item in spec.get('adopted_nodes') or []:
+            if item.get('original_service'):
                 try:
-                    return singbox_engine.apply(job, guard, render_overrides=overrides)
+                    adopt_host_service(
+                        item['original_service'],
+                        item.get('original_config_path', ''),
+                        item['source_key'],
+                    )
                 except Exception:
-                    caddy_manager.remove_site('landing', job_id=self._derived_caddy_job_id(caddy_job_id), guard=lambda: None)
-                    raise
-            # frontdoor_ws: obtain cert and validate Caddyfile before mutating sing-box.
-            site = build_caddy_site_for_landing(spec, site_id='landing', backend_port=loopback_port)
-            sites = caddy_manager.load_sites()
-            sites[site['site_id']] = site
-            caddyfile = caddy_manager.render_all(sites)
-            overrides['backend_port'] = loopback_port
-            singbox_result = singbox_engine.apply(job, guard, render_overrides=overrides)
-            caddy_manager.apply_caddyfile(caddy_job_id, caddyfile, guard=guard)
-            caddy_manager.save_sites(sites)
-            return singbox_result
+                    pass
 
-        # Direct ACME cert consumed by sing-box (e.g. Trojan or Hysteria2).
-        acme_params = plan['acme']
-        acme_kwargs = {k: v for k, v in acme_params.items() if k not in ('cert_name', 'domain')}
-        src_cert, src_key = self._get_acme_manager().ensure_certificate(
-            acme_params['cert_name'], acme_params['domain'], **acme_kwargs,
+        overrides, staged_primary, deferred_primary = self._prepare_node_tls_and_caddy(
+            spec, 'landing', caddy_job_id, guard
         )
-        dest_cert, dest_key = self._stage_singbox_certs(src_cert, src_key, site_id='landing')
-        overrides['cert_path'] = dest_cert
-        overrides['key_path'] = dest_key
-        return singbox_engine.apply(job, guard, render_overrides=overrides)
+        staged_sites = [staged_primary] if staged_primary else []
+        deferred_list = [deferred_primary] if deferred_primary else []
+
+        extra_nodes = spec.get('extra_nodes') or []
+        if extra_nodes:
+            extra_overrides = {}
+            for idx, extra in enumerate(extra_nodes, 1):
+                nid = str(extra.get('node_id') or idx)
+                node_site_id = f'node-{nid}'
+                node_job_id = self._derived_caddy_job_id(f"{job['id']}:{node_site_id}")
+                ov, staged_extra, deferred_extra = self._prepare_node_tls_and_caddy(
+                    extra, node_site_id, node_job_id, guard
+                )
+                if ov:
+                    extra_overrides[nid] = ov
+                if staged_extra:
+                    staged_sites.append(staged_extra)
+                if deferred_extra:
+                    deferred_list.append(deferred_extra)
+            if extra_overrides:
+                overrides['extra_overrides'] = extra_overrides
+
+        try:
+            if overrides:
+                singbox_result = singbox_engine.apply(job, guard, render_overrides=overrides)
+            else:
+                singbox_result = singbox_engine.apply(job, guard)
+        except Exception:
+            if staged_sites and (SERVICE_CADDY in self.engines or self._caddy_manager is not None):
+                caddy_manager = self._get_caddy_manager()
+                for sid in staged_sites:
+                    caddy_manager.remove_site(
+                        sid,
+                        job_id=self._derived_caddy_job_id(caddy_job_id + ':rb:' + sid),
+                        guard=lambda: None,
+                    )
+            raise
+
+        if deferred_list and (SERVICE_CADDY in self.engines or self._caddy_manager is not None):
+            caddy_manager = self._get_caddy_manager()
+            for def_job_id, caddyfile, sites in deferred_list:
+                caddy_manager.apply_caddyfile(def_job_id, caddyfile, guard=guard)
+                caddy_manager.save_sites(sites)
+
+        for sk in spec.get('returned_adoptions') or []:
+            try:
+                return_host_service(sk)
+            except Exception:
+                pass
+        return singbox_result
 
     def _resolve_gost_metrics_addr(self, gost_engine, deployment):
         explicit = str((deployment or {}).get('metrics_addr') or '').strip()
