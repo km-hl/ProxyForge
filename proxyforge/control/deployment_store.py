@@ -96,6 +96,54 @@ def _generate_landing_secrets(settings, protocol, *, pregenerated=None):
     raise ValueError('Unsupported landing protocol')
 
 
+def _validate_hop_passwords(raw):
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or len(raw) > 4:
+        raise ValueError('Invalid hop_passwords')
+    cleaned = {}
+    for k, v in raw.items():
+        if k not in ('0', '1', '2', '3') or not isinstance(v, str) or len(v) > 256 or any(ord(c) < 32 for c in v):
+            raise ValueError('Invalid hop_passwords entry')
+        if v:
+            cleaned[k] = v
+    return cleaned
+
+
+def _apply_outbound_and_secret_updates(spec, clean_settings, secrets_input):
+    if secrets_input:
+        if secrets_input.get('dns_api_token'):
+            spec['dns_api_token'] = secrets_input['dns_api_token']
+        if secrets_input.get('outbound_password'):
+            spec['outbound_password'] = secrets_input['outbound_password']
+        if 'hop_passwords' in secrets_input:
+            existing_hp = dict(spec.get('hop_passwords') or {})
+            existing_hp.update(_validate_hop_passwords(secrets_input.get('hop_passwords')))
+            spec['hop_passwords'] = existing_hp
+    if clean_settings.get('obfs') == 'salamander' and 'obfs_password' not in spec:
+        spec['obfs_password'] = secrets.token_urlsafe(24)
+    if clean_settings.get('obfs') != 'salamander':
+        spec.pop('obfs_password', None)
+    out_mode = clean_settings.get('outbound_mode', 'direct')
+    if out_mode == 'direct':
+        for k in ('outbound_server', 'outbound_port', 'outbound_username', 'outbound_method',
+                  'outbound_password', 'outbound_hops', 'hop_passwords', 'resolved_outbound_hops'):
+            spec.pop(k, None)
+    elif out_mode in ('socks5', 'ss'):
+        for k in ('outbound_hops', 'hop_passwords', 'resolved_outbound_hops'):
+            spec.pop(k, None)
+    elif out_mode == 'chain':
+        for k in ('outbound_server', 'outbound_port', 'outbound_username', 'outbound_method', 'outbound_password'):
+            spec.pop(k, None)
+        max_idx = len(clean_settings.get('outbound_hops') or [])
+        if isinstance(spec.get('hop_passwords'), dict):
+            spec['hop_passwords'] = {
+                k: v for k, v in spec['hop_passwords'].items()
+                if k.isdigit() and int(k) < max_idx and v
+            }
+    return spec
+
+
 def new_landing_spec(settings, protocol=None, *, secrets_input=None, pregenerated=None):
     resolved = protocol or settings.get('protocol', 'ss2022')
     validate_landing_settings(settings, protocol=resolved)
@@ -106,6 +154,8 @@ def new_landing_spec(settings, protocol=None, *, secrets_input=None, pregenerate
             spec['dns_api_token'] = secrets_input['dns_api_token']
         if secrets_input.get('outbound_password'):
             spec['outbound_password'] = secrets_input['outbound_password']
+        if 'hop_passwords' in secrets_input:
+            spec['hop_passwords'] = _validate_hop_passwords(secrets_input.get('hop_passwords'))
     return spec
 
 
@@ -221,6 +271,158 @@ class DeploymentStoreMixin:
             row = db.execute('SELECT * FROM deployments WHERE agent_id=?', (agent_id,)).fetchone()
             return self._deployment_view(db, row) if row else None
 
+    def list_ss_landings(self):
+        """List all active managed SS2022 nodes (primary deployments + extra agent_nodes) without secrets."""
+        with self.connection() as db:
+            agents = {}
+            for row in db.execute('SELECT * FROM agents WHERE revoked_at IS NULL'):
+                view = self._view(row)
+                agents[row['id']] = {
+                    'name': view['name'],
+                    'status': view['status'],
+                    'public_ipv4': view['public_ipv4'],
+                    'public_ipv6': view['public_ipv6'],
+                    'observed_ip': row['observed_ip'] or '',
+                }
+            if not agents:
+                return []
+            landings = []
+            for row in db.execute(
+                '''SELECT d.id, d.agent_id, d.settings, d.updated_at, j.type AS job_type, j.status AS job_status
+                   FROM deployments d
+                   JOIN jobs j ON j.id=d.job_id
+                   WHERE d.protocol='ss2022' '''
+            ).fetchall():
+                a = agents.get(row['agent_id'])
+                if not a:
+                    continue
+                if row['job_type'].endswith('.remove') and row['job_status'] == 'success':
+                    continue
+                s = json.loads(row['settings'])
+                srv = s.get('server') or a['public_ipv4'] or a['observed_ip'] or a['public_ipv6']
+                node_label = s.get('name') or f"{a['name']} SS2022"
+                landings.append({
+                    'agent_id': row['agent_id'],
+                    'agent_name': a['name'],
+                    'agent_status': a['status'],
+                    'node_id': row['id'],
+                    'name': node_label,
+                    'node_name': node_label,
+                    'server': srv,
+                    'listen_port': s['listen_port'],
+                    'method': s.get('method', METHOD),
+                    'is_primary': True,
+                    'status': row['job_status'],
+                })
+            for erow in db.execute(
+                "SELECT id, agent_id, settings, updated_at FROM agent_nodes WHERE protocol='ss2022' ORDER BY updated_at ASC, id ASC"
+            ).fetchall():
+                a = agents.get(erow['agent_id'])
+                if not a:
+                    continue
+                s = json.loads(erow['settings'])
+                srv = s.get('server') or a['public_ipv4'] or a['observed_ip'] or a['public_ipv6']
+                node_label = s.get('name') or f"{a['name']} SS2022"
+                landings.append({
+                    'agent_id': erow['agent_id'],
+                    'agent_name': a['name'],
+                    'agent_status': a['status'],
+                    'node_id': erow['id'],
+                    'name': node_label,
+                    'node_name': node_label,
+                    'server': srv,
+                    'listen_port': s['listen_port'],
+                    'method': s.get('method', METHOD),
+                    'is_primary': False,
+                    'status': 'ready',
+                })
+            return sorted(landings, key=lambda item: (item['agent_name'], item['listen_port'], item['node_id']))
+
+    def _resolve_managed_ss_hop(self, db, entry_agent_id, target_agent_id, target_node_id):
+        if target_agent_id == entry_agent_id:
+            raise ValueError('Cannot chain an Agent to itself')
+        target_agent = db.execute(
+            'SELECT * FROM agents WHERE id=? AND revoked_at IS NULL',
+            (target_agent_id,),
+        ).fetchone()
+        if not target_agent:
+            raise ValueError('Referenced managed SS2022 Agent not found or revoked')
+        target_view = self._view(target_agent)
+        node_row = db.execute(
+            '''SELECT d.settings, d.secret_spec, j.type AS job_type, j.status AS job_status
+               FROM deployments d JOIN jobs j ON j.id=d.job_id
+               WHERE d.id=? AND d.agent_id=? AND d.protocol='ss2022' ''',
+            (target_node_id, target_agent_id),
+        ).fetchone()
+        if node_row:
+            if node_row['job_type'].endswith('.remove') and node_row['job_status'] == 'success':
+                raise ValueError('Referenced managed SS2022 node was removed')
+            s = json.loads(node_row['settings'])
+            dec = self._decrypt_spec(db, node_row['secret_spec'])
+        else:
+            extra_row = db.execute(
+                "SELECT settings, secret_spec FROM agent_nodes WHERE id=? AND agent_id=? AND protocol='ss2022'",
+                (target_node_id, target_agent_id),
+            ).fetchone()
+            if not extra_row:
+                raise ValueError('Referenced managed SS2022 node not found')
+            s = json.loads(extra_row['settings'])
+            dec = self._decrypt_spec(db, extra_row['secret_spec'])
+        server = s.get('server') or target_view['public_ipv4'] or target_agent['observed_ip'] or target_view['public_ipv6']
+        if not server:
+            raise ValueError('Referenced managed SS2022 node has no routable server address')
+        return {
+            'type': 'ss',
+            'server': server,
+            'port': int(s['listen_port']),
+            'method': s.get('method', METHOD),
+            'password': dec['password'],
+        }
+
+    def _resolve_node_outbound_hops(self, db, entry_agent_id, raw_spec):
+        spec = {
+            k: v for k, v in raw_spec.items()
+            if k not in ('hop_passwords', 'resolved_outbound_hops')
+        }
+        if spec.get('outbound_mode', 'direct') != 'chain':
+            return spec
+        hops = spec.get('outbound_hops') or []
+        hop_passwords = raw_spec.get('hop_passwords') if isinstance(raw_spec.get('hop_passwords'), dict) else {}
+        resolved = []
+        for idx, hop in enumerate(hops):
+            kind = hop.get('kind')
+            if kind == 'managed_ss':
+                resolved.append(
+                    self._resolve_managed_ss_hop(db, entry_agent_id, hop['agent_id'], hop['node_id'])
+                )
+            elif kind == 'ss':
+                pw = hop_passwords.get(str(idx), '')
+                if not isinstance(pw, str) or not pw:
+                    raise ValueError('Missing password for external Shadowsocks hop')
+                resolved.append({
+                    'type': 'ss',
+                    'server': hop['server'],
+                    'port': int(hop['port']),
+                    'method': hop.get('method', METHOD),
+                    'password': pw,
+                })
+            elif kind == 'socks5':
+                entry = {
+                    'type': 'socks5',
+                    'server': hop['server'],
+                    'port': int(hop['port']),
+                }
+                if hop.get('username'):
+                    entry['username'] = hop['username']
+                pw = hop_passwords.get(str(idx), '')
+                if pw:
+                    entry['password'] = pw
+                resolved.append(entry)
+            else:
+                raise ValueError('Unsupported outbound hop kind')
+        spec['resolved_outbound_hops'] = resolved
+        return spec
+
     def _collect_extra_and_adopted_specs(self, db, agent_id, *, returned_adoptions=None):
         extra_rows = db.execute(
             'SELECT * FROM agent_nodes WHERE agent_id=? ORDER BY updated_at ASC, id ASC',
@@ -230,7 +432,7 @@ class DeploymentStoreMixin:
         for erow in extra_rows:
             espec = self._decrypt_spec(db, erow['secret_spec'])
             espec = {**espec, **json.loads(erow['settings']), 'node_id': erow['id'], 'protocol': erow['protocol']}
-            extra_specs.append(espec)
+            extra_specs.append(self._resolve_node_outbound_hops(db, agent_id, espec))
 
         adopted_rows = db.execute(
             '''SELECT a.*, s.secret_spec, s.adopted_status
@@ -256,7 +458,8 @@ class DeploymentStoreMixin:
         return extra_specs, adopted_specs, list(returned_adoptions or [])
 
     def _attach_aggregated_nodes(self, db, agent_id, base_spec, *, returned_adoptions=None):
-        spec = {k: v for k, v in base_spec.items() if k not in ('extra_nodes', 'adopted_nodes', 'returned_adoptions')}
+        cleaned = {k: v for k, v in base_spec.items() if k not in ('extra_nodes', 'adopted_nodes', 'returned_adoptions')}
+        spec = self._resolve_node_outbound_hops(db, agent_id, cleaned)
         extras, adopted, returned = self._collect_extra_and_adopted_specs(
             db, agent_id, returned_adoptions=returned_adoptions
         )
@@ -288,8 +491,10 @@ class DeploymentStoreMixin:
             raise ValueError('Unsupported deployment protocol')
 
         if secrets_input is not None:
-            if not isinstance(secrets_input, dict) or set(secrets_input) - {'dns_api_token', 'outbound_password'}:
+            if not isinstance(secrets_input, dict) or set(secrets_input) - {'dns_api_token', 'outbound_password', 'hop_passwords'}:
                 raise ValueError('Unsupported deployment secret input')
+            if 'hop_passwords' in secrets_input:
+                _validate_hop_passwords(secrets_input.get('hop_passwords'))
 
         with self.connection() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -341,18 +546,8 @@ class DeploymentStoreMixin:
                 if k not in ('extra_nodes', 'adopted_nodes', 'returned_adoptions')
             }
             if protocol != 'vless-reality':
-                if secrets_input:
-                    if secrets_input.get('dns_api_token'):
-                        base_spec['dns_api_token'] = secrets_input['dns_api_token']
-                    if secrets_input.get('outbound_password'):
-                        base_spec['outbound_password'] = secrets_input['outbound_password']
+                _apply_outbound_and_secret_updates(base_spec, settings, secrets_input)
                 if not remove:
-                    if settings.get('obfs') == 'salamander' and 'obfs_password' not in base_spec:
-                        base_spec['obfs_password'] = secrets.token_urlsafe(24)
-                    if settings.get('obfs') != 'salamander':
-                        base_spec.pop('obfs_password', None)
-                    if settings.get('outbound_mode', 'direct') == 'direct':
-                        base_spec.pop('outbound_password', None)
                     spec = self._attach_aggregated_nodes(db, agent_id, base_spec)
                     validate_landing_spec('landing.apply', spec)
                 else:
@@ -556,8 +751,10 @@ class DeploymentStoreMixin:
         clean_settings = {**settings, 'protocol': protocol}
         validate_landing_settings(clean_settings, protocol=protocol)
         if secrets_input is not None:
-            if not isinstance(secrets_input, dict) or set(secrets_input) - {'dns_api_token', 'outbound_password'}:
+            if not isinstance(secrets_input, dict) or set(secrets_input) - {'dns_api_token', 'outbound_password', 'hop_passwords'}:
                 raise ValueError('Unsupported deployment secret input')
+            if 'hop_passwords' in secrets_input:
+                _validate_hop_passwords(secrets_input.get('hop_passwords'))
 
         with self.connection() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -593,17 +790,7 @@ class DeploymentStoreMixin:
                     k: v for k, v in {**current, **clean_settings}.items()
                     if k not in ('extra_nodes', 'adopted_nodes', 'returned_adoptions')
                 }
-                if secrets_input:
-                    if secrets_input.get('dns_api_token'):
-                        base_spec['dns_api_token'] = secrets_input['dns_api_token']
-                    if secrets_input.get('outbound_password'):
-                        base_spec['outbound_password'] = secrets_input['outbound_password']
-                if clean_settings.get('obfs') == 'salamander' and 'obfs_password' not in base_spec:
-                    base_spec['obfs_password'] = secrets.token_urlsafe(24)
-                if clean_settings.get('obfs') != 'salamander':
-                    base_spec.pop('obfs_password', None)
-                if clean_settings.get('outbound_mode', 'direct') == 'direct':
-                    base_spec.pop('outbound_password', None)
+                _apply_outbound_and_secret_updates(base_spec, clean_settings, secrets_input)
 
                 full_spec = self._attach_aggregated_nodes(db, agent_id, base_spec)
                 validate_landing_spec('landing.apply', full_spec)
@@ -623,7 +810,9 @@ class DeploymentStoreMixin:
                     (identifier, agent_id, json.dumps(clean_settings), rev, encrypted_base, job['id'], self.clock(), protocol),
                 )
                 self._audit(db, 'deployment_requested', agent_id)
-                return self._deployment_view(db, db.execute('SELECT * FROM deployments WHERE id=?', (identifier,)).fetchone())
+                view = self._deployment_view(db, db.execute('SELECT * FROM deployments WHERE id=?', (identifier,)).fetchone())
+                view['node_id'] = identifier
+                return view
 
             # Extra node in agent_nodes
             existing_extra = db.execute(
@@ -640,18 +829,9 @@ class DeploymentStoreMixin:
                 k: v for k, v in {**current, **clean_settings, 'node_id': target_id}.items()
                 if k not in ('extra_nodes', 'adopted_nodes', 'returned_adoptions')
             }
-            if secrets_input:
-                if secrets_input.get('dns_api_token'):
-                    node_spec['dns_api_token'] = secrets_input['dns_api_token']
-                if secrets_input.get('outbound_password'):
-                    node_spec['outbound_password'] = secrets_input['outbound_password']
-            if clean_settings.get('obfs') == 'salamander' and 'obfs_password' not in node_spec:
-                node_spec['obfs_password'] = secrets.token_urlsafe(24)
-            if clean_settings.get('obfs') != 'salamander':
-                node_spec.pop('obfs_password', None)
-            if clean_settings.get('outbound_mode', 'direct') == 'direct':
-                node_spec.pop('outbound_password', None)
-            validate_landing_spec('landing.apply', node_spec)
+            _apply_outbound_and_secret_updates(node_spec, clean_settings, secrets_input)
+            resolved_node_spec = self._resolve_node_outbound_hops(db, agent_id, node_spec)
+            validate_landing_spec('landing.apply', resolved_node_spec)
 
             encrypted_node = cipher.encrypt(json.dumps(node_spec).encode()).decode()
             rev = (existing_extra['revision'] + 1) if existing_extra else 1
@@ -663,7 +843,9 @@ class DeploymentStoreMixin:
                 (target_id, agent_id, protocol, json.dumps(clean_settings), encrypted_node, rev, self.clock()),
             )
             self._audit(db, 'deployment_requested', agent_id)
-            return self._dispatch_aggregated_runtime(db, agent_id, request_id)
+            view = self._dispatch_aggregated_runtime(db, agent_id, request_id)
+            view['node_id'] = target_id
+            return view
 
     def delete_agent_node(self, agent_id, node_id, request_id):
         with self.connection() as db:

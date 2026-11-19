@@ -184,11 +184,11 @@ def _extract_config_paths_from_argv(core, arguments, *, cwd=None, exe=''):
     index = 1
     while index < len(arguments):
         arg = arguments[index]
-        if arg in ('-c', '--config') and index + 1 < len(arguments):
+        if arg in ('-c', '--config', '-config') and index + 1 < len(arguments):
             configs.append(_resolve_config_candidate(arguments[index + 1], cwd=cwd, exe=exe))
             index += 2
             continue
-        for prefix in ('--config=', '-c='):
+        for prefix in ('--config=', '-config=', '-c='):
             if arg.startswith(prefix):
                 configs.append(_resolve_config_candidate(arg[len(prefix):], cwd=cwd, exe=exe))
                 break
@@ -271,6 +271,20 @@ def discover_processes(proc=Path('/proc')):
     return found
 
 
+def _detect_json_core(cfg_obj):
+    """Infer whether a JSON/JSONC proxy configuration belongs to xray or sing-box."""
+    if not isinstance(cfg_obj, dict):
+        return SERVICE_SINGBOX
+    for inbound in cfg_obj.get('inbounds') or []:
+        if not isinstance(inbound, dict):
+            continue
+        if 'protocol' in inbound and 'port' in inbound and 'type' not in inbound:
+            return CORE_XRAY
+        if 'type' in inbound and 'listen_port' in inbound:
+            return SERVICE_SINGBOX
+    return SERVICE_SINGBOX
+
+
 def _discover_well_known_configs():
     """Discover standard host config files when processes omit -c or /proc is restricted."""
     discovered = []
@@ -295,7 +309,7 @@ def _discover_well_known_configs():
             for node_dir in sorted(nodepilot_nodes.iterdir())[:16]:
                 cfg = node_dir / 'current' / 'config.json'
                 if cfg.is_file() and not cfg.is_symlink():
-                    discovered.append((SERVICE_SINGBOX, str(cfg), f'nodepilot-{node_dir.name}.service', 0))
+                    discovered.append(('auto', str(cfg), f'nodepilot-{node_dir.name}.service', 0))
     except OSError:
         pass
     return discovered
@@ -457,7 +471,7 @@ def _parse_caddy_config(raw_bytes, config_path, config_sha, service_name):
             sni=sni,
             network='http',
             ws_path='',
-            adoptable=True,
+            adoptable=False,
         ))
     return endpoints
 
@@ -503,23 +517,29 @@ def scan_host(*, proc=Path('/proc'), extra_configs=None, privileged=True):
         ))
 
     for core, config_path, service_name, pid in candidates:
-        if core not in SUPPORTED_CORES:
+        if core != 'auto' and core not in SUPPORTED_CORES:
             continue
         if len(services) >= MAX_SCANNED_SERVICES or len(endpoints) >= MAX_SCANNED_ENDPOINTS:
             break
-        key = (core, str(config_path))
-        if key in seen_configs:
+        norm_path = str(config_path)
+        if norm_path in seen_configs:
             continue
-        seen_configs.add(key)
+        seen_configs.add(norm_path)
         try:
             raw = _read_bounded_file(config_path)
             sha = _file_sha256(raw)
-            if core == SERVICE_SINGBOX:
+            resolved_core = core
+            if resolved_core == 'auto':
                 cfg_obj = parse_jsonc(raw)
+                resolved_core = _detect_json_core(cfg_obj)
+            else:
+                cfg_obj = None
+            if resolved_core == SERVICE_SINGBOX:
+                cfg_obj = cfg_obj if cfg_obj is not None else parse_jsonc(raw)
                 parsed = _parse_singbox_config(cfg_obj, config_path, sha, service_name)
                 _LAST_EXTRACTED_CREDENTIALS.update(_extract_singbox_inbound_credentials(cfg_obj, sha))
-            elif core == CORE_XRAY:
-                cfg_obj = parse_jsonc(raw)
+            elif resolved_core == CORE_XRAY:
+                cfg_obj = cfg_obj if cfg_obj is not None else parse_jsonc(raw)
                 parsed = _parse_xray_config(cfg_obj, config_path, sha, service_name)
                 _LAST_EXTRACTED_CREDENTIALS.update(_extract_xray_inbound_credentials(cfg_obj, sha))
             else:
@@ -527,7 +547,7 @@ def scan_host(*, proc=Path('/proc'), extra_configs=None, privileged=True):
         except (AdoptionError, OSError):
             continue
         services.append({
-            'core': core,
+            'core': resolved_core,
             'pid': int(pid or 0),
             'service_name': _clean_text(service_name, 128),
             'config_path': _clean_text(config_path, 128),
@@ -683,6 +703,7 @@ def _xray_inbound_to_singbox(inbound, cred, source_key):
                 },
                 'private_key': priv,
                 'short_id': cred.get('reality_short_ids') or [''],
+                'max_time_difference': '1m',
             },
         }
     elif security == 'tls':
@@ -767,6 +788,8 @@ def _extract_xray_inbound_credentials(config, config_sha, *, pubkey_deriver=None
                 cred['handshake_server'] = h_part.strip('[]')
                 if p_part.isdigit():
                     cred['handshake_port'] = int(p_part)
+            if type(reality.get('xver')) is int and reality['xver'] > 0:
+                cred['xray_xver'] = reality['xver']
         extracted[skey] = {
             'credentials': cred,
             'inbound': _xray_inbound_to_singbox(inbound, cred, skey),
@@ -791,17 +814,18 @@ def extract_host_credentials(*, proc=Path('/proc'), extra_configs=None, pubkey_d
         candidates.append((item['core'], item['config_path']))
 
     for core, config_path in candidates:
-        if core not in (SERVICE_SINGBOX, CORE_XRAY):
+        if core not in (SERVICE_SINGBOX, CORE_XRAY, 'auto'):
             continue
-        key = (core, str(config_path))
-        if key in seen_configs:
+        norm_path = str(config_path)
+        if norm_path in seen_configs:
             continue
-        seen_configs.add(key)
+        seen_configs.add(norm_path)
         try:
             raw = _read_bounded_file(config_path)
             sha = _file_sha256(raw)
             parsed = parse_jsonc(raw)
-            if core == SERVICE_SINGBOX:
+            resolved_core = _detect_json_core(parsed) if core == 'auto' else core
+            if resolved_core == SERVICE_SINGBOX:
                 credentials.update(_extract_singbox_inbound_credentials(parsed, sha, pubkey_deriver=pubkey_deriver))
             else:
                 credentials.update(_extract_xray_inbound_credentials(parsed, sha, pubkey_deriver=pubkey_deriver))

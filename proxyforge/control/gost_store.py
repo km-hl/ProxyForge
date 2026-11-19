@@ -463,21 +463,30 @@ class GostStoreMixin:
             return {'status': 'ok', 'deleted_id': rule_id, 'sync': sync}
 
     def list_active_relays(self):
+        from proxyforge.control.control_store import _extract_public_ips
+
         with self.connection() as db:
             rows = db.execute(
-                '''SELECT f.*, a.name AS agent_name, a.observed_ip, a.last_seen, a.revoked_at
+                '''SELECT f.*, a.name AS agent_name, a.observed_ip, a.metadata AS agent_metadata,
+                          a.last_seen, a.revoked_at
                    FROM forward_rules f JOIN agents a ON a.id=f.agent_id
                    WHERE f.enabled=1 AND a.revoked_at IS NULL
                    ORDER BY f.agent_id, f.listen_port'''
             ).fetchall()
             out = []
             for row in rows:
+                try:
+                    meta = json.loads(row['agent_metadata']) if row['agent_metadata'] else {}
+                except Exception:
+                    meta = {}
+                ipv4, ipv6 = _extract_public_ips(meta.get('addresses', []), row['observed_ip'] or '')
+                listen_host = ipv4 or ipv6 or row['observed_ip']
                 entry = {
                     'id': row['id'],
                     'agent_id': row['agent_id'],
                     'agent_name': row['agent_name'],
                     'name': row['name'],
-                    'listen_host': row['observed_ip'],
+                    'listen_host': listen_host,
                     'listen_port': row['listen_port'],
                     'protocol': row['protocol'],
                     'mode': row['mode'],

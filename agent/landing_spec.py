@@ -26,7 +26,9 @@ LANDING_PROTOCOLS = ('ss2022', 'reality', 'trojan', 'anytls', 'vless-ws', 'hyste
 ACTIVE_UI_PROTOCOLS = ('reality', 'hysteria2', 'ss2022', 'anytls', 'trojan')
 TLS_MODES = ('none', 'reality', 'acme_http', 'acme_dns')
 OUTBOUND_STRATEGIES = ('prefer_ipv4', 'prefer_ipv6', 'ipv4_only', 'ipv6_only')
-OUTBOUND_MODES = ('direct', 'socks5', 'ss')
+OUTBOUND_MODES = ('direct', 'socks5', 'ss', 'chain')
+OUTBOUND_HOP_KINDS = ('managed_ss', 'ss', 'socks5')
+MAX_OUTBOUND_HOPS = 4
 FINGERPRINTS = ('chrome', 'firefox', 'safari', 'edge', 'ios', 'android', 'random', 'randomized')
 DNS_PROVIDERS = ('cloudflare', 'alidns', 'dnspod')
 CAMOUFLAGE_UNSAFE = re.compile(r'[\x00-\x1f\x7f{};"\'\\\r\n]')
@@ -94,6 +96,7 @@ _COMMON_OPTIONAL = {
     'acme_email', 'dns_provider', 'dns_zone_id', 'dns_propagation_seconds',
     'region', 'outbound_strategy', 'outbound_mode',
     'outbound_server', 'outbound_port', 'outbound_username', 'outbound_method',
+    'outbound_hops',
     'publish_to_subscription', 'node_id',
 }
 _PROTOCOL_ALLOWED_SETTINGS = {
@@ -104,7 +107,10 @@ _PROTOCOL_ALLOWED_SETTINGS = {
     'vless-ws': {'name', 'server', 'listen_port', 'ws_path', *_COMMON_OPTIONAL},
     'hysteria2': {'name', 'server', 'listen_port', 'up_mbps', 'down_mbps', 'obfs', 'mport', 'hop_interval', *_COMMON_OPTIONAL},
 }
-_SECRET_INPUT_KEYS = frozenset(('password', 'private_key', 'reality_private_key', 'dns_api_token', 'obfs_password', 'outbound_password'))
+_SECRET_INPUT_KEYS = frozenset((
+    'password', 'private_key', 'reality_private_key', 'dns_api_token',
+    'obfs_password', 'outbound_password', 'hop_passwords', 'resolved_outbound_hops',
+))
 
 
 def _validate_camouflage_url(value):
@@ -196,6 +202,82 @@ def _validate_padding_scheme(value):
             raise ValueError('Invalid AnyTLS padding_scheme line')
 
 
+def _validate_outbound_hops_settings(hops):
+    if not isinstance(hops, list) or not 1 <= len(hops) <= MAX_OUTBOUND_HOPS:
+        raise ValueError('outbound_hops must contain 1 to 4 hops')
+    for hop in hops:
+        if not isinstance(hop, dict):
+            raise ValueError('Invalid outbound hop')
+        kind = hop.get('kind')
+        if kind not in OUTBOUND_HOP_KINDS:
+            raise ValueError('Unsupported outbound hop kind')
+        if 'password' in hop:
+            raise ValueError('Outbound hop passwords must be supplied via secrets, not settings')
+        label = hop.get('label', '')
+        if label is not None and (not isinstance(label, str) or len(label) > 64 or CAMOUFLAGE_UNSAFE.search(label)):
+            raise ValueError('Invalid outbound hop label')
+        if kind == 'managed_ss':
+            if set(hop) - {'kind', 'agent_id', 'node_id', 'label'}:
+                raise ValueError('Unsupported managed_ss hop field')
+            aid = hop.get('agent_id', '')
+            nid = hop.get('node_id', '')
+            if not isinstance(aid, str) or not re.fullmatch(r'[0-9a-f]{32}', aid):
+                raise ValueError('Invalid managed_ss agent_id')
+            if not isinstance(nid, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', nid):
+                raise ValueError('Invalid managed_ss node_id')
+        elif kind == 'ss':
+            if set(hop) - {'kind', 'server', 'port', 'method', 'label'}:
+                raise ValueError('Unsupported ss hop field')
+            host(hop.get('server', ''))
+            p = hop.get('port')
+            if type(p) is not int or not 1 <= p <= 65535:
+                raise ValueError('Invalid ss hop port')
+            if hop.get('method', METHOD) not in OUTBOUND_SS_METHODS:
+                raise ValueError('Unsupported ss hop method')
+        elif kind == 'socks5':
+            if set(hop) - {'kind', 'server', 'port', 'username', 'label'}:
+                raise ValueError('Unsupported socks5 hop field')
+            host(hop.get('server', ''))
+            p = hop.get('port')
+            if type(p) is not int or not 1 <= p <= 65535:
+                raise ValueError('Invalid socks5 hop port')
+            u = hop.get('username', '')
+            if u and (not isinstance(u, str) or len(u) > 128 or any(ord(c) < 32 for c in u)):
+                raise ValueError('Invalid socks5 hop username')
+
+
+def _validate_resolved_outbound_hops(hops):
+    if not isinstance(hops, list) or not 1 <= len(hops) <= MAX_OUTBOUND_HOPS:
+        raise ValueError('resolved_outbound_hops must contain 1 to 4 hops')
+    for hop in hops:
+        if not isinstance(hop, dict):
+            raise ValueError('Invalid resolved outbound hop')
+        htype = hop.get('type')
+        if htype not in ('ss', 'socks5'):
+            raise ValueError('Unsupported resolved outbound hop type')
+        host(hop.get('server', ''))
+        p = hop.get('port')
+        if type(p) is not int or not 1 <= p <= 65535:
+            raise ValueError('Invalid resolved outbound hop port')
+        if htype == 'ss':
+            if set(hop) - {'type', 'server', 'port', 'method', 'password'}:
+                raise ValueError('Unsupported resolved ss hop field')
+            if hop.get('method', METHOD) not in OUTBOUND_SS_METHODS:
+                raise ValueError('Unsupported resolved ss hop method')
+            pw = hop.get('password', '')
+            if not isinstance(pw, str) or not 1 <= len(pw) <= 256 or any(ord(c) < 32 for c in pw):
+                raise ValueError('Missing or invalid resolved ss hop password')
+        else:
+            if set(hop) - {'type', 'server', 'port', 'username', 'password'}:
+                raise ValueError('Unsupported resolved socks5 hop field')
+            u = hop.get('username', '')
+            if u and (not isinstance(u, str) or len(u) > 128 or any(ord(c) < 32 for c in u)):
+                raise ValueError('Invalid resolved socks5 hop username')
+            pw = hop.get('password', '')
+            if pw and (not isinstance(pw, str) or len(pw) > 256 or any(ord(c) < 32 for c in pw)):
+                raise ValueError('Invalid resolved socks5 hop password')
+
+
 def _validate_outbound_settings(mapping):
     if 'region' in mapping and mapping['region'] is not None:
         reg = mapping['region']
@@ -213,7 +295,14 @@ def _validate_outbound_settings(mapping):
     mode = mapping.get('outbound_mode', 'direct')
     if mode not in OUTBOUND_MODES:
         raise ValueError('Unsupported outbound_mode')
-    if mode in ('socks5', 'ss'):
+    if mode == 'chain':
+        _validate_outbound_hops_settings(mapping.get('outbound_hops'))
+        for forbidden in ('outbound_server', 'outbound_port', 'outbound_username', 'outbound_method'):
+            if forbidden in mapping and mapping[forbidden] not in (None, ''):
+                raise ValueError('Single outbound proxy fields cannot be combined with outbound_mode=chain')
+    elif mode in ('socks5', 'ss'):
+        if mapping.get('outbound_hops'):
+            raise ValueError('outbound_hops requires outbound_mode=chain')
         host(mapping.get('outbound_server', ''))
         out_port = mapping.get('outbound_port')
         if type(out_port) is not int or not 1 <= out_port <= 65535:
@@ -227,6 +316,8 @@ def _validate_outbound_settings(mapping):
             if m not in OUTBOUND_SS_METHODS:
                 raise ValueError('Unsupported outbound_method')
     else:
+        if mapping.get('outbound_hops'):
+            raise ValueError('outbound_hops requires outbound_mode=chain')
         for forbidden in ('outbound_server', 'outbound_port', 'outbound_username', 'outbound_method'):
             if forbidden in mapping and mapping[forbidden] not in (None, ''):
                 raise ValueError('Outbound proxy fields require outbound_mode=socks5 or ss')
@@ -350,7 +441,10 @@ def _validate_single_node_spec(spec):
     allowed = (
         _PROTOCOL_ALLOWED_SETTINGS[resolved]
         | rules['secret_fields']
-        | {'reality_public_key', 'uuid', 'extra_nodes', 'adopted_nodes', 'returned_adoptions'}
+        | {
+            'reality_public_key', 'uuid', 'extra_nodes', 'adopted_nodes',
+            'returned_adoptions', 'hop_passwords', 'resolved_outbound_hops',
+        }
     )
     if set(spec) - allowed:
         raise ValueError('Invalid landing specification')
@@ -365,7 +459,9 @@ def _validate_single_node_spec(spec):
             raise ValueError('Missing or invalid ACME DNS API token')
 
     out_mode = spec.get('outbound_mode', 'direct')
-    if out_mode == 'ss':
+    if out_mode == 'chain':
+        _validate_resolved_outbound_hops(spec.get('resolved_outbound_hops'))
+    elif out_mode == 'ss':
         out_pw = spec.get('outbound_password', '')
         if not isinstance(out_pw, str) or not 1 <= len(out_pw) <= 256 or any(ord(c) < 32 for c in out_pw):
             raise ValueError('Missing or invalid outbound Shadowsocks password')
@@ -727,6 +823,47 @@ def _build_node_outbound(node_spec, tag):
     return out
 
 
+def _build_node_outbounds(node_spec, base_tag):
+    """Build one or more sing-box outbounds (chained via detour when outbound_mode='chain')."""
+    mode = node_spec.get('outbound_mode', 'direct')
+    strategy = node_spec.get('outbound_strategy')
+    if mode == 'chain':
+        hops = node_spec.get('resolved_outbound_hops') or []
+        outs = []
+        prev_tag = ''
+        for idx, hop in enumerate(hops, 1):
+            hop_tag = f'{base_tag}-h{idx}'
+            if hop['type'] == 'ss':
+                out = {
+                    'type': 'shadowsocks',
+                    'tag': hop_tag,
+                    'server': hop['server'],
+                    'server_port': hop['port'],
+                    'method': hop.get('method', METHOD),
+                    'password': hop['password'],
+                }
+            else:
+                out = {
+                    'type': 'socks',
+                    'tag': hop_tag,
+                    'server': hop['server'],
+                    'server_port': hop['port'],
+                    'version': '5',
+                }
+                if hop.get('username'):
+                    out['username'] = hop['username']
+                if hop.get('password'):
+                    out['password'] = hop['password']
+            if idx == 1 and strategy:
+                out['domain_strategy'] = strategy
+            if prev_tag:
+                out['detour'] = prev_tag
+            outs.append(out)
+            prev_tag = hop_tag
+        return outs, prev_tag
+    return [_build_node_outbound(node_spec, base_tag)], base_tag
+
+
 def runtime_config(spec, *, cert_path=None, key_path=None, caddy_port=None, backend_port=None, site_id='landing',
                    extra_overrides=None):
     """Render official sing-box JSON configuration for any supported landing protocol."""
@@ -787,20 +924,22 @@ def runtime_config(spec, *, cert_path=None, key_path=None, caddy_port=None, back
 
     outbounds = []
     route_rules = []
+    primary_final_tag = 'direct'
     if primary_mode != 'direct' or primary_strategy:
-        p_out = _build_node_outbound(spec, 'out-primary')
-        outbounds.append(p_out)
-        route_rules.append({'inbound': ['managed-landing'], 'outbound': 'out-primary'})
+        p_outs, p_tag = _build_node_outbounds(spec, 'out-primary')
+        outbounds.extend(p_outs)
+        route_rules.append({'inbound': ['managed-landing'], 'outbound': p_tag})
+        primary_final_tag = p_tag
     for idx, extra in enumerate(extra_nodes, 1):
         nid = str(extra.get('node_id') or idx)
         e_mode = extra.get('outbound_mode', 'direct')
         e_strategy = extra.get('outbound_strategy')
         if e_mode != 'direct' or e_strategy:
-            out_tag = f'out-node-{nid}'
-            outbounds.append(_build_node_outbound(extra, out_tag))
-            route_rules.append({'inbound': [f'managed-node-{nid}'], 'outbound': out_tag})
+            e_outs, e_tag = _build_node_outbounds(extra, f'out-node-{nid}')
+            outbounds.extend(e_outs)
+            route_rules.append({'inbound': [f'managed-node-{nid}'], 'outbound': e_tag})
     outbounds.append({'type': 'direct', 'tag': 'direct'})
-    final_tag = 'out-primary' if (primary_mode != 'direct' and not extra_nodes) else 'direct'
+    final_tag = primary_final_tag if (primary_mode != 'direct' and not extra_nodes) else 'direct'
     return {
         'log': {'level': 'warn'},
         'inbounds': inbounds,

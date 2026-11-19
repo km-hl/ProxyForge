@@ -368,6 +368,12 @@ class ManagedInventoryMixin:
                     'SELECT agent_id,source_key,secret_spec,adopted_status,custom_name,server_override FROM adopted_node_secrets'
                 )
             }
+            cipher = None
+            if any(info.get('secret_spec') for info in secrets_map.values()):
+                try:
+                    cipher = self._cipher(db)
+                except Exception:
+                    cipher = None
             if agent_id is not None:
                 rows = db.execute('SELECT * FROM adopted_nodes WHERE agent_id=? ORDER BY listen_port,id', (agent_id,)).fetchall()
             else:
@@ -375,6 +381,14 @@ class ManagedInventoryMixin:
             result = []
             for row in rows:
                 s_info = secrets_map.get((row['agent_id'], row['source_key'])) or {}
+                has_xray_xver = False
+                if cipher is not None and s_info.get('secret_spec'):
+                    try:
+                        blob = json.loads(cipher.decrypt(s_info['secret_spec'].encode('utf-8')).decode('utf-8'))
+                        creds = blob.get('credentials') if isinstance(blob, dict) and isinstance(blob.get('credentials'), dict) else blob
+                        has_xray_xver = bool((creds or {}).get('xray_xver'))
+                    except Exception:
+                        has_xray_xver = False
                 result.append({
                     **{k: row[k] for k in (
                         'id', 'agent_id', 'source_key', 'core', 'service_name', 'config_path',
@@ -383,6 +397,7 @@ class ManagedInventoryMixin:
                     )},
                     'adoptable': bool(row['adoptable']),
                     'has_credentials': bool(s_info.get('secret_spec')),
+                    'has_xray_xver': has_xray_xver,
                     'adopted_status': s_info.get('adopted_status', 'discovered'),
                     'custom_name': s_info.get('custom_name', ''),
                     'server_override': s_info.get('server_override', ''),

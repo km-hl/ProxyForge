@@ -172,13 +172,42 @@ def apply_prefer_relay(
     if not by_target:
         return [copy.deepcopy(p) for p in proxies if isinstance(p, dict)], {}
 
+    def _resolve_outermost_relays(
+        target_key: Tuple[str, int],
+        visited: frozenset,
+        depth: int = 0,
+    ) -> List[Dict[str, Any]]:
+        if depth >= 8:
+            return []
+        direct_matches = by_target.get(target_key, [])
+        if not direct_matches:
+            return []
+        resolved: List[Dict[str, Any]] = []
+        seen_terminal: set = set()
+        for relay in direct_matches:
+            relay_key = _normalize_host_port(relay.get("listen_host"), relay.get("listen_port"))
+            if not relay_key[0] or relay_key in visited:
+                continue
+            next_visited = visited | {relay_key}
+            upstream = _resolve_outermost_relays(relay_key, next_visited, depth + 1)
+            terminals = upstream if upstream else [relay]
+            for term in terminals:
+                term_key = (
+                    str(term.get("id") or ""),
+                    _normalize_host_port(term.get("listen_host"), term.get("listen_port")),
+                )
+                if term_key not in seen_terminal:
+                    seen_terminal.add(term_key)
+                    resolved.append(term)
+        return resolved
+
     rewritten: List[Dict[str, Any]] = []
     name_expansions: Dict[str, List[str]] = {}
     for proxy in proxies:
         if not isinstance(proxy, dict):
             continue
         key = _normalize_host_port(proxy.get("server"), proxy.get("port"))
-        matched = by_target.get(key, [])
+        matched = _resolve_outermost_relays(key, frozenset({key}))
         if not matched:
             rewritten.append(copy.deepcopy(proxy))
             continue

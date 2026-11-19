@@ -43,7 +43,7 @@ class DeploymentRequest(Payload):
         else:
             validate_landing_settings(self.settings, protocol=self.protocol)
             if self.secrets is not None:
-                if not isinstance(self.secrets, dict) or set(self.secrets) - {'dns_api_token', 'outbound_password'}:
+                if not isinstance(self.secrets, dict) or set(self.secrets) - {'dns_api_token', 'outbound_password', 'hop_passwords'}:
                     raise ValueError('Unsupported deployment secrets field')
                 token = self.secrets.get('dns_api_token')
                 if token is not None and (not isinstance(token, str) or not 12 <= len(token) <= 256 or any(ord(c) < 32 for c in token)):
@@ -51,6 +51,13 @@ class DeploymentRequest(Payload):
                 out_pw = self.secrets.get('outbound_password')
                 if out_pw is not None and (not isinstance(out_pw, str) or not 1 <= len(out_pw) <= 256 or any(ord(c) < 32 for c in out_pw)):
                     raise ValueError('Invalid outbound password')
+                hop_pws = self.secrets.get('hop_passwords')
+                if hop_pws is not None:
+                    if not isinstance(hop_pws, dict) or len(hop_pws) > 4:
+                        raise ValueError('Invalid hop_passwords')
+                    for k, v in hop_pws.items():
+                        if k not in ('0', '1', '2', '3') or not isinstance(v, str) or len(v) > 256 or any(ord(c) < 32 for c in v):
+                            raise ValueError('Invalid hop_passwords entry')
         return self
 
 
@@ -78,6 +85,10 @@ def attach_deployment_routes(app, admin, store_provider):
     @admin.get('/deployments/landings')
     def chain_landings():
         return {'landings': store_provider().chain_landings()}
+
+    @admin.get('/deployments/ss-landings')
+    def list_ss_landings():
+        return {'landings': store_provider().list_ss_landings()}
 
     @admin.post('/deployments/generate-keys')
     def generate_landing_keys(data: LandingKeyHelperRequest):
