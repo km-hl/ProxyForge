@@ -42,6 +42,7 @@ ALLOWED_ENDPOINTS = frozenset((
     "/api/agent/heartbeat",
     "/api/agent/jobs/claim",
     "/api/agent/adoptions",
+    "/api/agent/adoptions/secrets",
     "/api/agent/traffic",
     "/api/agent/best-exit",
 ))

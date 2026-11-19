@@ -15,7 +15,7 @@ from cryptography.hazmat.primitives.asymmetric import x25519
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, PublicFormat
 from fastapi.testclient import TestClient
 
-from agent import adoption
+from agent import adoption, client as agent_client
 from agent.landing_spec import runtime_config, validate_settings, validate_spec
 from proxyforge.control.deployment_store import new_landing_spec
 from proxyforge.subscription.nodes import apply_prefer_relay
@@ -159,6 +159,8 @@ class Phase6AdoptionFixesTests(unittest.TestCase):
             # Caddy must not emit extractable credentials
             for cep in caddy_eps:
                 self.assertNotIn(cep['source_key'], extracted)
+            # Agent HTTPS client allowlist must permit uploading extracted adoption secrets
+            self.assertIn('/api/agent/adoptions/secrets', agent_client.ALLOWED_ENDPOINTS)
 
 
 class Phase6MultiHopDetourSpecTests(unittest.TestCase):
