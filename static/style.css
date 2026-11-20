@@ -1237,6 +1237,173 @@ img.emoji { height: 1em; width: 1em; margin: 0 .05em 0 .1em; vertical-align: -0.
     border-color: rgba(251, 191, 36, 0.35);
     color: #fde68a;
 }
+.komari-nodes-panel {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid #262d3f;
+    border-radius: 10px;
+    padding: 9px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+}
+.komari-nodes-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.komari-nodes-title {
+    font-size: 0.76rem;
+    font-weight: 700;
+    color: #e2e8f0;
+    letter-spacing: 0.01em;
+}
+.komari-nodes-add-btn {
+    padding: 2px 8px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    border-radius: 6px;
+    border: 1px solid rgba(99, 102, 241, 0.45);
+    background: rgba(79, 70, 229, 0.2);
+    color: #c7d2fe;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.komari-nodes-add-btn:hover {
+    background: #4f46e5;
+    border-color: #818cf8;
+    color: #fff;
+}
+.komari-job-banner {
+    width: 100%;
+    text-align: left;
+    padding: 5px 8px;
+    border-radius: 7px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+    border: 1px solid transparent;
+    transition: filter 0.15s ease;
+}
+.komari-job-banner:hover { filter: brightness(1.12); }
+.komari-job-banner.is-busy {
+    background: rgba(245, 158, 11, 0.14);
+    border-color: rgba(245, 158, 11, 0.35);
+    color: #fcd34d;
+}
+.komari-job-banner.is-err {
+    background: rgba(239, 68, 68, 0.14);
+    border-color: rgba(239, 68, 68, 0.35);
+    color: #fca5a5;
+}
+.komari-nodes-list {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    max-height: 210px;
+    overflow-y: auto;
+}
+.komari-node-row {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 7px;
+    border: 1px solid #242a3a;
+    background: #171c27;
+    color: #e2e8f0;
+    cursor: pointer;
+    font-family: inherit;
+    text-align: left;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+.komari-node-row:hover {
+    background: #1f2636;
+    border-color: #475569;
+}
+.komari-node-row-left {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+.komari-node-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: #64748b;
+}
+.komari-node-dot.is-ok { background: #22c55e; }
+.komari-node-dot.is-busy { background: #f59e0b; }
+.komari-node-dot.is-err { background: #ef4444; }
+.komari-node-dot.is-off { background: #64748b; }
+.komari-node-name {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #f1f5f9;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.komari-node-row-right {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-shrink: 0;
+}
+.komari-node-proto {
+    font-family: var(--font-mono);
+    font-size: 0.69rem;
+    color: #cbd5e1;
+    background: #111520;
+    border: 1px solid #293145;
+    border-radius: 5px;
+    padding: 1px 6px;
+}
+.komari-node-badge {
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 5px;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+.komari-node-badge.is-slate { background: #1e2433; border-color: #2f384e; color: #94a3b8; }
+.komari-node-badge.is-cyan { background: rgba(45, 212, 191, 0.14); border-color: rgba(45, 212, 191, 0.35); color: #5eead4; }
+.komari-node-badge.is-purple { background: rgba(139, 92, 246, 0.16); border-color: rgba(139, 92, 246, 0.38); color: #c4b5fd; }
+.komari-node-badge.is-amber { background: rgba(245, 158, 11, 0.16); border-color: rgba(251, 191, 36, 0.35); color: #fde68a; }
+.komari-node-badge.is-warn { background: rgba(245, 158, 11, 0.18); border-color: rgba(245, 158, 11, 0.45); color: #fcd34d; }
+.komari-node-badge.is-err { background: rgba(239, 68, 68, 0.18); border-color: rgba(239, 68, 68, 0.45); color: #fca5a5; }
+.komari-nodes-empty {
+    font-size: 0.74rem;
+    color: #8b95a7;
+    padding: 4px 2px;
+}
+.komari-scan-summary {
+    width: 100%;
+    text-align: left;
+    padding: 5px 8px;
+    border-radius: 7px;
+    border: 1px dashed #334155;
+    background: rgba(59, 130, 246, 0.08);
+    color: #93c5fd;
+    font-size: 0.72rem;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+.komari-scan-summary:hover {
+    background: rgba(59, 130, 246, 0.16);
+    border-color: #60a5fa;
+    color: #dbeafe;
+}
 .komari-meta-box {
     display: flex;
     flex-direction: column;

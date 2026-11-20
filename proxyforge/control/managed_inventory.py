@@ -700,3 +700,236 @@ class ManagedInventoryMixin:
                     'blocked_by': [], 'updated_at': row['updated_at'],
                 })
             return sorted(items, key=lambda item: (item['agent']['name'], item['agent']['id'], _KIND_ORDER[item['kind']], item['id']))
+
+    def agents_overview(self):
+        """Secret-free per-agent inventory of all nodes (including internal SS2022), forwards, adoptions, and job health."""
+        with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            for row in db.execute("SELECT DISTINCT agent_id FROM jobs WHERE status IN ('pending','assigned','running')").fetchall():
+                self._expire_jobs(db, row['agent_id'])
+
+            agents = {}
+            overview = {}
+            for row in db.execute('SELECT * FROM agents'):
+                view = self._view(row)
+                agents[row['id']] = view
+                overview[row['id']] = {
+                    'nodes': [],
+                    'forwards': [],
+                    'adoptions': {'discovered': 0, 'adopted': 0, 'disabled': 0, 'ignored': 0, 'auxiliary': 0},
+                    'active_job': None,
+                    'last_failed_job': None,
+                }
+
+            jobs_by_id = {
+                row['id']: dict(row)
+                for row in db.execute(
+                    '''SELECT id,agent_id,type,status,error,finished_at FROM jobs
+                       WHERE id IN (SELECT job_id FROM deployments UNION SELECT job_id FROM chains)'''
+                )
+            }
+            for row in db.execute(
+                '''SELECT id,agent_id,type,status FROM jobs
+                   WHERE status IN ('pending','assigned','running') AND type != 'singbox.status'
+                   ORDER BY created_at DESC, rowid DESC'''
+            ).fetchall():
+                bucket = overview.get(row['agent_id'])
+                if bucket and bucket['active_job'] is None:
+                    bucket['active_job'] = {
+                        'id': row['id'],
+                        'type': row['type'],
+                        'status': row['status'],
+                    }
+
+            seen_terminal = set()
+            for row in db.execute(
+                '''SELECT id,agent_id,type,status,error,finished_at FROM jobs
+                   WHERE status IN ('success','failed') AND type != 'singbox.status'
+                   ORDER BY COALESCE(finished_at, created_at) DESC, rowid DESC'''
+            ).fetchall():
+                aid = row['agent_id']
+                if aid in seen_terminal or aid not in overview:
+                    continue
+                seen_terminal.add(aid)
+                if row['status'] == 'failed':
+                    overview[aid]['last_failed_job'] = {
+                        'id': row['id'],
+                        'type': row['type'],
+                        'error': row['error'],
+                        'finished_at': row['finished_at'],
+                    }
+
+            deployments = {
+                row['agent_id']: dict(row)
+                for row in db.execute('SELECT id,agent_id,protocol,settings,revision,job_id,updated_at FROM deployments')
+            }
+            for aid, row in deployments.items():
+                bucket = overview.get(aid)
+                if not bucket:
+                    continue
+                job = jobs_by_id.get(row['job_id']) or {'type': 'landing.apply', 'status': 'pending', 'error': None}
+                if job['type'].endswith('.remove') and job['status'] == 'success':
+                    continue
+                settings = json.loads(row['settings'])
+                proto = row['protocol']
+                out_mode = settings.get('outbound_mode', 'direct')
+                is_internal_ss = bool(proto == 'ss2022' and not settings.get('publish_to_subscription'))
+                bucket['nodes'].append({
+                    'id': row['id'],
+                    'name': settings.get('name') or proto,
+                    'protocol': proto,
+                    'port': int(settings.get('listen_port') or 0),
+                    'kind': 'ss2022_internal' if is_internal_ss else 'direct',
+                    'is_primary': True,
+                    'outbound_mode': out_mode,
+                    'hop_count': len(settings.get('outbound_hops') or []) if out_mode == 'chain' else 0,
+                    'tls_mode': settings.get('tls_mode', ''),
+                    'sni': settings.get('domain') or settings.get('server_name') or '',
+                    'publishable': bool(
+                        self._is_projectable_record(proto, settings)
+                        and job['status'] == 'success'
+                        and job['type'].endswith('.apply')
+                        and agents[aid]['status'] != 'revoked'
+                    ),
+                    'status': job['status'],
+                    'error': job['error'],
+                    'source_key': '',
+                })
+
+            for erow in db.execute(
+                'SELECT id,agent_id,protocol,settings,revision,updated_at FROM agent_nodes ORDER BY updated_at ASC, id ASC'
+            ).fetchall():
+                aid = erow['agent_id']
+                bucket = overview.get(aid)
+                if not bucket:
+                    continue
+                p_dep = deployments.get(aid)
+                p_job = jobs_by_id.get(p_dep['job_id']) if p_dep else None
+                if p_job and p_job['type'].endswith('.remove') and p_job['status'] == 'success':
+                    continue
+                settings = json.loads(erow['settings'])
+                proto = erow['protocol']
+                out_mode = settings.get('outbound_mode', 'direct')
+                j_status = p_job['status'] if p_job else 'success'
+                j_type = p_job['type'] if p_job else 'landing.apply'
+                j_err = p_job['error'] if p_job else None
+                is_internal_ss = bool(proto == 'ss2022' and not settings.get('publish_to_subscription'))
+                bucket['nodes'].append({
+                    'id': erow['id'],
+                    'name': settings.get('name') or proto,
+                    'protocol': proto,
+                    'port': int(settings.get('listen_port') or 0),
+                    'kind': 'ss2022_internal' if is_internal_ss else 'direct',
+                    'is_primary': False,
+                    'outbound_mode': out_mode,
+                    'hop_count': len(settings.get('outbound_hops') or []) if out_mode == 'chain' else 0,
+                    'tls_mode': settings.get('tls_mode', ''),
+                    'sni': settings.get('domain') or settings.get('server_name') or '',
+                    'publishable': bool(
+                        self._is_projectable_record(proto, settings)
+                        and j_status == 'success'
+                        and j_type.endswith('.apply')
+                        and agents[aid]['status'] != 'revoked'
+                    ),
+                    'status': j_status,
+                    'error': j_err,
+                    'source_key': '',
+                })
+
+            for crow in db.execute('SELECT id,agent_id,landing_agent_id,settings,job_id FROM chains').fetchall():
+                aid = crow['agent_id']
+                bucket = overview.get(aid)
+                if not bucket:
+                    continue
+                job = jobs_by_id.get(crow['job_id']) or {'type': 'chain.apply', 'status': 'pending', 'error': None}
+                if job['type'] == 'chain.remove' and job['status'] == 'success':
+                    continue
+                settings = json.loads(crow['settings'])
+                landing = agents.get(crow['landing_agent_id'])
+                bucket['nodes'].append({
+                    'id': crow['id'],
+                    'name': settings.get('name') or 'chain',
+                    'protocol': 'chain',
+                    'port': int(settings.get('listen_port') or 0),
+                    'kind': 'chain',
+                    'is_primary': False,
+                    'outbound_mode': 'chain',
+                    'hop_count': 1,
+                    'landing_agent_name': landing['name'] if landing else '',
+                    'tls_mode': 'reality',
+                    'sni': settings.get('server_name') or '',
+                    'publishable': bool(
+                        job['status'] == 'success'
+                        and job['type'] == 'chain.apply'
+                        and agents[aid]['status'] != 'revoked'
+                        and (landing is None or landing['status'] != 'revoked')
+                    ),
+                    'status': job['status'],
+                    'error': job['error'],
+                    'source_key': '',
+                })
+
+            adopted_secrets = {
+                (r['agent_id'], r['source_key']): dict(r)
+                for r in db.execute(
+                    'SELECT agent_id,source_key,secret_spec,adopted_status,custom_name FROM adopted_node_secrets'
+                )
+            }
+            for arow in db.execute('SELECT * FROM adopted_nodes ORDER BY listen_port ASC, id ASC').fetchall():
+                aid = arow['agent_id']
+                bucket = overview.get(aid)
+                if not bucket:
+                    continue
+                s_info = adopted_secrets.get((aid, arow['source_key'])) or {}
+                st = s_info.get('adopted_status', 'discovered')
+                is_aux = bool(arow['core'] == 'caddy' or arow['protocol'] in _AUXILIARY_PROTOCOLS)
+                counts = bucket['adoptions']
+                if st == 'adopted':
+                    counts['adopted'] += 1
+                    has_creds = bool(s_info.get('secret_spec'))
+                    disp = (s_info.get('custom_name') or '').strip() or arow['tag'] or f"{arow['protocol']}:{arow['listen_port']}"
+                    bucket['nodes'].append({
+                        'id': arow['id'],
+                        'name': disp,
+                        'protocol': arow['protocol'],
+                        'port': int(arow['listen_port'] or 0),
+                        'kind': 'adopted',
+                        'is_primary': False,
+                        'core': arow['core'],
+                        'outbound_mode': 'direct',
+                        'hop_count': 0,
+                        'tls_mode': arow['tls_mode'] or '',
+                        'sni': arow['sni'] or '',
+                        'publishable': bool(has_creds and agents[aid]['status'] != 'revoked'),
+                        'status': 'adopted',
+                        'error': None,
+                        'source_key': arow['source_key'],
+                    })
+                elif st == 'disabled':
+                    counts['disabled'] += 1
+                elif is_aux:
+                    counts['auxiliary'] += 1
+                elif st == 'ignored':
+                    counts['ignored'] += 1
+                else:
+                    counts['discovered'] += 1
+
+            for frow in db.execute(
+                'SELECT id,agent_id,name,listen_port,protocol,mode,enabled FROM forward_rules ORDER BY listen_port ASC, id ASC'
+            ).fetchall():
+                bucket = overview.get(frow['agent_id'])
+                if not bucket:
+                    continue
+                bucket['forwards'].append({
+                    'id': frow['id'],
+                    'name': frow['name'],
+                    'listen_port': int(frow['listen_port'] or 0),
+                    'protocol': frow['protocol'],
+                    'mode': frow['mode'],
+                    'enabled': bool(frow['enabled']),
+                })
+
+            kind_rank = {'direct': 0, 'ss2022_internal': 1, 'chain': 2, 'adopted': 3}
+            for bucket in overview.values():
+                bucket['nodes'].sort(key=lambda n: (n['port'], kind_rank.get(n['kind'], 9), n['name']))
+            return overview

@@ -10,6 +10,7 @@ from agent.runtime_spec import (
     RUNTIME_ACTIONS,
     SINGBOX_ACTIONS,
     revision,
+    valid_output,
     validate_action,
 )
 from agent.deployment_spec import DEPLOYMENT_ACTIONS
@@ -220,7 +221,21 @@ class JobStoreMixin:
             status = result["status"]
             if row['type'] in CONFIG_ACTIONS and status == 'success':
                 output = result.get('output') or {}
-                if output.get('installed') is not True or output.get('running') is not True:
+                allow_idle = False
+                if row['type'] == 'landing.apply' and row['secret_payload']:
+                    try:
+                        spec = self._decrypt_spec(db, row['secret_payload'])
+                        allow_idle = bool(
+                            isinstance(spec, dict)
+                            and spec.get('adopted_only') is True
+                            and not (spec.get('adopted_nodes') or [])
+                        )
+                    except Exception:
+                        allow_idle = False
+                if allow_idle:
+                    if not valid_output(output):
+                        raise JobConflict()
+                elif output.get('installed') is not True or output.get('running') is not True:
                     raise JobConflict()
             if row['type'] == 'adopt_scan' and status == 'success':
                 output = result.get('output')

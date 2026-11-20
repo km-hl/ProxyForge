@@ -27,10 +27,17 @@ from agent.runtime_engine import RuntimeCoordinator
 from agent.runtime_spec import SERVICE_SINGBOX, revision
 from agent.deployment_spec import spec_hash
 from proxyforge.control.deployment_store import new_landing_spec
+from proxyforge.control.job_store import JobConflict
 from proxyforge.subscription.nodes import add_flag_to_proxy_name
 from test_agent_jobs import capable
 from test_api_integration import TEST_ADMIN_TOKEN, load_isolated_application
 from test_deployments import RESULT
+
+NOT_INSTALLED_RESULT = {
+    'status': 'success',
+    'output': {'installed': False, 'running': False, 'version': '', 'status': 'not_installed'},
+    'error': None,
+}
 
 
 class Phase7FlagAndCamouflageTests(unittest.TestCase):
@@ -305,7 +312,9 @@ class Phase7AdoptionLifecycleAndManualDedupTests(unittest.TestCase):
                 self.assertEqual(len(job_dis['deployment']['disabled_adoptions']), 1)
                 self.assertEqual(job_dis['deployment']['disabled_adoptions'][0]['original_service'], 'xray-old.service')
                 store.report_job(atok, job_dis['id'], job_dis['lease_token'])
-                store.report_job(atok, job_dis['id'], job_dis['lease_token'], RESULT)
+                # Real agent returns not_installed when adopted_only has no active adopted nodes
+                rep_dis = store.report_job(atok, job_dis['id'], job_dis['lease_token'], NOT_INSTALLED_RESULT)
+                self.assertEqual(rep_dis['status'], 'success')
 
                 # Re-scan without xray running must keep disabled records so user can restore
                 store.record_adoption_scan(atok, inst, {'scanned_at': 1700000100, 'services': [], 'endpoints': []})
@@ -313,7 +322,7 @@ class Phase7AdoptionLifecycleAndManualDedupTests(unittest.TestCase):
                 self.assertEqual(ad_after_dis[sk_vless]['adopted_status'], 'disabled')
                 self.assertEqual(ad_after_dis[sk_gate]['adopted_status'], 'disabled')
 
-                # Restore original service
+                # Restore original service (also succeeds with not_installed report)
                 r_ret = client.post(
                     f'/api/agents/{aid}/adoptions/{sk_vless}/return',
                     headers=headers,
@@ -323,7 +332,8 @@ class Phase7AdoptionLifecycleAndManualDedupTests(unittest.TestCase):
                 job_ret = store.claim_job(atok, inst)
                 self.assertIn(sk_vless, job_ret['deployment']['returned_adoptions'])
                 store.report_job(atok, job_ret['id'], job_ret['lease_token'])
-                store.report_job(atok, job_ret['id'], job_ret['lease_token'], RESULT)
+                rep_ret = store.report_job(atok, job_ret['id'], job_ret['lease_token'], NOT_INSTALLED_RESULT)
+                self.assertEqual(rep_ret['status'], 'success')
 
                 # 5. Re-upload scan + adopt with replace_manual=True -> removes duplicate manual node & migrates template group!
                 store.record_adoption_scan(atok, inst, scan_payload)
@@ -346,11 +356,159 @@ class Phase7AdoptionLifecycleAndManualDedupTests(unittest.TestCase):
                 updated_tpl = yaml.safe_load(tpl_path.read_text(encoding='utf-8'))
                 self.assertEqual(updated_tpl['proxy-groups'][0]['proxies'], ['DIRECT', new_disp])
 
+                # Complete adopt job so we can test subsequent node creation + overview
+                job_ad = store.claim_job(atok, inst)
+                store.report_job(atok, job_ad['id'], job_ad['lease_token'])
+                # Adopted job HAS active adopted_nodes -> must STILL reject not_installed!
+                with self.assertRaises(JobConflict):
+                    store.report_job(atok, job_ad['id'], job_ad['lease_token'], NOT_INSTALLED_RESULT)
+                store.report_job(atok, job_ad['id'], job_ad['lease_token'], RESULT)
+
                 # Now managed nodes panel shows ONLY the 1 actively adopted node!
                 m_after = client.get('/api/agents/managed/nodes', headers=headers).json()['nodes']
                 self.assertEqual(len(m_after), 1)
                 self.assertEqual(m_after[0]['source_key'], sk_vless)
                 self.assertEqual(m_after[0]['adopted_status'], 'adopted')
+
+    def test_disable_report_unblocks_new_node_and_overview_exposes_per_agent_inventory(self):
+        headers = {'Authorization': 'Bearer ' + TEST_ADMIN_TOKEN}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app_mod = load_isolated_application(root)
+            store = app_mod.control_store()
+            info = {
+                **capable(),
+                'runtime_protocol_version': 1,
+                'landing_protocol_version': 1,
+                'gost_protocol_version': 1,
+                'addresses': ['189.24.84.212'],
+            }
+            reg = store.register(store.issue_registration('DE-9929')['registration_token'], info, '189.24.84.212')
+            aid, atok, inst = reg['agent_id'], reg['agent_token'], info['instance_id']
+
+            sk_old = 'adopt-' + '9' * 16
+            sk_aux = 'adopt-' + '8' * 16
+            store.record_adoption_scan(atok, inst, {
+                'scanned_at': 1700000000,
+                'services': [
+                    {'core': 'xray', 'pid': 200, 'service_name': 'nodepilot-n-1.service', 'config_path': '/etc/np/c.json', 'config_sha256': 'a' * 64},
+                    {'core': 'caddy', 'pid': 201, 'service_name': 'nodepilot-caddy.service', 'config_path': '/etc/np/caddy.json', 'config_sha256': 'b' * 64},
+                ],
+                'endpoints': [
+                    {
+                        'source_key': sk_old, 'core': 'xray', 'service_name': 'nodepilot-n-1.service',
+                        'config_path': '/etc/np/c.json', 'config_sha256': 'a' * 64,
+                        'tag': 'old-vless', 'protocol': 'vless', 'listen': '0.0.0.0', 'listen_port': 443,
+                        'tls_mode': 'reality', 'sni': 'old.example.com', 'network': 'tcp', 'ws_path': '', 'adoptable': True,
+                    },
+                    {
+                        'source_key': sk_aux, 'core': 'caddy', 'service_name': 'nodepilot-caddy.service',
+                        'config_path': '/etc/np/caddy.json', 'config_sha256': 'b' * 64,
+                        'tag': 'caddy-1', 'protocol': 'caddy-site', 'listen': '127.0.0.1', 'listen_port': 8003,
+                        'tls_mode': 'tls', 'sni': 'old.example.com', 'network': 'http', 'ws_path': '', 'adoptable': False,
+                    },
+                ],
+            })
+
+            with TestClient(app_mod.app) as client:
+                # 1. Disable old service and report real not_installed output -> job succeeds immediately
+                r_dis = client.post(
+                    f'/api/agents/{aid}/adoptions/{sk_old}/disable',
+                    headers=headers,
+                    json={'request_id': uuid.uuid4().hex},
+                )
+                self.assertEqual(r_dis.status_code, 200)
+                j_dis = store.claim_job(atok, inst)
+                store.report_job(atok, j_dis['id'], j_dis['lease_token'])
+                store.report_job(atok, j_dis['id'], j_dis['lease_token'], NOT_INSTALLED_RESULT)
+
+                # 2. Immediately create internal SS2022 node (must NOT hit 409 JobConflict!)
+                r_ss = client.post(
+                    f'/api/agents/{aid}/nodes',
+                    headers=headers,
+                    json={
+                        'request_id': uuid.uuid4().hex,
+                        'protocol': 'ss2022',
+                        'settings': {
+                            'name': 'DE Internal SS',
+                            'server': '189.24.84.212',
+                            'listen_port': 8388,
+                            'protocol': 'ss2022',
+                            'tls_mode': 'none',
+                            'method': '2022-blake3-aes-256-gcm',
+                            'publish_to_subscription': False,
+                        },
+                    },
+                )
+                self.assertEqual(r_ss.status_code, 200, r_ss.text)
+                j_ss = store.claim_job(atok, inst)
+                store.report_job(atok, j_ss['id'], j_ss['lease_token'])
+                # Normal landing deployment must STILL reject not_installed!
+                with self.assertRaises(JobConflict):
+                    store.report_job(atok, j_ss['id'], j_ss['lease_token'], NOT_INSTALLED_RESULT)
+                store.report_job(atok, j_ss['id'], j_ss['lease_token'], RESULT)
+
+                # 3. Add a coexisting Reality node on :8443
+                r_real = client.post(
+                    f'/api/agents/{aid}/nodes',
+                    headers=headers,
+                    json={
+                        'request_id': uuid.uuid4().hex,
+                        'protocol': 'reality',
+                        'settings': {
+                            'name': 'DE Reality',
+                            'server': '189.24.84.212',
+                            'listen_port': 8443,
+                            'protocol': 'reality',
+                            'tls_mode': 'reality',
+                            'domain': 'www.amazon.com',
+                        },
+                    },
+                )
+                self.assertEqual(r_real.status_code, 200, r_real.text)
+                j_real = store.claim_job(atok, inst)
+                store.report_job(atok, j_real['id'], j_real['lease_token'])
+                store.report_job(atok, j_real['id'], j_real['lease_token'], RESULT)
+
+                # 4. Add a go-gost forward rule on :10001
+                r_fw = client.post(
+                    f'/api/agents/{aid}/forwards',
+                    headers=headers,
+                    json={
+                        'request_id': uuid.uuid4().hex,
+                        'name': 'Relay-HK',
+                        'listen_port': 10001,
+                        'protocol': 'tcp+udp',
+                        'mode': 'direct',
+                        'targets': [{'name': 'hk', 'addr': '1.2.3.4:8388'}],
+                    },
+                )
+                self.assertEqual(r_fw.status_code, 200, r_fw.text)
+
+                # 5. Fetch per-agent overview and verify ALL nodes (including internal SS2022), forwards, adoptions & zero secrets!
+                ov_resp = client.get('/api/agents/deployments/overview', headers=headers)
+                self.assertEqual(ov_resp.status_code, 200, ov_resp.text)
+                ov_body = ov_resp.json()
+                ov = ov_body['agents'][aid]
+                self.assertEqual(len(ov['nodes']), 2)
+                by_port = {n['port']: n for n in ov['nodes']}
+                self.assertEqual(by_port[8388]['kind'], 'ss2022_internal')
+                self.assertEqual(by_port[8388]['name'], 'DE Internal SS')
+                self.assertFalse(by_port[8388]['publishable'])
+                self.assertEqual(by_port[8443]['kind'], 'direct')
+                self.assertEqual(by_port[8443]['protocol'], 'reality')
+                self.assertTrue(by_port[8443]['publishable'])
+                self.assertEqual(len(ov['forwards']), 1)
+                self.assertEqual(ov['forwards'][0]['listen_port'], 10001)
+                self.assertEqual(ov['adoptions']['disabled'], 1)
+                self.assertEqual(ov['adoptions']['auxiliary'], 1)
+                self.assertEqual(ov['adoptions']['discovered'], 0)
+                self.assertIsNotNone(ov['active_job'])
+                self.assertEqual(ov['active_job']['type'], 'gost.apply')
+                serialized = json.dumps(ov_body)
+                self.assertNotIn('private_key', serialized)
+                self.assertNotIn('password', serialized)
+                self.assertNotIn('secret_spec', serialized)
 
 
 if __name__ == '__main__':

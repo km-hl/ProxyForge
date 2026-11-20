@@ -48,4 +48,19 @@ test('Phase 7 static assets include adoption lifecycle actions, auxiliary drawer
     assert.ok(managedSrc.includes("node.adopted_status === 'adopted'"), 'managed-nodes panel must hide un-adopted scan clutter');
     assert.ok(indexHtml.includes('agents.js?v=phase7-'), 'agents.js cache-bust version must be bumped to phase7');
     assert.ok(indexHtml.includes('app.js?v=phase7-'), 'app.js cache-bust version must be bumped to phase7');
+    assert.ok(indexHtml.includes('style.css?v=phase7-'), 'style.css cache-bust version must be bumped to phase7');
+});
+
+test('Server cards display prominent per-machine node inventory panel and deployment form pre-validates inputs', () => {
+    const agentsSrc = fs.readFileSync(path.join(__dirname, '..', 'static', 'agents.js'), 'utf8');
+    const styleSrc = fs.readFileSync(path.join(__dirname, '..', 'static', 'style.css'), 'utf8');
+
+    assert.ok(agentsSrc.includes("'/agents/deployments/overview'"), 'refreshAgents must fetch per-agent overview');
+    assert.ok(agentsSrc.includes('komari-nodes-panel'), 'server cards must render dedicated per-machine nodes panel');
+    assert.ok(agentsSrc.includes('komari-node-row'), 'server cards must render clickable per-node rows');
+    assert.ok(agentsSrc.includes('komari-scan-summary'), 'server cards must render host scan summary link');
+    assert.ok(agentsSrc.includes('请填写节点名称'), 'deployment form must pre-validate missing node name');
+    assert.ok(agentsSrc.includes('停用并释放端口'), 'auxiliary drawer must allow disabling host services');
+    assert.ok(styleSrc.includes('.komari-nodes-panel'), 'style.css must style .komari-nodes-panel');
+    assert.ok(styleSrc.includes('.komari-node-row'), 'style.css must style .komari-node-row');
 });

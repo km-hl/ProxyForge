@@ -90,6 +90,10 @@ def attach_deployment_routes(app, admin, store_provider):
     def list_ss_landings():
         return {'landings': store_provider().list_ss_landings()}
 
+    @admin.get('/deployments/overview')
+    def agents_overview():
+        return {'agents': store_provider().agents_overview()}
+
     @admin.post('/deployments/generate-keys')
     def generate_landing_keys(data: LandingKeyHelperRequest):
         return store_provider().generate_landing_keys(protocol=data.protocol)

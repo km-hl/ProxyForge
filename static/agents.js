@@ -741,7 +741,7 @@ const LANDING_PROTO_META = {
     },
 };
 
-async function showAgentDeployment(agent) {
+async function showAgentDeployment(agent, initialNodeId = null) {
     const nodesUrl = '/agents/' + agent.id + '/nodes';
     const [nodesData, ssData] = await Promise.all([
         fetchAgentJson(nodesUrl),
@@ -752,7 +752,11 @@ async function showAgentDeployment(agent) {
     let agentNodes = nodesPayload.nodes || [];
     let pubIpv4 = nodesPayload.public_ipv4 || agent.public_ipv4 || agent.observed_ip || '';
     let pubIpv6 = nodesPayload.public_ipv6 || agent.public_ipv6 || '';
-    let currentNodeId = agentNodes.length ? agentNodes[0].id : null;
+    let currentNodeId = initialNodeId === '__new__'
+        ? null
+        : (initialNodeId && agentNodes.some(n => n.id === initialNodeId)
+            ? initialNodeId
+            : (agentNodes.length ? agentNodes[0].id : null));
     let generatedKeyRef = null;
 
     openModal('节点 / 落地部署 · ' + agent.name,
@@ -994,8 +998,14 @@ async function showAgentDeployment(agent) {
                     outDetailsEl.open = true;
                 }
             } else if (!document.getElementById('deployment-server').value) {
+                const usedPorts = new Set(agentNodes.map(x => Number(x.settings?.listen_port)));
+                const defaultP = !usedPorts.has(443) ? 443 : (!usedPorts.has(8443) ? 8443 : (!usedPorts.has(2053) ? 2053 : 8388));
                 document.getElementById('deployment-server').value = pubIpv4 || pubIpv6 || '';
+                document.getElementById('deployment-port').value = String(defaultP);
                 syncTlsOptions(protocol.value);
+                if (protocol.value === 'reality' && tlsModeEl.value === 'reality' && !document.getElementById('deployment-domain').value) {
+                    document.getElementById('deployment-domain').value = 'www.amazon.com';
+                }
             }
         }
         const proto = protocol.value;
@@ -1105,19 +1115,27 @@ async function showAgentDeployment(agent) {
         }
     };
 
-    function buildPayloadSettings() {
+    function buildPayloadSettings(isCreating = false) {
         const proto = protocol.value;
         let nodeName = document.getElementById('deployment-name').value.trim();
+        if (!nodeName) throw new Error('请填写节点名称');
+        if (nodeName.length > 64) throw new Error('节点名称不能超过 64 个字符');
         const regionVal = document.getElementById('deployment-region')?.value?.trim() || '';
         if (regionVal && typeof ProxyForgeRegions !== 'undefined') {
             nodeName = ProxyForgeRegions.applyRegionPrefix(nodeName, regionVal);
             document.getElementById('deployment-name').value = nodeName;
         }
+        const serverVal = document.getElementById('deployment-server').value.trim();
+        if (!serverVal) throw new Error('请填写公网 IP 或域名（客户端连接地址）');
+        const portVal = Number(document.getElementById('deployment-port').value);
+        if (!Number.isInteger(portVal) || portVal < 1 || portVal > 65535) {
+            throw new Error('监听端口必须为 1–65535 之间的整数');
+        }
         const tlsMode = proto === 'ss2022' ? 'none' : tlsModeEl.value;
         const settings = {
             name: nodeName,
-            server: document.getElementById('deployment-server').value.trim(),
-            listen_port: Number(document.getElementById('deployment-port').value),
+            server: serverVal,
+            listen_port: portVal,
             protocol: proto,
             tls_mode: tlsMode,
             outbound_strategy: document.getElementById('deployment-outbound-strategy').value || 'prefer_ipv4',
@@ -1125,6 +1143,12 @@ async function showAgentDeployment(agent) {
         };
         if (regionVal) settings.region = regionVal;
         const domain = document.getElementById('deployment-domain').value.trim();
+        const needsDomain = proto !== 'ss2022' && (['reality', 'trojan', 'anytls', 'hysteria2'].includes(proto) || tlsMode === 'acme_http' || tlsMode === 'acme_dns');
+        if (needsDomain && !domain) {
+            throw new Error(proto === 'reality' && tlsMode === 'reality'
+                ? '请填写偷取目标域名 SNI（如 www.amazon.com）'
+                : '当前协议/证书模式必须填写证书域名 / SNI');
+        }
         const cam = document.getElementById('deployment-camouflage').value.trim();
         const camDir = document.getElementById('deployment-camouflage-dir')?.value?.trim() || '';
         const usesCaddyCamo = (proto === 'reality' && (tlsMode === 'acme_http' || tlsMode === 'acme_dns')) || proto === 'trojan';
@@ -1177,15 +1201,27 @@ async function showAgentDeployment(agent) {
         if (tlsMode === 'acme_dns') {
             settings.dns_provider = document.getElementById('deployment-dns-provider').value;
             const zone = document.getElementById('deployment-dns-zone').value.trim();
+            if (settings.dns_provider === 'cloudflare' && !/^[0-9a-fA-F]{32}$/.test(zone)) {
+                throw new Error('Cloudflare DNS-01 必须填写 32 位十六进制 Zone ID');
+            }
             if (zone) settings.dns_zone_id = zone;
             const prop = Number(document.getElementById('deployment-dns-prop').value);
             if (prop >= 10) settings.dns_propagation_seconds = Math.round(prop);
             const tok = document.getElementById('deployment-dns-token').value.trim();
+            if (isCreating && tok.length < 12) {
+                throw new Error('首次配置 DNS-01 需填写至少 12 位 DNS API Token');
+            }
             if (tok) secrets.dns_api_token = tok;
         }
         if (settings.outbound_mode === 'socks5' || settings.outbound_mode === 'ss') {
-            settings.outbound_server = document.getElementById('deployment-out-server').value.trim();
-            settings.outbound_port = Number(document.getElementById('deployment-out-port').value);
+            const outSrv = document.getElementById('deployment-out-server').value.trim();
+            const outPort = Number(document.getElementById('deployment-out-port').value);
+            if (!outSrv) throw new Error('请填写外部落地服务器地址');
+            if (!Number.isInteger(outPort) || outPort < 1 || outPort > 65535) {
+                throw new Error('外部落地端口必须为 1–65535 之间的整数');
+            }
+            settings.outbound_server = outSrv;
+            settings.outbound_port = outPort;
             if (settings.outbound_mode === 'socks5') {
                 const u = document.getElementById('deployment-out-user').value.trim();
                 if (u) settings.outbound_username = u;
@@ -1193,9 +1229,15 @@ async function showAgentDeployment(agent) {
                 settings.outbound_method = document.getElementById('deployment-out-method').value;
             }
             const outPw = document.getElementById('deployment-out-pass').value.trim();
+            if (isCreating && settings.outbound_mode === 'ss' && !outPw) {
+                throw new Error('外部 Shadowsocks 落地出站必须填写密码');
+            }
             if (outPw) secrets.outbound_password = outPw;
         } else if (settings.outbound_mode === 'chain') {
             const collected = hopEditor.collect();
+            if (!collected.outbound_hops || !collected.outbound_hops.length) {
+                throw new Error('链式多跳出站至少需要添加 1 跳落地节点');
+            }
             settings.outbound_hops = collected.outbound_hops;
             if (Object.keys(collected.hop_passwords).length) {
                 secrets.hop_passwords = collected.hop_passwords;
@@ -1207,6 +1249,15 @@ async function showAgentDeployment(agent) {
     async function submit(removing) {
         const current = getSelectedNode();
         if (removing && !current) return;
+        let built = null;
+        if (!removing) {
+            try {
+                built = buildPayloadSettings(!current);
+            } catch (err) {
+                status.textContent = '⚠️ 配置校验未通过：' + err.message;
+                return;
+            }
+        }
         if (!confirm(removing ? `确认删除节点 ${current.settings?.name || ''} 并重载代理服务进程？` : '确认保存配置并重载/重启代理服务进程（不会重启服务器）？')) return;
         apply.disabled = true; remove.disabled = true;
         try {
@@ -1217,7 +1268,6 @@ async function showAgentDeployment(agent) {
                 });
                 currentNodeId = null;
             } else {
-                const built = buildPayloadSettings();
                 const body = {
                     request_id: randomRequestId(),
                     protocol: protocol.value,
@@ -1241,9 +1291,15 @@ async function showAgentDeployment(agent) {
             }
             await refresh();
             if (typeof ProxyForgeManagedNodes !== 'undefined') ProxyForgeManagedNodes.refresh();
+            refreshAgents().catch(() => {});
         } catch (error) {
             render(false);
-            status.textContent = error.message + '；请检查端口冲突或字段格式后重试。';
+            const msg = String(error.message || '');
+            if (/conflict|409/i.test(msg)) {
+                status.textContent = `保存失败 (${msg})：该 Agent 当前可能有未完成的任务正在执行，或端口与已有托管节点/单跳链路冲突。请打开「任务」确认状态，或更换端口重试。`;
+            } else {
+                status.textContent = msg + '；请检查端口冲突或字段格式后重试。';
+            }
         }
     }
     apply.onclick = () => submit(false);
@@ -1514,6 +1570,7 @@ async function showAgentAdoptions(agent) {
                             : '已下发恢复原服务任务，原服务将自动重新启动。';
                         await loadAdoptions();
                         if (typeof ProxyForgeManagedNodes !== 'undefined') ProxyForgeManagedNodes.refresh();
+                        refreshAgents().catch(() => {});
                     } catch (e) {
                         statusEl.textContent = '操作失败：' + e.message;
                         retBtn.disabled = false;
@@ -1555,6 +1612,7 @@ async function showAgentAdoptions(agent) {
                                 : '已下发完全接管任务，该存量节点已加入受管清单与客户端订阅！';
                             await loadAdoptions();
                             if (typeof ProxyForgeManagedNodes !== 'undefined') ProxyForgeManagedNodes.refresh();
+                            refreshAgents().catch(() => {});
                             if (rep && rep.replaced && typeof loadData === 'function') loadData();
                         } catch (e) {
                             statusEl.textContent = '接管失败：' + e.message;
@@ -1577,6 +1635,7 @@ async function showAgentAdoptions(agent) {
                         });
                         statusEl.textContent = isIgnored ? '已恢复显示该扫描记录。' : '已忽略该记录（宿主机原服务未做任何改动）。';
                         await loadAdoptions();
+                        refreshAgents().catch(() => {});
                     } catch (e) {
                         statusEl.textContent = '更新忽略状态失败：' + e.message;
                         ignBtn.disabled = false;
@@ -1601,6 +1660,7 @@ async function showAgentAdoptions(agent) {
                             });
                             statusEl.textContent = `已下发停用任务，原服务 ${item.service_name} 备份停用后将释放对应端口！`;
                             await loadAdoptions();
+                            refreshAgents().catch(() => {});
                         } catch (e) {
                             statusEl.textContent = '停用原服务失败：' + e.message;
                             disBtn.disabled = false;
@@ -1621,7 +1681,7 @@ async function showAgentAdoptions(agent) {
             const auxSummary = document.createElement('summary');
             auxSummary.style.cursor = 'pointer';
             auxSummary.style.fontWeight = '600';
-            auxSummary.textContent = `🛠️ 辅助 / 分流组件 (${auxItems.length}) — 只读观测，无需单独接管`;
+            auxSummary.textContent = `🛠️ 辅助 / 分流组件 (${auxItems.length}) — 无需单独接管（可按需停用释放端口）`;
             auxDetails.append(auxSummary);
 
             const auxWrap = document.createElement('div');
@@ -1636,8 +1696,11 @@ async function showAgentAdoptions(agent) {
                 title.textContent = `[${item.core}] ${item.tag || item.service_name} (${item.protocol} ${item.listen}:${item.listen_port})`;
                 const badge = document.createElement('span');
                 const isCaddy = item.core === 'caddy' || item.protocol === 'caddy-site';
-                badge.className = 'status-pill is-online';
-                badge.textContent = isCaddy ? '关联伪装站（运行中，无需单独接管）' : '分流入口组件（只读观测）';
+                const isAuxDisabled = item.adopted_status === 'disabled';
+                badge.className = `status-pill ${isAuxDisabled ? 'is-offline' : 'is-online'}`;
+                badge.textContent = isAuxDisabled
+                    ? '已停用原服务 · 端口已释放'
+                    : (isCaddy ? '关联伪装站（运行中，无需单独接管）' : '分流入口组件（只读观测）');
                 head.append(title, badge);
 
                 const meta = document.createElement('div');
@@ -1651,9 +1714,43 @@ async function showAgentAdoptions(agent) {
                 note.className = 'hint';
                 note.style.marginTop = '4px';
                 note.textContent = isCaddy
-                    ? 'ℹ️ 宿主机回环 TLS / 伪装站辅助服务（如 NodePilot Caddy）。接管上方代理节点时将保持本服务原样运行。'
+                    ? 'ℹ️ 宿主机回环 TLS / 伪装站辅助服务（如 NodePilot Caddy）。如旧节点已停用且需释放 80/回环端口，可点击下方按钮停用（支持一键恢复）。'
                     : 'ℹ️ 宿主机前置端口分流 / SNI 门户组件（如 dokodemo-door），不直接作为客户端代理节点接管。';
                 card.append(head, meta, cfg, note);
+                if (item.service_name) {
+                    const auxActions = document.createElement('div');
+                    auxActions.className = 'item-actions';
+                    auxActions.style.marginTop = '8px';
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = isAuxDisabled ? 'btn btn-primary btn-sm' : 'btn btn-danger btn-sm';
+                    btn.textContent = isAuxDisabled ? '↩️ 恢复原服务' : '🗑️ 停用并释放端口';
+                    btn.onclick = async () => {
+                        const impact = _describeServiceImpact(allItems, item.service_name);
+                        const q = isAuxDisabled
+                            ? `确认从备份恢复并重启宿主机服务「${item.service_name}」？`
+                            : `确认备份并停用宿主机辅助服务「${item.service_name}」？\n\n受影响监听：${impact || (':' + item.listen_port)}\n\n（后续可随时点「恢复原服务」回滚。）`;
+                        if (!confirm(q)) return;
+                        btn.disabled = true;
+                        try {
+                            const endpoint = isAuxDisabled ? 'return' : 'disable';
+                            await fetchAgentJson(`/agents/${agent.id}/adoptions/${encodeURIComponent(item.source_key)}/${endpoint}`, {
+                                method: 'POST',
+                                body: JSON.stringify({ request_id: randomRequestId() }),
+                            });
+                            statusEl.textContent = isAuxDisabled
+                                ? `已下发恢复任务，服务 ${item.service_name} 将重新启动。`
+                                : `已下发停用任务，辅助服务 ${item.service_name} 停用后将释放对应端口。`;
+                            await loadAdoptions();
+                            refreshAgents().catch(() => {});
+                        } catch (e) {
+                            statusEl.textContent = '操作失败：' + e.message;
+                            btn.disabled = false;
+                        }
+                    };
+                    auxActions.append(btn);
+                    card.append(auxActions);
+                }
                 auxWrap.append(card);
             }
             auxDetails.append(auxWrap);
@@ -2241,25 +2338,49 @@ function _buildTrafficDots(active, colorClass) {
     return row;
 }
 
+function _formatCardProto(proto) {
+    const p = String(proto || '').toLowerCase();
+    if (p === 'vless-reality' || p === 'reality') return 'REALITY';
+    if (p === 'hysteria2') return 'HY2';
+    if (p === 'ss2022') return 'SS2022';
+    if (p === 'shadowsocks') return 'SS';
+    if (p === 'anytls') return 'ANYTLS';
+    if (p === 'trojan') return 'TROJAN';
+    if (p === 'vless') return 'VLESS';
+    if (p === 'chain') return 'CHAIN';
+    return (proto || 'NODE').toUpperCase();
+}
+
+function _nodeRoleBadge(n) {
+    if (n.status === 'failed' || n.status === 'cancelled') {
+        return { text: '部署失败', cls: 'is-err' };
+    }
+    if (['pending', 'assigned', 'running'].includes(n.status)) {
+        return { text: '部署中', cls: 'is-warn' };
+    }
+    if (n.kind === 'adopted') return { text: '已接管', cls: 'is-amber' };
+    if (n.kind === 'ss2022_internal') return { text: '内部落地', cls: 'is-cyan' };
+    if (n.kind === 'chain') {
+        return { text: n.landing_agent_name ? `链路→${n.landing_agent_name}` : '单跳链路', cls: 'is-purple' };
+    }
+    if (n.outbound_mode === 'chain') return { text: `多跳×${n.hop_count || 1}`, cls: 'is-purple' };
+    if (n.outbound_mode === 'socks5' || n.outbound_mode === 'ss') return { text: '外部出站', cls: 'is-cyan' };
+    return { text: '直连', cls: 'is-slate' };
+}
+
 async function refreshAgents() {
     const target = document.getElementById('agent-list');
     try {
-        const [agentsRes, trafficRes, nodesRes] = await Promise.all([
+        const [agentsRes, trafficRes, overviewRes] = await Promise.all([
             fetchAuth('/agents'),
             fetchAuth('/agents/traffic/summary').catch(() => null),
-            fetchAuth('/agents/managed/nodes').catch(() => null),
+            fetchAuth('/agents/deployments/overview').catch(() => null),
         ]);
         const { agents } = await agentsRes.json();
         const trafficData = trafficRes && trafficRes.ok !== false ? await trafficRes.json().catch(() => ({})) : {};
-        const nodesData = nodesRes && nodesRes.ok !== false ? await nodesRes.json().catch(() => ({})) : {};
+        const overviewData = overviewRes && overviewRes.ok !== false ? await overviewRes.json().catch(() => ({})) : {};
         const trafficByAgent = new Map((trafficData.agents || []).map(item => [item.agent_id, item]));
-        const nodesByAgent = new Map();
-        for (const node of (nodesData.nodes || [])) {
-            const aid = node?.agent?.id;
-            if (!aid || node.removed) continue;
-            if (!nodesByAgent.has(aid)) nodesByAgent.set(aid, []);
-            nodesByAgent.get(aid).push(node);
-        }
+        const overviewByAgent = overviewData.agents || {};
 
         target.replaceChildren();
         if (!agents.length) { target.textContent = '尚无 Agent。点击「添加服务器」获取安装命令，在目标机器执行。'; return; }
@@ -2270,7 +2391,16 @@ async function refreshAgents() {
         for (const agent of agents) {
             const m = agent.metadata || {};
             const tr = trafficByAgent.get(agent.id) || { rx_bytes: 0, tx_bytes: 0, total_bytes: 0 };
-            const agentNodes = nodesByAgent.get(agent.id) || [];
+            const ov = overviewByAgent[agent.id] || {
+                nodes: [],
+                forwards: [],
+                adoptions: { discovered: 0, adopted: 0, disabled: 0, ignored: 0, auxiliary: 0 },
+                active_job: null,
+                last_failed_job: null,
+            };
+            const agentNodes = ov.nodes || [];
+            const agentForwards = ov.forwards || [];
+            const adoptCounts = ov.adoptions || {};
 
             const card = document.createElement('article');
             card.className = 'komari-agent-card';
@@ -2357,7 +2487,7 @@ async function refreshAgents() {
             trafficBox.append(sumRow);
             card.append(trafficBox);
 
-            // Managed cores & active nodes badges
+            // Managed cores strip
             const coreStrip = document.createElement('div');
             coreStrip.className = 'komari-core-strip';
             const sbPill = document.createElement('span');
@@ -2376,21 +2506,139 @@ async function refreshAgents() {
                 gPill.textContent = m.gost.running ? 'go-gost ✓' : 'go-gost ■';
                 coreStrip.append(gPill);
             }
-            for (const n of agentNodes.slice(0, 4)) {
-                const nPill = document.createElement('span');
-                nPill.className = `komari-node-pill ${n.kind === 'adopted' ? 'is-adopted' : ''}`;
-                const pLabel = n.protocol ? n.protocol.toUpperCase() : (n.kind === 'chain' ? 'CHAIN' : 'NODE');
-                nPill.textContent = `${pLabel} :${n.port}`;
-                nPill.title = n.name;
-                coreStrip.append(nPill);
-            }
-            if (agentNodes.length > 4) {
-                const morePill = document.createElement('span');
-                morePill.className = 'komari-node-pill';
-                morePill.textContent = `+${agentNodes.length - 4}`;
-                coreStrip.append(morePill);
-            }
             card.append(coreStrip);
+
+            // Prominent per-machine nodes & forwards inventory panel
+            const nodesPanel = document.createElement('div');
+            nodesPanel.className = 'komari-nodes-panel';
+
+            const panelHead = document.createElement('div');
+            panelHead.className = 'komari-nodes-head';
+            const panelTitle = document.createElement('span');
+            panelTitle.className = 'komari-nodes-title';
+            panelTitle.textContent = agentForwards.length
+                ? `📡 本机节点 (${agentNodes.length}) · 转发 (${agentForwards.length})`
+                : `📡 本机节点 (${agentNodes.length})`;
+            const quickAdd = document.createElement('button');
+            quickAdd.type = 'button';
+            quickAdd.className = 'komari-nodes-add-btn';
+            quickAdd.textContent = '+ 新建';
+            quickAdd.onclick = () => agentAction(agent, 'deployment', { nodeId: '__new__' }).catch(error => showToast(error.message, 'error'));
+            panelHead.append(panelTitle, quickAdd);
+            nodesPanel.append(panelHead);
+
+            if (ov.active_job) {
+                const jobBar = document.createElement('button');
+                jobBar.type = 'button';
+                jobBar.className = 'komari-job-banner is-busy';
+                jobBar.textContent = `⏳ 正在执行任务: ${ov.active_job.type} (${ov.active_job.status}) · 点击查看`;
+                jobBar.onclick = () => agentAction(agent, 'jobs').catch(error => showToast(error.message, 'error'));
+                nodesPanel.append(jobBar);
+            } else if (ov.last_failed_job) {
+                const jobBar = document.createElement('button');
+                jobBar.type = 'button';
+                jobBar.className = 'komari-job-banner is-err';
+                jobBar.textContent = `⚠️ 最近任务失败: ${ov.last_failed_job.type} (${ov.last_failed_job.error || 'failed'}) · 点击排查`;
+                jobBar.onclick = () => agentAction(agent, 'jobs').catch(error => showToast(error.message, 'error'));
+                nodesPanel.append(jobBar);
+            }
+
+            if (agentNodes.length || agentForwards.length) {
+                const list = document.createElement('div');
+                list.className = 'komari-nodes-list';
+                for (const n of agentNodes) {
+                    const row = document.createElement('button');
+                    row.type = 'button';
+                    row.className = 'komari-node-row';
+                    const roleInfo = _nodeRoleBadge(n);
+                    row.title = `${n.name} · ${_formatCardProto(n.protocol)} :${n.port}` +
+                        (n.sni ? ` · SNI ${n.sni}` : '') +
+                        (n.error ? ` · 错误: ${n.error}` : '');
+
+                    const left = document.createElement('span');
+                    left.className = 'komari-node-row-left';
+                    const nDot = document.createElement('span');
+                    const dotState = (n.status === 'failed' || n.status === 'cancelled')
+                        ? 'is-err'
+                        : (['pending', 'assigned', 'running'].includes(n.status) ? 'is-busy' : 'is-ok');
+                    nDot.className = `komari-node-dot ${dotState}`;
+                    const nName = document.createElement('span');
+                    nName.className = 'komari-node-name';
+                    nName.textContent = n.name;
+                    left.append(nDot, nName);
+
+                    const right = document.createElement('span');
+                    right.className = 'komari-node-row-right';
+                    const protoEl = document.createElement('span');
+                    protoEl.className = 'komari-node-proto';
+                    protoEl.textContent = `${_formatCardProto(n.protocol)} :${n.port}`;
+                    const badgeEl = document.createElement('span');
+                    badgeEl.className = `komari-node-badge ${roleInfo.cls}`;
+                    badgeEl.textContent = roleInfo.text;
+                    right.append(protoEl, badgeEl);
+
+                    row.append(left, right);
+                    row.onclick = () => {
+                        if (n.kind === 'adopted') {
+                            agentAction(agent, 'adoptions').catch(error => showToast(error.message, 'error'));
+                        } else if (n.kind === 'chain') {
+                            agentAction(agent, 'chain').catch(error => showToast(error.message, 'error'));
+                        } else {
+                            agentAction(agent, 'deployment', { nodeId: n.id }).catch(error => showToast(error.message, 'error'));
+                        }
+                    };
+                    list.append(row);
+                }
+                for (const fw of agentForwards) {
+                    const row = document.createElement('button');
+                    row.type = 'button';
+                    row.className = 'komari-node-row';
+                    row.title = `go-gost 转发 ${fw.name} (${fw.protocol} :${fw.listen_port} · ${fw.mode})`;
+                    const left = document.createElement('span');
+                    left.className = 'komari-node-row-left';
+                    const nDot = document.createElement('span');
+                    nDot.className = `komari-node-dot ${fw.enabled ? 'is-ok' : 'is-off'}`;
+                    const nName = document.createElement('span');
+                    nName.className = 'komari-node-name';
+                    nName.textContent = `🔀 ${fw.name}`;
+                    left.append(nDot, nName);
+
+                    const right = document.createElement('span');
+                    right.className = 'komari-node-row-right';
+                    const protoEl = document.createElement('span');
+                    protoEl.className = 'komari-node-proto';
+                    protoEl.textContent = `${String(fw.protocol || 'tcp').toUpperCase()} :${fw.listen_port}`;
+                    const badgeEl = document.createElement('span');
+                    badgeEl.className = `komari-node-badge ${fw.enabled ? 'is-cyan' : 'is-slate'}`;
+                    badgeEl.textContent = fw.enabled ? `转发·${fw.mode}` : '已停用';
+                    right.append(protoEl, badgeEl);
+
+                    row.append(left, right);
+                    row.onclick = () => agentAction(agent, 'forwards').catch(error => showToast(error.message, 'error'));
+                    list.append(row);
+                }
+                nodesPanel.append(list);
+            } else {
+                const empty = document.createElement('div');
+                empty.className = 'komari-nodes-empty';
+                empty.textContent = '暂无托管节点，点击右上角「+ 新建」或下方「接管」添加';
+                nodesPanel.append(empty);
+            }
+
+            const scanParts = [];
+            if (adoptCounts.discovered > 0) scanParts.push(`${adoptCounts.discovered} 待接管`);
+            if (adoptCounts.disabled > 0) scanParts.push(`${adoptCounts.disabled} 已停用原服务`);
+            if (adoptCounts.auxiliary > 0) scanParts.push(`${adoptCounts.auxiliary} 辅助组件`);
+            if (adoptCounts.ignored > 0) scanParts.push(`${adoptCounts.ignored} 已忽略`);
+            if (scanParts.length) {
+                const scanFooter = document.createElement('button');
+                scanFooter.type = 'button';
+                scanFooter.className = 'komari-scan-summary';
+                scanFooter.textContent = `🔍 宿主机存量: ${scanParts.join(' · ')} →`;
+                scanFooter.onclick = () => agentAction(agent, 'adoptions').catch(error => showToast(error.message, 'error'));
+                nodesPanel.append(scanFooter);
+            }
+            card.append(nodesPanel);
 
             // Expiry + Uptime + Quota segmented bar (matching Komari screenshot bottom)
             const metaBox = document.createElement('div');
@@ -2487,7 +2735,7 @@ async function refreshAgents() {
     } catch (error) { target.textContent = '读取 Agent 失败：' + error.message; }
 }
 
-async function agentAction(agent, action) {
+async function agentAction(agent, action, opts = {}) {
     if (action === 'chain') {
         await showAgentChain(await (await fetchAuth('/agents/' + agent.id)).json());
         return;
@@ -2501,7 +2749,7 @@ async function agentAction(agent, action) {
         return;
     }
     if (action === 'deployment') {
-        await showAgentDeployment(await (await fetchAuth('/agents/' + agent.id)).json());
+        await showAgentDeployment(await (await fetchAuth('/agents/' + agent.id)).json(), opts?.nodeId ?? null);
         return;
     }
     if (action === 'jobs') {
