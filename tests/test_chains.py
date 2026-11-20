@@ -114,6 +114,8 @@ class ChainStoreTest(unittest.TestCase):
         self.complete(self.entry)
         self.store.revoke(self.landing['agent_id'], remove=True)
         self.assertIsNone(self.store.get_chain(self.entry['agent_id']))
+        self.assertEqual(len(self.store.managed_node_names()), 1)
+        self.assertNotIn(SETTINGS['name'], self.store.managed_node_names())
         self.assertNotIn(created['id'], json.dumps(self.store.managed_node_names()))
 
     def test_idempotency_cas_port_conflict_and_immutable_binding(self):

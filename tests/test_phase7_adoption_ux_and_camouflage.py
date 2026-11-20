@@ -402,9 +402,11 @@ class Phase7AdoptionLifecycleAndManualDedupTests(unittest.TestCase):
                     store.report_job(atok, job_ad['id'], job_ad['lease_token'], NOT_INSTALLED_RESULT)
                 store.report_job(atok, job_ad['id'], job_ad['lease_token'], RESULT)
 
-                # Now managed nodes panel shows ONLY the 1 actively adopted node!
+                # Now managed nodes panel shows ONLY the 1 actively adopted node with clean name!
                 m_after = client.get('/api/agents/managed/nodes', headers=headers).json()['nodes']
                 self.assertEqual(len(m_after), 1)
+                self.assertEqual(m_after[0]['name'], manual_name)
+                self.assertNotIn('[pf:', m_after[0]['name'])
                 self.assertEqual(m_after[0]['source_key'], sk_vless)
                 self.assertEqual(m_after[0]['adopted_status'], 'adopted')
 

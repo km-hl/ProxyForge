@@ -316,12 +316,13 @@ def load_custom_nodes() -> List[Dict[str, Any]]:
 
 def manual_node_input(nodes):
     managed = {node['name']: node for node in managed_nodes()}
+    managed_names = set(managed) | set(managed_node_names())
     manual = []
     for node in nodes:
         name = node.get('name', '') if isinstance(node, dict) else ''
         if name in managed and node == managed[name]:
             continue
-        if (isinstance(node, dict) and '_managed_by' in node) or ' [pf:' in str(name):
+        if (isinstance(node, dict) and '_managed_by' in node) or (name and name in managed_names) or ' [pf:' in str(name):
             raise HTTPException(status_code=409, detail='Agent-managed nodes must be changed through their deployment')
         manual.append(node)
     return manual

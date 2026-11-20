@@ -84,7 +84,7 @@ def runtime_config(spec):
 
 
 def node_name(identifier, name):
-    return name + ' [pf:' + identifier + ']'
+    return str(name)
 
 
 def client_node(identifier, agent_id, spec):

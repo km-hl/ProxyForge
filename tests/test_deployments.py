@@ -66,6 +66,8 @@ class DeploymentStoreTest(unittest.TestCase):
         self.complete(job)
         self.complete(job)  # Lost acknowledgment replay.
         node = self.store.managed_nodes()[0]
+        self.assertEqual(node['name'], SETTINGS['name'])
+        self.assertNotIn('[pf:', node['name'])
         self.assertNotIn(secret, json.dumps(node))
         self.assertEqual(node['uuid'], job['deployment']['uuid'])
         self.assertEqual(node['_managed_by']['deployment_id'], created['id'])
