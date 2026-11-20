@@ -172,7 +172,8 @@ class Phase5ProtocolAndOutboundTests(unittest.TestCase):
                 protocol='reality',
             )
             cfg = runtime_config(spec)
-            self.assertEqual(cfg['outbounds'][0]['domain_strategy'], strategy)
+            self.assertEqual(cfg['outbounds'][0]['domain_resolver'], {'server': 'local', 'strategy': strategy})
+            self.assertEqual(cfg['dns'], {'servers': [{'type': 'local', 'tag': 'local'}]})
 
         socks_spec = new_landing_spec(
             {
@@ -198,7 +199,9 @@ class Phase5ProtocolAndOutboundTests(unittest.TestCase):
         self.assertEqual(tags['out-primary']['type'], 'socks')
         self.assertEqual(tags['out-primary']['server'], '192.0.2.55')
         self.assertEqual(tags['out-primary']['password'], 'isp-secret-password')
-        self.assertIn({'inbound': ['managed-landing'], 'outbound': 'out-primary'}, cfg['route']['rules'])
+        self.assertEqual(tags['out-primary']['domain_resolver'], {'server': 'local', 'strategy': 'prefer_ipv4'})
+        self.assertEqual(cfg['dns'], {'servers': [{'type': 'local', 'tag': 'local'}]})
+        self.assertIn({'inbound': ['managed-landing'], 'action': 'route', 'outbound': 'out-primary'}, cfg['route']['rules'])
 
         with tempfile.TemporaryDirectory() as temp:
             module = load_isolated_application(Path(temp))

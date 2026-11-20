@@ -212,7 +212,8 @@ class Phase6MultiHopDetourSpecTests(unittest.TestCase):
         h2 = outbounds_by_tag['out-primary-h2']
         h3 = outbounds_by_tag['out-primary-h3']
         self.assertEqual(h1['type'], 'shadowsocks')
-        self.assertEqual(h1['domain_strategy'], 'prefer_ipv4')
+        self.assertEqual(h1['domain_resolver'], {'server': 'local', 'strategy': 'prefer_ipv4'})
+        self.assertEqual(cfg['dns'], {'servers': [{'type': 'local', 'tag': 'local'}]})
         self.assertNotIn('detour', h1)
         self.assertEqual(h2['type'], 'shadowsocks')
         self.assertEqual(h2['detour'], 'out-primary-h1')

@@ -851,6 +851,15 @@ def _render_single_inbound(spec, *, tag='managed-landing', site_id='landing', ce
     raise ValueError('Unsupported landing protocol')
 
 
+_LOCAL_DNS_SERVER = {'type': 'local', 'tag': 'local'}
+
+
+def _apply_domain_resolver(out, strategy):
+    if strategy:
+        # sing-box 1.14+ removed outbound.domain_strategy in favor of domain_resolver.
+        out['domain_resolver'] = {'server': 'local', 'strategy': strategy}
+
+
 def _build_node_outbound(node_spec, tag):
     mode = node_spec.get('outbound_mode', 'direct')
     strategy = node_spec.get('outbound_strategy')
@@ -866,8 +875,7 @@ def _build_node_outbound(node_spec, tag):
             out['username'] = node_spec['outbound_username']
         if node_spec.get('outbound_password'):
             out['password'] = node_spec['outbound_password']
-        if strategy:
-            out['domain_strategy'] = strategy
+        _apply_domain_resolver(out, strategy)
         return out
     if mode == 'ss':
         out = {
@@ -878,12 +886,10 @@ def _build_node_outbound(node_spec, tag):
             'method': node_spec.get('outbound_method', METHOD),
             'password': node_spec['outbound_password'],
         }
-        if strategy:
-            out['domain_strategy'] = strategy
+        _apply_domain_resolver(out, strategy)
         return out
     out = {'type': 'direct', 'tag': tag}
-    if strategy:
-        out['domain_strategy'] = strategy
+    _apply_domain_resolver(out, strategy)
     return out
 
 
@@ -918,8 +924,8 @@ def _build_node_outbounds(node_spec, base_tag):
                     out['username'] = hop['username']
                 if hop.get('password'):
                     out['password'] = hop['password']
-            if idx == 1 and strategy:
-                out['domain_strategy'] = strategy
+            if idx == 1:
+                _apply_domain_resolver(out, strategy)
             if prev_tag:
                 out['detour'] = prev_tag
             outs.append(out)
@@ -982,9 +988,11 @@ def runtime_config(spec, *, cert_path=None, key_path=None, caddy_port=None, back
 
     if primary_mode == 'direct' and not has_custom_extra:
         direct_out = {'type': 'direct', 'tag': 'direct'}
-        if primary_strategy:
-            direct_out['domain_strategy'] = primary_strategy
-        return {'log': {'level': 'warn'}, 'inbounds': inbounds, 'outbounds': [direct_out]}
+        _apply_domain_resolver(direct_out, primary_strategy)
+        cfg = {'log': {'level': 'warn'}, 'inbounds': inbounds, 'outbounds': [direct_out]}
+        if 'domain_resolver' in direct_out:
+            cfg['dns'] = {'servers': [dict(_LOCAL_DNS_SERVER)]}
+        return cfg
 
     outbounds = []
     route_rules = []
@@ -992,7 +1000,7 @@ def runtime_config(spec, *, cert_path=None, key_path=None, caddy_port=None, back
     if primary_mode != 'direct' or primary_strategy:
         p_outs, p_tag = _build_node_outbounds(spec, 'out-primary')
         outbounds.extend(p_outs)
-        route_rules.append({'inbound': ['managed-landing'], 'outbound': p_tag})
+        route_rules.append({'inbound': ['managed-landing'], 'action': 'route', 'outbound': p_tag})
         primary_final_tag = p_tag
     for idx, extra in enumerate(extra_nodes, 1):
         nid = str(extra.get('node_id') or idx)
@@ -1001,15 +1009,18 @@ def runtime_config(spec, *, cert_path=None, key_path=None, caddy_port=None, back
         if e_mode != 'direct' or e_strategy:
             e_outs, e_tag = _build_node_outbounds(extra, f'out-node-{nid}')
             outbounds.extend(e_outs)
-            route_rules.append({'inbound': [f'managed-node-{nid}'], 'outbound': e_tag})
+            route_rules.append({'inbound': [f'managed-node-{nid}'], 'action': 'route', 'outbound': e_tag})
     outbounds.append({'type': 'direct', 'tag': 'direct'})
     final_tag = primary_final_tag if (primary_mode != 'direct' and not extra_nodes) else 'direct'
-    return {
+    cfg = {
         'log': {'level': 'warn'},
         'inbounds': inbounds,
         'outbounds': outbounds,
         'route': {'rules': route_rules, 'final': final_tag},
     }
+    if any('domain_resolver' in o for o in outbounds):
+        cfg['dns'] = {'servers': [dict(_LOCAL_DNS_SERVER)]}
+    return cfg
 
 
 def client_node(identifier, agent_id, spec):

@@ -644,8 +644,7 @@ def _normalize_singbox_inbound(inbound, source_key):
     allowed_keys = (
         'type', 'listen', 'listen_port', 'users', 'method', 'password',
         'tls', 'transport', 'obfs', 'up_mbps', 'down_mbps',
-        'padding_scheme', 'multiplex', 'sniff', 'sniff_override_destination',
-        'domain_strategy',
+        'padding_scheme', 'multiplex',
     )
     cleaned = {k: inbound[k] for k in allowed_keys if k in inbound}
     cleaned['type'] = proto
