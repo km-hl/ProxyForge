@@ -785,8 +785,9 @@ class AcmeManager:
             self.runner(args, timeout=240)
         else:
             raise AcmeError('Unsupported ACME mode')
-        lineage = self.state_dir / 'acme' / cert_name / 'config' / 'live' / cert_name
-        return profile_id, lineage / 'fullchain.pem', lineage / 'privkey.pem'
+        lineage_root = self.state_dir / 'acme' / cert_name / 'config'
+        lineage = lineage_root / 'live' / cert_name
+        return profile_id, lineage_root, lineage / 'fullchain.pem', lineage / 'privkey.pem'
 
     def _save_manifest(self, cert_name, metadata):
         manifest_dir = _private_dir(self.state_dir / 'managed')
@@ -825,7 +826,7 @@ class AcmeManager:
 
         if renew or not reusable(live_cert, live_key, domain_norm, runner=self.runner):
             try:
-                profile_id, src_cert, src_key = self._run_certbot(
+                profile_id, lineage_root, src_cert, src_key = self._run_certbot(
                     name,
                     domain_norm,
                     tls_mode,
@@ -837,11 +838,17 @@ class AcmeManager:
                     propagation_seconds=propagation_seconds,
                     renew=renew,
                 )
-                validate_pair(src_cert, src_key, domain_norm, runner=self.runner)
-                atomic_write_bytes(live_cert, Path(src_cert).read_bytes(), mode=0o600)
-                atomic_write_bytes(live_key, Path(src_key).read_bytes(), mode=0o600)
+                # Certbot writes live/<name>/*.pem as relative symlinks into ../../archive/<name>/*.
+                confined_root = lineage_root.resolve(strict=True)
+                resolved_cert = Path(src_cert).resolve(strict=True)
+                resolved_key = Path(src_key).resolve(strict=True)
+                if not resolved_cert.is_relative_to(confined_root) or not resolved_key.is_relative_to(confined_root):
+                    raise AcmeError('Certbot certificate resolves outside isolated lineage root')
+                validate_pair(resolved_cert, resolved_key, domain_norm, runner=self.runner)
+                atomic_write_bytes(live_cert, resolved_cert.read_bytes(), mode=0o600)
+                atomic_write_bytes(live_key, resolved_key.read_bytes(), mode=0o600)
                 self.record_status(name, domain_norm, 'issued_or_renewed')
-            except (AcmeError, OSError):
+            except (AcmeError, OSError, RuntimeError):
                 self.record_status(name, domain_norm, 'renewal_failed')
                 raise
 

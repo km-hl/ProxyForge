@@ -32,7 +32,7 @@ def _classify_runtime_error(exc):
         code = 'acme_port80_in_use'
     elif 'do not match host public ip' in msg or 'failed to resolve acme domain' in msg:
         code = 'acme_dns_mismatch'
-    elif exc_name == 'AcmeError':
+    elif exc_name == 'AcmeError' or 'certificate' in msg or 'acme' in msg or 'renewal' in msg:
         code = 'acme_failed'
     elif exc_name == 'CaddyError':
         code = 'caddy_failed'

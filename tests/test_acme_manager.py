@@ -204,6 +204,67 @@ class AcmeManagerWorkflowTests(unittest.TestCase):
         self.assertEqual(cert.read_text(encoding='utf-8'), 'VALID-CERT-V1')
         self.assertEqual(key.read_text(encoding='utf-8'), 'VALID-KEY-V1')
 
+    @unittest.skipUnless(os.name == 'posix', 'Certbot archive symlinks test requires POSIX symlink privileges')
+    def test_certbot_archive_symlinks_accepted_inside_lineage_root_and_escaped_symlinks_rejected(self):
+        with tempfile.TemporaryDirectory() as outer:
+            outside_file = Path(outer) / 'outside.pem'
+            outside_file.write_text('OUTSIDE-SECRET', encoding='utf-8')
+
+            def symlink_runner(args, **kwargs):
+                if args[0] == 'certbot' and args[1] == 'certonly':
+                    name = args[args.index('--cert-name') + 1]
+                    cfg_dir = self.state / 'acme' / name / 'config'
+                    archive = cfg_dir / 'archive' / name
+                    lineage = cfg_dir / 'live' / name
+                    archive.mkdir(parents=True, exist_ok=True)
+                    lineage.mkdir(parents=True, exist_ok=True)
+                    (archive / 'fullchain1.pem').write_text('ARCHIVED-CERT', encoding='utf-8')
+                    (archive / 'privkey1.pem').write_text('ARCHIVED-KEY', encoding='utf-8')
+                    # Real certbot layout uses relative symlinks live/<name>/*.pem -> ../../archive/<name>/*1.pem
+                    os.symlink(f'../../archive/{name}/fullchain1.pem', lineage / 'fullchain.pem')
+                    os.symlink(f'../../archive/{name}/privkey1.pem', lineage / 'privkey.pem')
+                    return 'ok'
+                if '-pubkey' in args or '-pubout' in args:
+                    return 'MATCHING-KEY'
+                return 'Verified OK'
+
+            resolver = lambda host, port, type=None: [(2, 1, 6, '', ('8.8.8.8', 0))]
+            mgr = AcmeManager(
+                self.state,
+                runner=symlink_runner,
+                ip_reader=lambda: {'ipv4': '8.8.8.8', 'ipv6': ''},
+                resolver=resolver,
+                port_checker=lambda *args, **kwargs: None,
+                which=lambda name: '/usr/bin/' + name,
+            )
+            cert, key = mgr.ensure_certificate('node-sym', 'sym.example.com', tls_mode='acme_http')
+            self.assertFalse(cert.is_symlink())
+            self.assertFalse(key.is_symlink())
+            self.assertEqual(cert.read_text(encoding='utf-8'), 'ARCHIVED-CERT')
+            self.assertEqual(key.read_text(encoding='utf-8'), 'ARCHIVED-KEY')
+
+            # Escape symlink pointing outside isolated config_dir must still be rejected
+            def escaped_runner(args, **kwargs):
+                if args[0] == 'certbot' and args[1] == 'certonly':
+                    name = args[args.index('--cert-name') + 1]
+                    lineage = self.state / 'acme' / name / 'config' / 'live' / name
+                    lineage.mkdir(parents=True, exist_ok=True)
+                    os.symlink(outside_file, lineage / 'fullchain.pem')
+                    os.symlink(outside_file, lineage / 'privkey.pem')
+                    return 'ok'
+                return 'Verified OK'
+
+            bad_mgr = AcmeManager(
+                self.state,
+                runner=escaped_runner,
+                ip_reader=lambda: {'ipv4': '8.8.8.8', 'ipv6': ''},
+                resolver=resolver,
+                port_checker=lambda *args, **kwargs: None,
+                which=lambda name: '/usr/bin/' + name,
+            )
+            with self.assertRaises(AcmeError):
+                bad_mgr.ensure_certificate('node-bad', 'bad.example.com', tls_mode='acme_http')
+
 
 if __name__ == '__main__':
     unittest.main()
