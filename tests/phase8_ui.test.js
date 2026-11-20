@@ -117,4 +117,26 @@ test('Phase 8 static UI exposes shared-port selector in chain modal and shared n
     assert.ok(agentsSrc.includes('♻️ 复用已有端口'), 'Chain modal must offer one-click reuse option');
     assert.ok(agentsSrc.includes('auth_user'), 'UI hints must explain sing-box auth_user split routing');
     assert.ok(indexHtml.includes('agents.js?v=phase8-'), 'index.html must bust cache for Phase 8 agents.js');
+    assert.ok(indexHtml.includes('app.js?v=phase8-'), 'index.html must bust cache for Phase 8 app.js');
+});
+
+test('ProxyForgeRegions supports CN / 中国 quick selection without misclassifying CN2 or 深港IX', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'static', 'app.js'), 'utf8');
+    const start = src.indexOf('const ProxyForgeRegions = (() => {');
+    const end = src.indexOf('const getFlagEmoji = ProxyForgeRegions.getFlagEmoji;', start);
+    const sandbox = {
+        globalThis: {},
+        document: { getElementById: () => null },
+        ProxyForgeHtmlUtils: require('../static/html-utils.js'),
+    };
+    vm.createContext(sandbox);
+    vm.runInContext(src.slice(start, end) + '\nconst getFlagEmoji = ProxyForgeRegions.getFlagEmoji;\n', sandbox);
+    const regions = sandbox.globalThis.ProxyForgeRegions || sandbox.ProxyForgeRegions;
+
+    assert.equal(regions.matchRegion('cn')?.code, 'CN');
+    assert.equal(regions.matchRegion('中国')?.flag, '🇨🇳');
+    assert.equal(regions.getFlagEmoji('Aliyun 深圳'), '🇨🇳 Aliyun 深圳');
+    assert.equal(regions.getFlagEmoji('vps.soy - 深港IX'), '🇭🇰 vps.soy - 深港IX');
+    assert.equal(regions.getFlagEmoji('LA CN2 GIA'), 'LA CN2 GIA');
+    assert.ok(regions.renderRegionPickerHtml('p-cn', '').includes('🇨🇳 中国'));
 });

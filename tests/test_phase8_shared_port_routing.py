@@ -683,6 +683,14 @@ class Phase8ControlPlaneAndSubscriptionTests(unittest.TestCase):
                 self.assertEqual(r_adopt_conflict.status_code, 422)
                 self.assertIn('已接管', r_adopt_conflict.json()['detail'])
 
+    def test_cn_region_flag_matching_and_cn2_ix_guards(self):
+        from proxyforge.subscription.nodes import add_flag_to_proxy_name
+
+        self.assertEqual(add_flag_to_proxy_name('Aliyun 深圳'), '🇨🇳 Aliyun 深圳')
+        self.assertEqual(add_flag_to_proxy_name('CN 前置'), '🇨🇳 CN 前置')
+        self.assertEqual(add_flag_to_proxy_name('vps.soy - 深港IX'), '🇭🇰 vps.soy - 深港IX')
+        self.assertEqual(add_flag_to_proxy_name('LA CN2 GIA'), 'LA CN2 GIA')
+
 
 if __name__ == '__main__':
     unittest.main()

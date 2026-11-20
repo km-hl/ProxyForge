@@ -766,8 +766,9 @@ const ProxyForgeRegions = (() => {
         { code: 'AR', flag: '🇦🇷', label: '阿根廷', keywords: ['ar', 'arg', 'argentina', 'buenos aires', '阿根廷'] },
         { code: 'CL', flag: '🇨🇱', label: '智利', keywords: ['cl', 'chl', 'chile', 'santiago', '智利'] },
         { code: 'MX', flag: '🇲🇽', label: '墨西哥', keywords: ['mx', 'mex', 'mexico', '墨西哥'] },
+        { code: 'CN', flag: '🇨🇳', label: '中国', keywords: ['cn', 'chn', 'china', 'shenzhen', 'shanghai', 'beijing', 'guangzhou', 'hangzhou', '中国', '中國', '国内', '國內', '深圳', '上海', '北京', '广州', '廣州', '杭州'] },
     ];
-    const QUICK_CODES = ['HK', 'JP', 'US', 'SG', 'TW', 'KR', 'GB', 'DE'];
+    const QUICK_CODES = ['CN', 'HK', 'JP', 'US', 'SG', 'TW', 'KR', 'GB', 'DE'];
     const FLAG_PAIR_RE = /[\u{1F1E6}-\u{1F1FF}]{2}/u;
     const LEADING_FLAG_RE = /^\s*([\u{1F1E6}-\u{1F1FF}]{2})\s*/u;
 

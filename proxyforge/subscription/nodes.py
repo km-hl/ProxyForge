@@ -79,6 +79,7 @@ def add_flag_to_proxy_name(name: str) -> str:
         ("\U0001F1E6\U0001F1F7", ["ar", "arg", "argentina", "buenos aires", "阿根廷"]),
         ("\U0001F1E8\U0001F1F1", ["cl", "chl", "chile", "santiago", "智利"]),
         ("\U0001F1F2\U0001F1FD", ["mx", "mex", "mexico", "墨西哥"]),
+        ("\U0001F1E8\U0001F1F3", ["cn", "chn", "china", "shenzhen", "shanghai", "beijing", "guangzhou", "hangzhou", "中国", "中國", "国内", "國內", "深圳", "上海", "北京", "广州", "廣州", "杭州"]),
     ]
 
     for flag, keywords in flag_keywords:

@@ -47,7 +47,7 @@ test('Phase 7 static assets include adoption lifecycle actions, auxiliary drawer
     assert.ok(agentsSrc.includes('辅助 / 分流组件'), 'collapsible auxiliary components section required');
     assert.ok(managedSrc.includes("node.adopted_status === 'adopted'"), 'managed-nodes panel must hide un-adopted scan clutter');
     assert.match(indexHtml, /agents\.js\?v=phase[78]-/, 'agents.js cache-bust version must be bumped to phase7+');
-    assert.ok(indexHtml.includes('app.js?v=phase7-'), 'app.js cache-bust version must be bumped to phase7');
+    assert.match(indexHtml, /app\.js\?v=phase[78]-/, 'app.js cache-bust version must be bumped to phase7+');
     assert.ok(indexHtml.includes('style.css?v=phase7-'), 'style.css cache-bust version must be bumped to phase7');
 });
 
