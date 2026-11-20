@@ -1307,6 +1307,7 @@ async function saveAirportsObj() {
 // === Actions: Proxy Groups ===
 window.editGroup = function(index) {
     let g = index >= 0 ? state.templateObj['proxy-groups'][index] : { name: '', type: 'select', proxies: [] };
+    const previousName = index >= 0 && typeof g?.name === 'string' ? g.name : '';
     
     const regions = [
         {key: 'hk|香港', label: '🇭🇰 香港'},
@@ -1456,9 +1457,22 @@ window.editGroup = function(index) {
         if (!state.templateObj['proxy-groups']) state.templateObj['proxy-groups'] = [];
         if (index >= 0) state.templateObj['proxy-groups'][index] = g;
         else state.templateObj['proxy-groups'].push(g);
-        
+
+        let successMessage = '';
+        if (index >= 0 && previousName && g.name && previousName !== g.name) {
+            const duplicateTarget = state.templateObj['proxy-groups'].some(
+                (item, idx) => idx !== index && item && item.name === g.name
+            );
+            if (!duplicateTarget) {
+                const renamed = ProxyForgeRuleUtils.renameProxyGroupReferences(state.templateObj, previousName, g.name);
+                if (renamed.cleanedTotal > 0) {
+                    successMessage = `已保存代理组，并更新 ${renamed.cleanedTotal} 处引用`;
+                }
+            }
+        }
+
         closeModal();
-        saveTemplateObj();
+        saveTemplateObj(state.templateObj, 'other', null, successMessage);
     });
 
     document.getElementById('m-group-type').addEventListener('change', (e) => {
@@ -1646,16 +1660,22 @@ window.editGroup = function(index) {
 document.getElementById('btn-add-group').addEventListener('click', () => editGroup(-1));
 
 window.deleteGroup = function(index) {
-    state.templateObj['proxy-groups'].splice(index, 1);
-    saveTemplateObj();
+    const cleanup = ProxyForgeRuleUtils.removeProxyGroups(state.templateObj, index);
+    const msg = cleanup.cleanedTotal > 0
+        ? `已删除代理组，并清理 ${cleanup.cleanedTotal} 处引用`
+        : '已删除代理组';
+    saveTemplateObj(state.templateObj, 'other', null, msg);
 };
 
 document.getElementById('btn-bulk-delete-groups').addEventListener('click', () => {
     let indices = getCheckedIndices('cb-group');
     if(!indices.length) return alert('请先勾选要删除的项');
     if(confirm(`确定删除这 ${indices.length} 项吗？`)) {
-        indices.forEach(i => state.templateObj['proxy-groups'].splice(i, 1));
-        saveTemplateObj();
+        const cleanup = ProxyForgeRuleUtils.removeProxyGroups(state.templateObj, indices);
+        const msg = cleanup.cleanedTotal > 0
+            ? `已删除 ${indices.length} 个代理组，并清理 ${cleanup.cleanedTotal} 处引用`
+            : `已删除 ${indices.length} 个代理组`;
+        saveTemplateObj(state.templateObj, 'other', null, msg);
     }
 });
 
@@ -2103,7 +2123,7 @@ document.getElementById('btn-bulk-delete-rules').addEventListener('click', () =>
     }
 });
 
-async function saveTemplateObj(candidate = state.templateObj, source = 'other', raw = null) {
+async function saveTemplateObj(candidate = state.templateObj, source = 'other', raw = null, successMessage = '') {
     try {
         templateGuard(source);
         const content = raw === null ? jsyaml.dump(candidate) : raw;
@@ -2115,7 +2135,14 @@ async function saveTemplateObj(candidate = state.templateObj, source = 'other', 
         const result = await templateSession.save(content);
         if (!result.ok && source === 'other') rulesEditor.value = content;
         if (result.conflict) showTemplateConflict(result.conflict);
-        showToast(result.message || (result.report?.warnings.length ? '已保存，存在配置建议，请查看 DNS 与网络' : '已保存底层模板'), result.ok ? result.report?.warnings.length ? 'warning' : 'success' : 'error');
+        showToast(
+            result.message || (
+                result.report?.warnings.length
+                    ? '已保存，存在配置建议，请查看 DNS 与网络'
+                    : (successMessage || '已保存底层模板')
+            ),
+            result.ok ? result.report?.warnings.length ? 'warning' : 'success' : 'error'
+        );
         return result.ok;
     } catch (error) {
         state.templateObj = ProxyForgeNetwork.clone(savedTemplateObj);
