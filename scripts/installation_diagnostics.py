@@ -14,7 +14,12 @@ STATES = frozenset(('active', 'inactive', 'failed', 'activating', 'deactivating'
                     'stop-sigterm', 'stop-sigkill', 'auto-restart', 'success', 'exit-code',
                     'signal', 'core-dump', 'timeout', 'watchdog', 'start-limit-hit',
                     'resources', 'protocol', 'oom-kill'))
-ERRORS = frozenset(('runtime_unavailable', 'runtime_failed', 'runtime_cancelled', 'rollback_failed'))
+ERRORS = frozenset((
+    'runtime_unavailable', 'runtime_failed', 'runtime_cancelled', 'rollback_failed',
+    'acme_certbot_missing', 'acme_dns_plugin_missing', 'acme_port80_in_use',
+    'acme_dns_mismatch', 'acme_failed', 'port_conflict', 'caddy_failed',
+    'config_check_failed', 'health_check_failed', 'download_failed',
+))
 ACTIONS = frozenset(('singbox.install', 'singbox.restart', 'singbox.rollback', 'singbox.stop', 'singbox.start'))
 
 

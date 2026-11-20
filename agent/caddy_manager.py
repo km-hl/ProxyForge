@@ -425,20 +425,19 @@ class CaddyManager:
             if site.get('camouflage_mode', 'template') != 'template':
                 continue
             www_root = _private_dir(self.www_dir)
-            if os.name == 'posix':
-                www_root.chmod(0o750)
-                if self.service_gid is not None:
-                    os.chown(www_root, 0, self.service_gid)
             site_dir = _private_dir(www_root / site_id)
-            if os.name == 'posix':
-                site_dir.chmod(0o750)
-                if self.service_gid is not None:
-                    os.chown(site_dir, 0, self.service_gid)
             index_file = site_dir / 'index.html'
             content = render_camouflage_html(site.get('camouflage_template', 'corporate'), domain=site.get('domain', ''))
             atomic_write_bytes(index_file, content.encode('utf-8'), mode=0o640)
-            if os.name == 'posix' and self.service_gid is not None:
-                os.chown(index_file, 0, self.service_gid)
+            # Apply group-readable directory permissions AFTER atomic_write_bytes
+            # (which resets target.parent via _private_dir to 0700).
+            if os.name == 'posix':
+                www_root.chmod(0o750)
+                site_dir.chmod(0o750)
+                if self.service_gid is not None:
+                    os.chown(www_root, 0, self.service_gid)
+                    os.chown(site_dir, 0, self.service_gid)
+                    os.chown(index_file, 0, self.service_gid)
             roots[site_id] = site_dir.as_posix()
         return roots
 
@@ -470,17 +469,18 @@ class CaddyManager:
 
     def _stage_cert_files(self, site_id, src_cert, src_key):
         cert_dir = _private_dir(self.certs_dir)
-        if os.name == 'posix':
-            cert_dir.chmod(0o750)
-            if self.service_gid is not None:
-                os.chown(cert_dir, 0, self.service_gid)
         dest_cert = cert_dir / (site_id + '.crt')
         dest_key = cert_dir / (site_id + '.key')
         atomic_write_bytes(dest_cert, Path(src_cert).read_bytes(), mode=0o640)
         atomic_write_bytes(dest_key, Path(src_key).read_bytes(), mode=0o640)
-        if os.name == 'posix' and self.service_gid is not None:
-            os.chown(dest_cert, 0, self.service_gid)
-            os.chown(dest_key, 0, self.service_gid)
+        # Apply group-readable directory permissions AFTER atomic_write_bytes
+        # so proxyforge-caddy can traverse certs_dir and read the staged files.
+        if os.name == 'posix':
+            cert_dir.chmod(0o750)
+            if self.service_gid is not None:
+                os.chown(cert_dir, 0, self.service_gid)
+                os.chown(dest_cert, 0, self.service_gid)
+                os.chown(dest_key, 0, self.service_gid)
         return dest_cert.as_posix(), dest_key.as_posix()
 
     def _resolve_cert_pairs(self, sites, *, renew=False):

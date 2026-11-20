@@ -61,6 +61,8 @@ test('Server cards display prominent per-machine node inventory panel and deploy
     assert.ok(agentsSrc.includes('komari-scan-summary'), 'server cards must render host scan summary link');
     assert.ok(agentsSrc.includes('请填写节点名称'), 'deployment form must pre-validate missing node name');
     assert.ok(agentsSrc.includes('停用并释放端口'), 'auxiliary drawer must allow disabling host services');
+    assert.ok(agentsSrc.includes('acme_certbot_missing'), 'UI must translate allowlisted runtime error codes');
+    assert.ok(agentsSrc.includes('acme_port80_in_use'), 'UI must explain port 80 ACME conflict clearly');
     assert.ok(styleSrc.includes('.komari-nodes-panel'), 'style.css must style .komari-nodes-panel');
     assert.ok(styleSrc.includes('.komari-node-row'), 'style.css must style .komari-node-row');
 });

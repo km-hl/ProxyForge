@@ -47,7 +47,23 @@ class StatusOutput(SingboxStatus):
 class JobResult(Payload):
     status: Literal['success', 'failed']
     output: Optional[Union[AdoptScanOutput, StatusOutput]] = None
-    error: Optional[Literal['probe_failed', 'runtime_unavailable', 'runtime_failed', 'runtime_cancelled', 'rollback_failed']] = None
+    error: Optional[Literal[
+        'probe_failed',
+        'runtime_unavailable',
+        'runtime_failed',
+        'runtime_cancelled',
+        'rollback_failed',
+        'acme_certbot_missing',
+        'acme_dns_plugin_missing',
+        'acme_port80_in_use',
+        'acme_dns_mismatch',
+        'acme_failed',
+        'port_conflict',
+        'caddy_failed',
+        'config_check_failed',
+        'health_check_failed',
+        'download_failed',
+    ]] = None
 
     @model_validator(mode='after')
     def coherent(self):

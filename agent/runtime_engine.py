@@ -537,6 +537,11 @@ class SystemBackend:
         config_path.chmod(0o640)
         run_kwargs = {'timeout': 20}
         version_kwargs = {'capture_output': True, 'text': True, 'timeout': 5}
+        if self.profile.service == SERVICE_CADDY:
+            state_dir = str(release.parent.parent / 'state')
+            caddy_env = {**os.environ, 'HOME': state_dir, 'XDG_DATA_HOME': state_dir, 'XDG_CONFIG_HOME': state_dir}
+            run_kwargs['env'] = caddy_env
+            version_kwargs['env'] = caddy_env
         if self.uid is not None and self.gid is not None:
             identity = {'user': self.uid, 'group': self.gid, 'extra_groups': []}
             run_kwargs.update(identity)
@@ -842,7 +847,7 @@ class RuntimeCoordinator:
     def _get_acme_manager(self):
         if self._acme_manager is None:
             from .acme_manager import AcmeManager
-            acme_root = self.service_roots[SERVICE_SINGBOX].parent / 'acme' if SERVICE_SINGBOX in self.service_roots else None
+            acme_root = (self.service_roots[SERVICE_SINGBOX] / 'acme') if SERVICE_SINGBOX in self.service_roots else None
             self._acme_manager = AcmeManager(acme_root or Path('/var/lib/proxyforge-runtime/acme'))
         return self._acme_manager
 

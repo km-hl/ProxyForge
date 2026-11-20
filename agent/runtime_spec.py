@@ -22,7 +22,22 @@ CADDY_ACTIONS = ('caddy.install', 'caddy.start', 'caddy.stop', 'caddy.restart', 
 GOST_ACTIONS = ('gost.install', 'gost.start', 'gost.stop', 'gost.restart', 'gost.rollback', *GOST_CONFIG_ACTIONS)
 SINGBOX_ACTIONS = ('singbox.install', 'singbox.start', 'singbox.stop', 'singbox.restart', 'singbox.rollback')
 RUNTIME_ACTIONS = (*SINGBOX_ACTIONS, *CADDY_ACTIONS, *GOST_ACTIONS, *DEPLOYMENT_ACTIONS, *LANDING_ACTIONS, *CHAIN_ACTIONS)
-RUNTIME_ERRORS = ('runtime_unavailable', 'runtime_failed', 'runtime_cancelled', 'rollback_failed')
+RUNTIME_ERRORS = (
+    'runtime_unavailable',
+    'runtime_failed',
+    'runtime_cancelled',
+    'rollback_failed',
+    'acme_certbot_missing',
+    'acme_dns_plugin_missing',
+    'acme_port80_in_use',
+    'acme_dns_mismatch',
+    'acme_failed',
+    'port_conflict',
+    'caddy_failed',
+    'config_check_failed',
+    'health_check_failed',
+    'download_failed',
+)
 
 
 def job_service(action):

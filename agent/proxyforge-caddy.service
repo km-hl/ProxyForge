@@ -28,6 +28,9 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 Environment=GOMEMLIMIT=32MiB
 Environment=GOGC=50
 Environment=GOMAXPROCS=1
+Environment=HOME=/var/lib/proxyforge-runtime/services/caddy/state
+Environment=XDG_DATA_HOME=/var/lib/proxyforge-runtime/services/caddy/state
+Environment=XDG_CONFIG_HOME=/var/lib/proxyforge-runtime/services/caddy/state
 
 [Install]
 WantedBy=multi-user.target

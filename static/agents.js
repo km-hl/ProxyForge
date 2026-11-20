@@ -1082,7 +1082,7 @@ async function showAgentDeployment(agent, initialNodeId = null) {
         remove.disabled = apply.disabled || !current;
         status.textContent = !capable ? '请升级 Agent 和本地运行环境辅助服务以支持节点部署。' :
             current ? `[${current.is_primary ? '主节点' : '共存节点'}] 版本 ${current.revision} · ${current.action} · ${current.status}` +
-                (current.error ? '\n' + current.error : '') : '正在创建新节点（保存后将与本机已有节点共同运行）。';
+                (current.error ? '\n⚠️ ' + _formatRuntimeError(current.error) : '') : '正在创建新节点（保存后将与本机已有节点共同运行）。';
     }
 
     async function refresh() {
@@ -1370,7 +1370,7 @@ async function showAgentJobs(agent) {
             const text = document.createElement('pre'); text.style.whiteSpace = 'pre-wrap';
             text.textContent = job.id + ' · ' + job.type + ' · ' + job.status + ' · 尝试 ' + job.attempts + '\n' +
                 new Date(job.created_at * 1000).toLocaleString() +
-                (job.result ? '\n' + JSON.stringify(job.result, null, 2) : '') + (job.error ? '\n' + job.error : '');
+                (job.result ? '\n' + JSON.stringify(job.result, null, 2) : '') + (job.error ? '\n⚠️ ' + _formatRuntimeError(job.error) : '');
             row.append(text);
             if (['pending', 'assigned', 'running'].includes(job.status)) {
                 const cancel = document.createElement('button'); cancel.className = 'btn'; cancel.textContent = '取消任务';
@@ -2338,6 +2338,27 @@ function _buildTrafficDots(active, colorClass) {
     return row;
 }
 
+function _formatRuntimeError(code) {
+    if (!code) return '';
+    const map = {
+        acme_certbot_missing: '宿主机未安装 certbot（ACME 证书签发需先安装 certbot，如 apt install -y certbot）',
+        acme_dns_plugin_missing: '宿主机缺少 certbot DNS 插件（如 python3-certbot-dns-cloudflare）',
+        acme_port80_in_use: '80 端口被占用，ACME HTTP-01 无法绑定（请停用占用 80 的 nginx/caddy，或改用 DNS-01）',
+        acme_dns_mismatch: '域名 DNS A/AAAA 解析未指向本机公网 IP',
+        acme_failed: 'ACME 证书申请或校验失败（请检查域名解析、80 端口放行或 DNS API Token）',
+        port_conflict: '监听端口冲突（与本机其他服务或已部署节点冲突）',
+        caddy_failed: '本机 Caddy 回环伪装站配置或启动失败',
+        config_check_failed: '内核配置校验失败（sing-box / caddy check 未通过）',
+        health_check_failed: '服务启动后健康检查失败（常见原因：监听端口被宿主机其他进程占用）',
+        download_failed: '内核二进制下载或 SHA256 校验失败（请检查 VPS 访问 GitHub 网络连通性）',
+        runtime_unavailable: '本地特权辅助服务 (proxyforge-runtime.socket) 不可用',
+        runtime_cancelled: '任务超时或租约已取消',
+        rollback_failed: '回滚失败，请登录宿主机排查 /var/lib/proxyforge-runtime',
+        lease_expired: '任务执行租约过期',
+    };
+    return map[code] ? `${code} — ${map[code]}` : String(code);
+}
+
 function _formatCardProto(proto) {
     const p = String(proto || '').toLowerCase();
     if (p === 'vless-reality' || p === 'reality') return 'REALITY';
@@ -2538,7 +2559,7 @@ async function refreshAgents() {
                 const jobBar = document.createElement('button');
                 jobBar.type = 'button';
                 jobBar.className = 'komari-job-banner is-err';
-                jobBar.textContent = `⚠️ 最近任务失败: ${ov.last_failed_job.type} (${ov.last_failed_job.error || 'failed'}) · 点击排查`;
+                jobBar.textContent = `⚠️ 最近任务失败: ${ov.last_failed_job.type} (${_formatRuntimeError(ov.last_failed_job.error) || 'failed'}) · 点击排查`;
                 jobBar.onclick = () => agentAction(agent, 'jobs').catch(error => showToast(error.message, 'error'));
                 nodesPanel.append(jobBar);
             }

@@ -16,8 +16,37 @@ from .runtime_engine import (
     RuntimeEngine,
     SystemBackend,
 )
-from .runtime_spec import CONFIG_ACTIONS, SERVICE_CADDY, SERVICE_GOST, SERVICE_SINGBOX, validate_runtime_job
+from .runtime_spec import CONFIG_ACTIONS, RUNTIME_ERRORS, SERVICE_CADDY, SERVICE_GOST, SERVICE_SINGBOX, validate_runtime_job
 from .system_info import os_release, SUPPORTED
+
+
+def _classify_runtime_error(exc):
+    """Map runtime exceptions to strictly allowlisted, secret-free error codes."""
+    msg = str(exc or '').lower()
+    exc_name = type(exc).__name__
+    if 'certbot is required' in msg:
+        code = 'acme_certbot_missing'
+    elif 'missing certbot plugin' in msg:
+        code = 'acme_dns_plugin_missing'
+    elif ':80/tcp is already in use' in msg:
+        code = 'acme_port80_in_use'
+    elif 'do not match host public ip' in msg or 'failed to resolve acme domain' in msg:
+        code = 'acme_dns_mismatch'
+    elif exc_name == 'AcmeError':
+        code = 'acme_failed'
+    elif exc_name == 'CaddyError':
+        code = 'caddy_failed'
+    elif 'port conflict' in msg or 'conflicts with' in msg or 'already in use' in msg:
+        code = 'port_conflict'
+    elif 'runtime configuration check failed' in msg or 'runtime version check failed' in msg:
+        code = 'config_check_failed'
+    elif 'runtime failed health verification' in msg or 'runtime lost health' in msg:
+        code = 'health_check_failed'
+    elif exc_name in ('URLError', 'HTTPError') or 'checksum' in msg or 'sha256' in msg or 'download' in msg:
+        code = 'download_failed'
+    else:
+        code = 'runtime_failed'
+    return code if code in RUNTIME_ERRORS else 'runtime_failed'
 
 ROOT = Path('/var/lib/proxyforge-runtime')
 SOCKET = '/run/proxyforge-runtime.sock'
@@ -117,9 +146,9 @@ def serve_connection(connection, engine, agent_uid):
         result = {'status': 'failed', 'output': None, 'error': 'runtime_cancelled'}
     except RollbackFailed:
         result = {'status': 'failed', 'output': None, 'error': 'rollback_failed'}
-    except Exception:
+    except Exception as exc:
         # Never send downloader URLs, subprocess output, paths or config contents.
-        result = {'status': 'failed', 'output': None, 'error': 'runtime_failed'}
+        result = {'status': 'failed', 'output': None, 'error': _classify_runtime_error(exc)}
     try:
         connection.sendall(json.dumps(result).encode() + b'\n')
     except OSError:

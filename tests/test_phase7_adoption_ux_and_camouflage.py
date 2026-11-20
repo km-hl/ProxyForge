@@ -145,6 +145,44 @@ class Phase7FlagAndCamouflageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_settings(bad_settings, protocol='reality')
 
+    def test_acme_root_inside_runtime_dir_and_runtime_error_classification(self):
+        from agent.acme_manager import AcmeError
+        from agent.runtime_helper import _classify_runtime_error
+        from agent.runtime_spec import RUNTIME_ERRORS
+        from proxyforge.control.job_api import JobResult
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'proxyforge-runtime'
+            root.mkdir()
+            mock_sb = Mock()
+            mock_sb.root = root
+            coord = RuntimeCoordinator({SERVICE_SINGBOX: mock_sb})
+            # Must stay INSIDE /var/lib/proxyforge-runtime (ReadWritePaths), never .parent/acme!
+            self.assertEqual(coord._get_acme_manager().state_dir, root / 'acme')
+
+        cases = [
+            (AcmeError('certbot is required on the host for ACME issuance'), 'acme_certbot_missing'),
+            (CaddyError('certbot is required on the host for ACME issuance'), 'acme_certbot_missing'),
+            (CaddyError('Missing certbot plugin: dns-cloudflare'), 'acme_dns_plugin_missing'),
+            (CaddyError('Port 0.0.0.0:80/tcp is already in use or unavailable'), 'acme_port80_in_use'),
+            (AcmeError('Domain DNS A/AAAA records do not match host public IP addresses'), 'acme_dns_mismatch'),
+            (AcmeError('Other failure with secret-token-123'), 'acme_failed'),
+            (CaddyError('Caddyfile syntax error'), 'caddy_failed'),
+            (ValueError('Port conflict with sing-box'), 'port_conflict'),
+            (ValueError('Runtime configuration check failed'), 'config_check_failed'),
+            (ValueError('Runtime failed health verification'), 'health_check_failed'),
+            (ValueError('Unauthorized local peer'), 'runtime_failed'),
+        ]
+        for exc, expected in cases:
+            code = _classify_runtime_error(exc)
+            self.assertEqual(code, expected)
+            self.assertIn(code, RUNTIME_ERRORS)
+            parsed = JobResult(status='failed', output=None, error=code)
+            self.assertEqual(parsed.error, expected)
+        # Arbitrary secret error strings remain rejected by JobResult
+        with self.assertRaises(ValueError):
+            JobResult(status='failed', output=None, error='raw-secret-stderr')
+
 
 class Phase7AdoptionLifecycleAndManualDedupTests(unittest.TestCase):
     def _register(self, store, name, public_ipv4):
