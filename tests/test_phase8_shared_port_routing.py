@@ -120,6 +120,12 @@ class Phase8LandingSpecSharedPortTests(unittest.TestCase):
         )
         self.assertEqual(cfg['route']['final'], 'direct')
 
+        # With outbound_strategy set (Web UI default prefer_ipv4), local DNS must set prefer_go=True
+        # so sing-box reads /etc/resolv.conf instead of failing on D-Bus org.freedesktop.resolve1.
+        strat_spec = {**full_spec, 'outbound_strategy': 'prefer_ipv4'}
+        strat_cfg = runtime_config(strat_spec, caddy_port=18443)
+        self.assertEqual(strat_cfg['dns'], {'servers': [{'type': 'local', 'tag': 'local', 'prefer_go': True}]})
+
     def test_reversed_direction_primary_chain_and_extra_direct_on_443(self):
         primary = _make_reality_spec('🇸🇬 Primary Chain', 443, outbound_mode='chain')
         extra = _make_reality_spec('🇲🇾 Extra Direct', 443, outbound_mode='direct', node_id='dir443', shared_from=primary)

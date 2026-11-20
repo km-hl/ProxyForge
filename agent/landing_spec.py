@@ -982,7 +982,9 @@ def _render_single_inbound(spec, *, tag='managed-landing', site_id='landing', ce
     raise ValueError('Unsupported landing protocol')
 
 
-_LOCAL_DNS_SERVER = {'type': 'local', 'tag': 'local'}
+# Always set prefer_go=True so sing-box reads /etc/resolv.conf directly via Go's resolver
+# instead of failing on D-Bus org.freedesktop.resolve1 on servers without systemd-resolved.
+_LOCAL_DNS_SERVER = {'type': 'local', 'tag': 'local', 'prefer_go': True}
 
 
 def _apply_domain_resolver(out, strategy):
