@@ -128,6 +128,10 @@ _COMMON_OPTIONAL = {
     'outbound_hops',
     'publish_to_subscription', 'node_id',
 }
+CLIENT_METADATA_ONLY_FIELDS = frozenset((
+    'name', 'server', 'region', 'publish_to_subscription',
+    'fingerprint', 'mport', 'hop_interval',
+))
 _PROTOCOL_ALLOWED_SETTINGS = {
     'ss2022': {'name', 'server', 'listen_port', 'method', *_COMMON_OPTIONAL},
     'reality': {'name', 'server', 'listen_port', 'reality_public_key', 'reality_short_ids', 'fingerprint', *_COMMON_OPTIONAL},

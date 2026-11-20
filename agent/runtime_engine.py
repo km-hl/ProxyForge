@@ -784,6 +784,19 @@ class RuntimeEngine:
         pinned = self.profile.release or RELEASE
         same_version = bool(current and json.loads((self.root / current / 'release.json').read_text())['version'] == pinned['version'])
         unchanged = already_running and (action == self.profile.start_action or (action == self.profile.install_action and same_version))
+        source = previous if action == self.profile.rollback_action else current
+        rendered_config = None
+        if action in (*CONFIG_ACTIONS, *CADDY_CONFIG_ACTIONS) and current and not unchanged:
+            rendered_config = self._render_job_config(action, job, source, render_overrides=render_overrides)
+            if already_running:
+                current_config_path = self.root / current / self.profile.config_filename
+                if current_config_path.is_file():
+                    expected_text = json.dumps(rendered_config) if self.profile.config_format == 'json' else rendered_config
+                    try:
+                        if current_config_path.read_text(encoding='utf-8') == expected_text:
+                            unchanged = True
+                    except OSError:
+                        pass
         if unchanged:
             self.backend.check(self.root / current)
         if action != self.profile.stop_action and not unchanged:
@@ -796,14 +809,15 @@ class RuntimeEngine:
                 shutil.rmtree(candidate)
             candidate.mkdir(mode=0o750)
             try:
-                source = previous if action == self.profile.rollback_action else current
                 if action == self.profile.install_action or (action in (*CONFIG_ACTIONS, *CADDY_CONFIG_ACTIONS) and not current):
                     self.downloader(candidate, self.arch, guard)
                     release_info = {'version': pinned['version']}
                 else:
                     shutil.copy2(self.root / source / self.profile.binary_name, candidate / self.profile.binary_name)
                     release_info = json.loads((self.root / source / 'release.json').read_text())
-                config = self._render_job_config(action, job, source, render_overrides=render_overrides)
+                config = rendered_config if rendered_config is not None else self._render_job_config(
+                    action, job, source, render_overrides=render_overrides
+                )
                 validate_port_allocation(self.profile.service, config, service_roots=self.service_roots)
                 self._write_config(candidate, config)
                 write_json(candidate / 'release.json', release_info, 0o644)

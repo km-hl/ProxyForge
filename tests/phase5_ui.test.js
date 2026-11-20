@@ -62,9 +62,10 @@ test('NetworkSettingsPanel supports IP DoH aliases, protect preset, root ipv6, n
     assert.ok(netPanelSrc.includes('id="net-range6"'), 'fake-ip-range6 input present in UI');
 });
 
-test('agents.js loads cleanly with Komari helpers and anti-censorship protocol helpers', () => {
+test('agents.js loads cleanly with Dub.co helpers and anti-censorship protocol helpers', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'static', 'agents.js'), 'utf8');
     const htmlUtils = require('../static/html-utils.js');
+    const icons = require('../static/icons.js');
     const dummyEl = () => ({
         addEventListener: () => {},
         innerHTML: '',
@@ -75,6 +76,7 @@ test('agents.js loads cleanly with Komari helpers and anti-censorship protocol h
     });
     const sandbox = {
         ProxyForgeHtmlUtils: htmlUtils,
+        ProxyForgeIcons: icons,
         ProxyForgeRegions: loadRegionsHelper(),
         modalClose: dummyEl(),
         modalCancel: dummyEl(),
@@ -84,7 +86,9 @@ test('agents.js loads cleanly with Komari helpers and anti-censorship protocol h
         document: {
             getElementById: () => dummyEl(),
             querySelector: () => dummyEl(),
+            querySelectorAll: () => [],
             createElement: () => dummyEl(),
+            addEventListener: () => {},
         },
         console,
         Math,
@@ -99,14 +103,22 @@ test('agents.js loads cleanly with Komari helpers and anti-censorship protocol h
     vm.runInContext(src, sandbox);
 
     assert.equal(typeof sandbox.formatAgentBytes, 'function');
-    assert.equal(typeof sandbox._formatUptimeCompact, 'function');
-    assert.equal(typeof sandbox._buildSegBar, 'function');
-    const badge = sandbox._osBadgeElement('Debian GNU/Linux 13');
-    assert.equal(badge.title, 'Debian');
+    assert.equal(typeof sandbox._formatOsSubtitle, 'function');
+    assert.equal(typeof sandbox._closeAllAgentMenus, 'function');
+    assert.equal(sandbox._formatOsSubtitle({
+        metadata: { os: 'debian', os_version: '12', arch: 'amd64' },
+        public_ipv4: '198.51.100.10',
+        public_ipv6: true,
+    }), 'Debian 12 · amd64 · 198.51.100.10 · IPv6');
     assert.equal(sandbox._escHtml('<script>alert(1)</script>').includes('<script>'), false);
 
+    assert.equal(src.includes('_osBadgeElement'), false, 'Legacy OS emoji badge should be removed');
+    assert.equal(src.includes('komari-traffic-box'), false, 'Traffic/quota strip should be removed from cards');
+    assert.equal(src.includes('agent-expire'), false, 'Expire/quota/billing inputs should be removed from edit modal');
     assert.equal(src.includes('vless-ws'), false, 'Legacy vless-ws deployment UI should be removed');
     assert.equal(src.includes('重启该托管实例'), false, 'Misleading reboot-like copy must be gone');
     assert.ok(src.includes('重载/重启代理服务进程'), 'Clear process-reload wording required');
-    assert.ok(src.includes('komari-agent-card'), 'Komari agent card markup required');
+    assert.ok(src.includes('komari-agent-card'), 'Server agent card markup required');
+    assert.ok(src.includes('pf-dropdown-menu'), 'Overflow dropdown menu required');
+    assert.ok(src.includes('rewrite_subscription'), 'Per-forward rewrite_subscription control required');
 });

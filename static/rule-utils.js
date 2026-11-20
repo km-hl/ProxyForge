@@ -219,9 +219,74 @@
         }, []);
     }
 
+    const NO_RESOLVE_RULE_TYPES = new Set(['IP-CIDR', 'IP-CIDR6', 'GEOIP', 'RULE-SET']);
+
+    function parseRuleParts(rule) {
+        if (typeof rule !== 'string') {
+            return { type: 'DOMAIN-SUFFIX', payload: '', target: '', noResolve: false, extraArgs: [], isLogical: false, raw: '' };
+        }
+        const trimmed = rule.trim();
+        const type = getRuleType(trimmed) || 'DOMAIN-SUFFIX';
+        if (LOGICAL_RULE_TYPES.has(type)) {
+            return {
+                type,
+                payload: trimmed,
+                target: getRuleTarget(trimmed),
+                noResolve: false,
+                extraArgs: [],
+                isLogical: true,
+                raw: trimmed,
+            };
+        }
+        const parts = trimmed.split(',').map(p => p.trim());
+        if (type === 'MATCH') {
+            return {
+                type,
+                payload: '',
+                target: parts[1] || '',
+                noResolve: false,
+                extraArgs: [],
+                isLogical: false,
+                raw: trimmed,
+            };
+        }
+        const rest = parts.slice(3);
+        const noResolve = rest.some(p => p.toLowerCase() === 'no-resolve');
+        const extraArgs = rest.filter(p => p && p.toLowerCase() !== 'no-resolve');
+        return {
+            type,
+            payload: parts[1] || '',
+            target: parts[2] || '',
+            noResolve,
+            extraArgs,
+            isLogical: false,
+            raw: trimmed,
+        };
+    }
+
+    function buildRuleString({ type, payload = '', target = 'DIRECT', noResolve = false, extraArgs = [] }) {
+        const cleanType = String(type || '').trim().toUpperCase();
+        const cleanTarget = String(target || 'DIRECT').trim();
+        if (cleanType === 'MATCH') {
+            return `MATCH,${cleanTarget}`;
+        }
+        const cleanPayload = String(payload || '').trim();
+        const out = [cleanType, cleanPayload, cleanTarget];
+        if (noResolve && NO_RESOLVE_RULE_TYPES.has(cleanType)) {
+            out.push('no-resolve');
+        }
+        for (const arg of (extraArgs || [])) {
+            const cleaned = String(arg || '').trim();
+            if (cleaned && cleaned.toLowerCase() !== 'no-resolve') out.push(cleaned);
+        }
+        return out.join(',');
+    }
+
     return Object.freeze({
         getRuleType,
         getRuleTarget,
+        parseRuleParts,
+        buildRuleString,
         insertNewRule,
         filterRules,
         removeProxyGroups,

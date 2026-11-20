@@ -3,324 +3,308 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>ProxyForge - 专属订阅中心</title>
+    <title>ProxyForge</title>
     <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"
             integrity="sha384-+pxiN6T7yvpryuJmE1gM9PX7yQit15auDb+ZwwvJOd/4be2Cie5/IuVXgQb/S9du"
             crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <script src="https://cdn.jsdelivr.net/npm/@twemoji/api@14.1.0/dist/twemoji.min.js"
             integrity="sha384-A0m5nIzznesp6GyoeuDVkJ6nUu+of5PywoXYoq3x+KVE2jxUSoHvftqkR5bA9W7Y"
             crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-    <link rel="stylesheet" href="/static/style.css?v=phase7-20261120-2">
+    <link rel="stylesheet" href="/static/style.css?v=phase9-20261120-1">
 </head>
 <body>
 
     <!-- Login Overlay -->
     <div class="login-overlay active" id="login-overlay">
         <div class="login-card">
-            <h2>
-                <svg viewBox="0 0 24 24" fill="currentColor" width="28" height="28"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-                ProxyForge
-            </h2>
-            <p class="hint" style="margin-bottom: 22px;">统一落地 / 中转 / 多用户订阅控制台</p>
-            <input type="password" aria-label="管理密钥" id="token-input" placeholder="请输入管理密钥" autocomplete="current-password">
-            <button class="btn btn-primary" id="login-btn">验证身份</button>
-            <p id="login-error" style="color: var(--danger); font-size: 0.85rem; margin-top: 15px; display: none;">密码错误，请重试</p>
+            <div class="login-brand">
+                <span class="brand-mark" aria-hidden="true">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                </span>
+                <h2>ProxyForge</h2>
+            </div>
+            <input type="password" aria-label="管理密钥" id="token-input" placeholder="输入管理密钥" autocomplete="current-password">
+            <button class="btn btn-primary" id="login-btn">登录控制台</button>
+            <p id="login-error" class="login-error" style="display: none;">密钥错误</p>
         </div>
     </div>
 
-    <div id="dashboard" class="hidden" style="display: none; width: 100%; height: 100%; flex-direction: column;">
-        <!-- Header -->
-        <header class="header">
-            <div class="logo">
-                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+    <div id="dashboard" class="hidden app-shell" style="display: none;">
+        <!-- Mobile Top Bar -->
+        <header class="mobile-topbar">
+            <button type="button" class="btn btn-sm mobile-menu-btn" id="mobile-nav-toggle" aria-label="打开导航" aria-expanded="false">
+                <svg class="pf-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></svg>
+            </button>
+            <div class="sidebar-brand-title">
+                <span class="brand-mark brand-mark-sm" aria-hidden="true">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                </span>
                 <span>ProxyForge</span>
-                <span class="logo-tag">Control Plane</span>
             </div>
-            <div class="header-actions">
-                <button class="btn btn-success" id="global-import-btn" aria-label="全局 YAML 导入">📥 <span class="desktop-label">全局 YAML 导入</span><span class="mobile-label">导入配置</span></button>
-                <button class="btn btn-primary" id="copy-btn">📝 复制订阅</button>
-                <button class="btn btn-danger" id="logout-btn">🚪 退出</button>
+            <div class="mobile-topbar-actions">
+                <button type="button" class="btn btn-sm btn-primary" id="mobile-copy-btn">复制订阅</button>
             </div>
         </header>
+        <div class="sidebar-backdrop" id="sidebar-backdrop" hidden></div>
 
-        <!-- Main Container -->
-        <div class="main-container">
-            <!-- Sidebar -->
-            <nav class="sidebar" id="sidebar" aria-label="控制台导航">
+        <!-- Unified Left App Shell Sidebar -->
+        <aside class="sidebar" id="sidebar" aria-label="控制台导航">
+            <div class="sidebar-brand">
+                <span class="brand-mark brand-mark-sm" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                </span>
+                <span class="sidebar-brand-name">ProxyForge</span>
+            </div>
+
+            <nav class="sidebar-nav">
                 <button type="button" class="sidebar-item active" data-panel="panel-overview" aria-controls="panel-overview" aria-current="page">
-                    ⚙️ <span>概览设置</span>
-                </button>
-                <button type="button" class="sidebar-item" data-panel="panel-airports" aria-controls="panel-airports">
-                    ✈️ <span>机场订阅</span>
-                </button>
-                <button type="button" class="sidebar-item" data-panel="panel-groups" aria-controls="panel-groups">
-                    📁 <span>代理组</span>
-                </button>
-                <button type="button" class="sidebar-item" data-panel="panel-nodes" aria-controls="panel-nodes">
-                    🌐 <span>自建节点</span>
-                </button>
-                <button type="button" class="sidebar-item" data-panel="panel-rules" aria-controls="panel-rules">
-                    📏 <span>路由规则</span>
-                </button>
-                <button type="button" class="sidebar-item" data-panel="panel-network" aria-controls="panel-network">
-                    🛡️ <span>DNS 与网络</span>
-                </button>
-                <button type="button" class="sidebar-item" data-panel="panel-raw" aria-controls="panel-raw">
-                    🛠️ <span>底层配置兜底</span>
+                    <svg class="pf-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
+                    <span>概览设置</span>
                 </button>
                 <button type="button" class="sidebar-item" data-panel="panel-agents" aria-controls="panel-agents">
-                    🖥️ <span>Agent 服务器</span>
+                    <svg class="pf-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>
+                    <span>服务器与节点</span>
+                </button>
+                <button type="button" class="sidebar-item" data-panel="panel-airports" aria-controls="panel-airports">
+                    <svg class="pf-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2Z"/></svg>
+                    <span>机场订阅</span>
+                </button>
+                <button type="button" class="sidebar-item" data-panel="panel-groups" aria-controls="panel-groups">
+                    <svg class="pf-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                    <span>代理组</span>
+                </button>
+                <button type="button" class="sidebar-item" data-panel="panel-rules" aria-controls="panel-rules">
+                    <svg class="pf-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/></svg>
+                    <span>路由规则</span>
+                </button>
+                <button type="button" class="sidebar-item" data-panel="panel-network" aria-controls="panel-network">
+                    <svg class="pf-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>
+                    <span>DNS 与网络</span>
+                </button>
+                <button type="button" class="sidebar-item" data-panel="panel-raw" aria-controls="panel-raw">
+                    <svg class="pf-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                    <span>底层配置</span>
                 </button>
                 <button type="button" class="sidebar-item" data-panel="panel-preview" aria-controls="panel-preview">
-                    👁️ <span>最终订阅预览</span>
+                    <svg class="pf-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                    <span>订阅预览</span>
                 </button>
-                <small class="hint sidebar-attribution" style="margin-top: auto; padding: 12px 20px;">
-                    图形：<a href="https://github.com/jdecked/twemoji" target="_blank" rel="noopener noreferrer">Twemoji</a>
-                    · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>
-                </small>
             </nav>
 
-            <!-- Content -->
-            <div class="content-area" id="content-area">
-                
-                <!-- 概览设置 -->
-                <div class="section-panel active" id="panel-overview">
-                    <div class="card card-accent">
-                        <div class="card-title">🔗 最终订阅配置</div>
-                        <div class="form-grid">
-                            <div class="form-group full-width">
-                                <label>专属客户端订阅链接与格式出口</label>
-                                <div class="field-row" style="align-items: center;">
-                                    <select id="sub-format" aria-label="订阅格式">
-                                        <option value="clash">Clash / Mihomo (YAML)</option>
-                                        <option value="egern">Egern (YAML)</option>
-                                        <option value="singbox">Sing-box (JSON)</option>
-                                        <option value="surge">Surge (INI)</option>
-                                        <option value="uri">通用 URI / Base64</option>
-                                    </select>
-                                    <label class="inline-check" for="sub-prefer-relay">
-                                        <input type="checkbox" id="sub-prefer-relay"> 中转优先 (prefer_relay)
-                                    </label>
-                                </div>
-                                <div class="field-row" style="margin-top: 4px;">
-                                    <input type="text" id="sub-name" placeholder="订阅名称 (例如: ProxyForge)" value="ProxyForge">
-                                    <input type="text" id="sub-link" class="sub-link-input" readonly>
-                                    <button type="button" id="copy-link-inline-btn" class="btn btn-primary">📋 复制链接</button>
-                                    <button type="button" class="btn" id="sub-qr-btn">📱 二维码</button>
-                                </div>
-                                <span class="hint" id="sub-format-hint">请将此链接复制并添加到您的 Clash / Mihomo 客户端中。修改名称或中转开关后链接会自动更新。</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="card">
-                        <div class="card-title card-title-split">
-                            <span>👥 多用户订阅与配额</span>
-                            <div class="panel-actions">
-                                <button type="button" class="btn btn-sm" id="btn-refresh-sub-users">🔄 刷新</button>
-                                <button type="button" class="btn btn-primary btn-sm" id="btn-add-sub-user">➕ 新建订阅用户</button>
-                            </div>
-                        </div>
-                        <p class="hint" style="margin-bottom:12px;">支持独立订阅 Token、流量配额、到期时间、中转重写与超限自动停用对应转发端口。</p>
-                        <div id="sub-users-list" aria-live="polite">正在读取订阅用户…</div>
-                    </div>
-
-                    <div class="card">
-                        <div class="card-title">🛡️ 网络配置状态</div>
-                        <div id="network-overview" aria-live="polite">正在读取已保存模板…</div>
-                    </div>
-
-                    <div class="card">
-                        <div class="card-title">🔐 访问凭据</div>
-                        <div class="form-grid">
-                            <div class="form-group">
-                                <label>客户端订阅密钥</label>
-                                <div class="field-row">
-                                    <input type="text" id="secret-token" minlength="16" autocomplete="new-password">
-                                    <button id="save-config-btn" class="btn btn-primary">保存密钥</button>
-                                </div>
-                                <span class="hint">仅用于 /sub 与 /provider 订阅接口，不授予后台管理权限。</span>
-                            </div>
-                            <div class="form-group">
-                                <label>更换 Web 控制台管理密钥</label>
-                                <div class="field-row">
-                                    <input type="password" id="new-admin-token" minlength="16" autocomplete="new-password" placeholder="输入新的管理密钥">
-                                    <button id="save-admin-token-btn" class="btn btn-primary">更换密钥</button>
-                                </div>
-                                <span class="hint">更换后当前及历史后台会话将重新签发或失效，不影响订阅链接。</span>
-                            </div>
-                        </div>
-                    </div>
+            <div class="sidebar-footer">
+                <button type="button" class="sidebar-action-btn" id="global-import-btn" aria-label="全局 YAML 导入">
+                    <svg class="pf-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+                    <span>导入配置</span>
+                </button>
+                <button type="button" class="sidebar-action-btn sidebar-action-primary" id="copy-btn">
+                    <svg class="pf-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                    <span>复制订阅</span>
+                </button>
+                <button type="button" class="sidebar-action-btn sidebar-action-danger" id="logout-btn">
+                    <svg class="pf-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
+                    <span>退出</span>
+                </button>
+                <div class="sidebar-attribution">
+                    <a href="https://github.com/jdecked/twemoji" target="_blank" rel="noopener noreferrer">Twemoji</a> · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>
                 </div>
-
-                <!-- DNS/TUN configuration is rendered by network-settings.js. -->
-                <div class="section-panel" id="panel-network"></div>
-
-                <!-- 机场订阅 -->
-                <div class="section-panel" id="panel-airports">
-                    <div class="panel-header">
-                        <div>
-                            <h2 class="panel-title">✈️ 机场订阅管理</h2>
-                            <p class="panel-subtitle">勾选左侧复选框可批量删除机场来源；强制刷新将并发重建节点与流量缓存。</p>
-                        </div>
-                        <div class="panel-actions">
-                            <button class="btn" id="btn-refresh-airports">🔄 强制刷新</button>
-                            <button class="btn btn-danger" id="btn-bulk-delete-airports">🗑️ 批量删除</button>
-                            <button class="btn btn-primary" id="btn-add-airport">➕ 添加机场</button>
-                        </div>
-                    </div>
-                    <div id="airports-list">
-                        <!-- Rendered by JS -->
-                        <div class="empty-state">加载中...</div>
-                    </div>
-                </div>
-
-                <!-- 代理组 (Proxy Groups) -->
-                <div class="section-panel" id="panel-groups">
-                    <div class="panel-header">
-                        <div>
-                            <h2 class="panel-title">📁 代理组管理 (Proxy Groups)</h2>
-                            <p class="panel-subtitle">支持拖拽排序、正则智能筛选节点以及多选批量管理。</p>
-                        </div>
-                        <div class="panel-actions">
-                            <button class="btn btn-danger" id="btn-bulk-delete-groups">🗑️ 批量删除</button>
-                            <button class="btn" id="btn-bulk-smart-filter">✨ 批量智能筛选</button>
-                            <button class="btn" id="btn-bulk-add-nodes">📦 批量加入节点/组</button>
-                            <button class="btn btn-primary" id="btn-add-group">➕ 添加代理组</button>
-                        </div>
-                    </div>
-                    <div id="groups-list">
-                        <!-- Rendered by JS -->
-                        <div class="empty-state">加载中...</div>
-                    </div>
-                </div>
-
-                <!-- 自建节点 (Custom Nodes) -->
-                <div class="section-panel" id="panel-nodes">
-                    <div class="panel-header">
-                        <div>
-                            <h2 class="panel-title">🌐 自建节点管理</h2>
-                            <p class="panel-subtitle">手工节点可直接编辑；Agent 托管及存量接管节点由下方控制面统一编排。</p>
-                        </div>
-                        <div class="panel-actions">
-                            <button class="btn btn-danger" id="btn-bulk-delete-nodes">🗑️ 批量删除</button>
-                            <button class="btn btn-primary" id="btn-add-node">➕ 添加节点</button>
-                            <button class="btn btn-success" id="btn-import-nodes">📥 YAML导入</button>
-                        </div>
-                    </div>
-                    <h3 class="node-section-title">手工节点</h3>
-                    <div id="nodes-list">
-                        <!-- Rendered by JS -->
-                        <div class="empty-state">加载中...</div>
-                    </div>
-                    <section id="managed-nodes-section">
-                        <h3 class="node-section-title">Agent 托管节点</h3>
-                        <div class="managed-node-toolbar">
-                            <input id="managed-node-search" aria-label="搜索托管节点" placeholder="搜索名称、入口、落地或地址">
-                            <select id="managed-node-filter" aria-label="托管节点发布状态">
-                                <option value="all">全部状态</option>
-                                <option value="published">可加入订阅</option>
-                                <option value="unpublished">暂不加入订阅</option>
-                            </select>
-                            <button class="btn" id="btn-refresh-managed-nodes">刷新托管状态</button>
-                        </div>
-                        <p id="managed-node-notice" role="status"></p>
-                        <div id="managed-nodes-list"></div>
-                    </section>
-                </div>
-
-                <!-- 路由规则 (Rules) -->
-                <div class="section-panel" id="panel-rules">
-                    <div class="card">
-                        <div class="panel-header">
-                            <div>
-                                <h2 class="panel-title">📦 规则集 (Rule Providers)</h2>
-                                <p class="panel-subtitle">用于动态下载与缓存远程分流规则集（Egern 自动适配转换）。</p>
-                            </div>
-                            <div class="panel-actions">
-                                <button class="btn btn-primary" id="btn-add-rule-provider">➕ 添加规则集</button>
-                            </div>
-                        </div>
-                        <div id="rule-providers-list" style="margin-top: 14px;">
-                            <!-- Rendered by JS -->
-                            <div class="empty-state">加载中...</div>
-                        </div>
-                    </div>
-
-                    <div class="card">
-                        <div class="panel-header">
-                            <div>
-                                <h2 class="panel-title">📏 分流规则 (Rules)</h2>
-                                <p class="panel-subtitle">支持拖拽调整优先级，自上而下顺序匹配。</p>
-                            </div>
-                            <div class="panel-actions">
-                                <button class="btn btn-danger" id="btn-bulk-delete-rules">🗑️ 批量删除</button>
-                                <button class="btn btn-primary" id="btn-add-rule">➕ 添加规则</button>
-                                <button class="btn btn-success" id="btn-import-rules">📥 批量导入</button>
-                            </div>
-                        </div>
-                        <div class="rule-search-bar">
-                            <input type="search" id="rule-search-input" placeholder="搜索规则类型、域名、IP、规则集或目标策略" autocomplete="off">
-                            <span id="rule-search-count" class="rule-search-count" aria-live="polite"></span>
-                            <button type="button" class="btn btn-sm" id="btn-clear-rule-search">清空</button>
-                        </div>
-                        <div id="rules-list" style="margin-top: 15px;">
-                            <!-- Rendered by JS -->
-                            <div class="empty-state">加载中...</div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 底层配置 (Raw Template) -->
-                <div class="section-panel" id="panel-raw">
-                    <div class="card" style="flex: 1; display: flex; flex-direction: column;">
-                        <div class="card-title">🛠️ 底层配置兜底 (Raw Template)</div>
-                        <div class="form-group" style="flex: 1;">
-                            <label>包含高级/冷门字段的原始模板；保存时自动执行版本冲突检查与 Mihomo 兼容校验。</label>
-                            <textarea id="rules-editor" class="code-editor" spellcheck="false"></textarea>
-                            <div class="panel-actions" style="margin-top: 10px; justify-content: flex-end;">
-                                <button id="discard-raw-btn" class="btn">放弃修改</button>
-                                <button id="template-history-btn" class="btn">历史版本</button>
-                                <button id="save-rules-btn" class="btn btn-primary">覆盖保存</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Agent 服务器 -->
-                <div class="section-panel" id="panel-agents">
-                    <div class="card">
-                        <div class="panel-header">
-                            <div>
-                                <div class="card-title" style="margin-bottom: 4px;">🖥️ Agent 服务器</div>
-                                <p class="hint">Agent 主动通过 HTTPS 上报状态、领取部署/接管/go-gost 转发任务；连接来源 IP 仅代表探测通路，实际入口地址以部署或转发配置为准。<a href="https://github.com/km-hl/ProxyForge/blob/master/docs/AGENT_INSTALL.md" target="_blank" rel="noopener noreferrer">安装与恢复说明</a></p>
-                            </div>
-                            <div class="panel-actions agent-toolbar-actions">
-                                <button class="btn btn-primary" id="agent-add-btn">➕ 添加服务器</button>
-                                <button class="btn" id="agent-tunnels-btn">🔀 多跳隧道 & 流量总览</button>
-                                <button class="btn" id="agent-refresh-btn">🔄 刷新状态</button>
-                            </div>
-                        </div>
-                        <div id="agent-list" style="overflow:auto" aria-live="polite"></div>
-                    </div>
-                </div>
-
-                <!-- 最终订阅预览 (Preview) -->
-                <div class="section-panel" id="panel-preview">
-                    <div class="card" style="flex: 1; display: flex; flex-direction: column;">
-                        <div class="card-title card-title-split">
-                            <span>👁️ 最终订阅预览 (Final Preview)</span>
-                            <button id="refresh-preview-btn" class="btn btn-success btn-sm">🔄 刷新预览</button>
-                        </div>
-                        <div class="form-group" style="flex: 1;">
-                            <label>展示当前所选格式（Mihomo / Egern / Sing-box / Surge / URI）与中转开关下客户端实际拉取到的真实配置（只读）。</label>
-                            <textarea id="preview-editor" class="code-editor" readonly spellcheck="false"></textarea>
-                        </div>
-                    </div>
-                </div>
-
             </div>
-        </div>
+        </aside>
+
+        <!-- Content Canvas -->
+        <main class="content-area" id="content-area">
+
+            <!-- 概览设置 -->
+            <div class="section-panel active" id="panel-overview">
+                <div class="panel-header">
+                    <h1 class="panel-title">概览设置</h1>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">订阅链接</div>
+                    <div class="form-grid">
+                        <div class="form-group full-width">
+                            <div class="field-row" style="align-items: center;">
+                                <select id="sub-format" aria-label="订阅格式">
+                                    <option value="clash">Clash / Mihomo (YAML)</option>
+                                    <option value="egern">Egern (YAML)</option>
+                                    <option value="singbox">Sing-box (JSON)</option>
+                                    <option value="surge">Surge (INI)</option>
+                                    <option value="uri">通用 URI / Base64</option>
+                                </select>
+                                <input type="text" id="sub-name" placeholder="订阅名称" value="ProxyForge">
+                            </div>
+                            <div class="field-row" style="margin-top: 8px;">
+                                <input type="text" id="sub-link" class="sub-link-input" readonly>
+                                <button type="button" id="copy-link-inline-btn" class="btn btn-primary">复制链接</button>
+                                <button type="button" class="btn" id="sub-qr-btn">二维码</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title card-title-split">
+                        <span>多用户订阅</span>
+                        <div class="panel-actions">
+                            <button type="button" class="btn btn-sm" id="btn-refresh-sub-users">刷新</button>
+                            <button type="button" class="btn btn-primary btn-sm" id="btn-add-sub-user">新建用户</button>
+                        </div>
+                    </div>
+                    <div id="sub-users-list" aria-live="polite">正在读取订阅用户…</div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">网络配置状态</div>
+                    <div id="network-overview" aria-live="polite">正在读取已保存模板…</div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">访问凭据</div>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="secret-token">订阅密钥</label>
+                            <div class="field-row">
+                                <input type="text" id="secret-token" minlength="16" autocomplete="new-password">
+                                <button id="save-config-btn" class="btn btn-primary">保存</button>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="new-admin-token">控制台管理密钥</label>
+                            <div class="field-row">
+                                <input type="password" id="new-admin-token" minlength="16" autocomplete="new-password" placeholder="输入新的管理密钥">
+                                <button id="save-admin-token-btn" class="btn btn-primary">更换</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 服务器与节点 (合并后的主面板) -->
+            <div class="section-panel" id="panel-agents">
+                <div class="panel-header">
+                    <h1 class="panel-title">服务器与节点</h1>
+                    <div class="panel-actions">
+                        <button type="button" class="btn btn-primary" id="agent-add-btn">添加服务器</button>
+                        <button type="button" class="btn" id="agent-tunnels-btn">多跳隧道 & 流量</button>
+                        <button type="button" class="btn" id="agent-refresh-btn">刷新</button>
+                    </div>
+                </div>
+
+                <div id="agent-list" aria-live="polite"></div>
+
+                <section id="manual-nodes-section" class="manual-nodes-section">
+                    <div class="manual-nodes-header">
+                        <div class="manual-nodes-title-wrap">
+                            <h2 class="node-section-title">手工 / 外部节点</h2>
+                            <span id="manual-nodes-count" class="count-pill">0</span>
+                        </div>
+                        <div class="panel-actions">
+                            <button type="button" class="btn btn-sm btn-danger" id="btn-bulk-delete-nodes">批量删除</button>
+                            <button type="button" class="btn btn-sm" id="btn-import-nodes">YAML / 链接导入</button>
+                            <button type="button" class="btn btn-sm btn-primary" id="btn-add-node">添加节点</button>
+                        </div>
+                    </div>
+                    <div id="nodes-list"></div>
+                </section>
+            </div>
+
+            <!-- 机场订阅 -->
+            <div class="section-panel" id="panel-airports">
+                <div class="panel-header">
+                    <h1 class="panel-title">机场订阅</h1>
+                    <div class="panel-actions">
+                        <button class="btn" id="btn-refresh-airports">强制刷新</button>
+                        <button class="btn btn-danger" id="btn-bulk-delete-airports">批量删除</button>
+                        <button class="btn btn-primary" id="btn-add-airport">添加机场</button>
+                    </div>
+                </div>
+                <div id="airports-list">
+                    <div class="empty-state">加载中…</div>
+                </div>
+            </div>
+
+            <!-- 代理组 (Proxy Groups) -->
+            <div class="section-panel" id="panel-groups">
+                <div class="panel-header">
+                    <h1 class="panel-title">代理组</h1>
+                    <div class="panel-actions">
+                        <button class="btn btn-danger" id="btn-bulk-delete-groups">批量删除</button>
+                        <button class="btn" id="btn-bulk-smart-filter">批量筛选</button>
+                        <button class="btn" id="btn-bulk-add-nodes">批量加入节点</button>
+                        <button class="btn btn-primary" id="btn-add-group">添加代理组</button>
+                    </div>
+                </div>
+                <div id="groups-list">
+                    <div class="empty-state">加载中…</div>
+                </div>
+            </div>
+
+            <!-- 路由规则 (Rules) -->
+            <div class="section-panel" id="panel-rules">
+                <div class="panel-header">
+                    <h1 class="panel-title">路由规则</h1>
+                </div>
+
+                <div class="card">
+                    <div class="card-title card-title-split">
+                        <span>规则集 (Rule Providers)</span>
+                        <button class="btn btn-primary btn-sm" id="btn-add-rule-provider">添加规则集</button>
+                    </div>
+                    <div id="rule-providers-list">
+                        <div class="empty-state">加载中…</div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title card-title-split">
+                        <span>分流规则 (Rules)</span>
+                        <div class="panel-actions">
+                            <button class="btn btn-danger btn-sm" id="btn-bulk-delete-rules">批量删除</button>
+                            <button class="btn btn-sm" id="btn-import-rules">批量导入</button>
+                            <button class="btn btn-primary btn-sm" id="btn-add-rule">添加规则</button>
+                        </div>
+                    </div>
+                    <div class="rule-search-bar">
+                        <input type="search" id="rule-search-input" placeholder="搜索规则类型、域名、IP、GEOSITE 或目标策略" autocomplete="off">
+                        <span id="rule-search-count" class="rule-search-count" aria-live="polite"></span>
+                        <button type="button" class="btn btn-sm" id="btn-clear-rule-search">清空</button>
+                    </div>
+                    <div id="rules-list" style="margin-top: 12px;">
+                        <div class="empty-state">加载中…</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- DNS/TUN configuration is rendered by network-settings.js. -->
+            <div class="section-panel" id="panel-network"></div>
+
+            <!-- 底层配置 (Raw Template) -->
+            <div class="section-panel" id="panel-raw">
+                <div class="panel-header">
+                    <h1 class="panel-title">底层配置</h1>
+                    <div class="panel-actions">
+                        <button id="discard-raw-btn" class="btn">放弃修改</button>
+                        <button id="template-history-btn" class="btn">历史版本</button>
+                        <button id="save-rules-btn" class="btn btn-primary">覆盖保存</button>
+                    </div>
+                </div>
+                <div class="card" style="flex: 1; display: flex; flex-direction: column;">
+                    <textarea id="rules-editor" class="code-editor" spellcheck="false" aria-label="底层 YAML 模板"></textarea>
+                </div>
+            </div>
+
+            <!-- 最终订阅预览 (Preview) -->
+            <div class="section-panel" id="panel-preview">
+                <div class="panel-header">
+                    <h1 class="panel-title">订阅预览</h1>
+                    <button id="refresh-preview-btn" class="btn btn-primary">刷新预览</button>
+                </div>
+                <div class="card" style="flex: 1; display: flex; flex-direction: column;">
+                    <textarea id="preview-editor" class="code-editor" readonly spellcheck="false" aria-label="最终订阅预览"></textarea>
+                </div>
+            </div>
+
+        </main>
     </div>
 
     <!-- Toast -->
@@ -333,9 +317,7 @@
                 <span id="modal-title">标题</span>
                 <button type="button" class="modal-close" id="modal-close" aria-label="关闭弹窗">&times;</button>
             </div>
-            <div class="modal-body" id="modal-body">
-                <!-- Injected via JS -->
-            </div>
+            <div class="modal-body" id="modal-body"></div>
             <div class="modal-footer" id="modal-footer">
                 <button class="btn" id="modal-cancel">取消</button>
                 <button class="btn btn-primary" id="modal-confirm">确认</button>
@@ -344,13 +326,13 @@
     </div>
 
     <script src="/static/html-utils.js?v=mobile-20261021-2"></script>
-    <script src="/static/rule-utils.js?v=phase8-20261120-2"></script>
+    <script src="/static/icons.js?v=phase9-20261120-1"></script>
+    <script src="/static/rule-utils.js?v=phase9-20261120-1"></script>
     <script src="/static/template-session.js?v=mobile-20261021-2"></script>
-    <script src="/static/network-settings.js?v=phase5-20261118-1"></script>
+    <script src="/static/network-settings.js?v=phase9-20261120-1"></script>
     <script src="/static/subscription-utils.js?v=phase4-20261116-1"></script>
-    <script src="/static/app.js?v=phase8-20261120-2"></script>
+    <script src="/static/app.js?v=phase9-20261120-1"></script>
     <script src="/static/template-history.js?v=mobile-20261021-2"></script>
-    <script src="/static/agents.js?v=phase8-20261120-1"></script>
-    <script src="/static/managed-nodes.js?v=phase7-20261120-1"></script>
+    <script src="/static/agents.js?v=phase9-20261120-1"></script>
 </body>
 </html>

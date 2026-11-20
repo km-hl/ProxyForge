@@ -184,14 +184,13 @@
             ${options.map(([v, text]) => `<option value="${v}" ${String(value) === v ? 'selected' : ''}>${text}</option>`).join('')}</select></div>`;
     }
     const BOOL = [['true', '开启'], ['false', '关闭']];
-    function rows(name, key, title, hint = '') {
+    function rows(name, key, title) {
         const block = mapping(draft[name]) ? draft[name] : {}, values = block[key];
         const malformed = values != null && !Array.isArray(values);
-        return `<div class="network-list"><h3>${title}</h3><p class="hint">${hint}</p>
-            ${values === undefined ? '<p class="hint">未显式设置，使用内核默认或其他 DNS 配置。</p>' : ''}
+        return `<div class="network-list"><h3>${title}</h3>
             ${malformed ? '<p class="network-status error">字段不是列表，请在底层配置中修复。</p>' : ''}
             ${(Array.isArray(values) ? values : []).map((value, index) => `<div class="network-row"><span class="network-address">${escape(value)}</span>
-                ${own(LISTS, key) ? `<span class="type-badge">${escape(provider(value))} · ${escape(protocol(value))}</span>` : ''}
+                ${own(LISTS, key) ? `<span class="type-badge badge-default">${escape(provider(value))} · ${escape(protocol(value))}</span>` : ''}
                 ${button('编辑', 'edit-list', `data-section="${name}" data-key="${key}" data-index="${index}"`)}
                 ${button('删除', 'delete-list', `data-section="${name}" data-key="${key}" data-index="${index}"`)}</div>`).join('')}
             ${button('+ 添加', 'edit-list', `data-section="${name}" data-key="${key}" data-index="-1" ${malformed ? 'disabled' : ''}`)}
@@ -275,45 +274,41 @@
         const filterEditable = ['blacklist', 'whitelist'].includes(filterMode);
         const policies = dns['nameserver-policy'];
         const policyKeys = mapping(policies) ? Object.keys(policies) : [];
-        container.innerHTML = `<div class="network-heading"><div><h2>🛡️ DNS 与网络</h2><p class="hint">配置保存到订阅模板并随最终订阅下发。实际生效取决于客户端覆盖配置、内核与系统环境。</p></div></div>
+        container.innerHTML = `<div class="network-heading"><div><h2>DNS 与网络</h2></div></div>
             <div class="network-toolbar"><strong>${saving ? '正在保存…' : dirty ? '● 有未保存修改' : '已与模板同步'}</strong>
             ${button('保存网络设置', 'save', !dirty || saving ? 'disabled' : '')}
             ${button('放弃修改', 'discard', saving ? 'disabled' : '')}${button('前往底层配置', 'raw')}</div>
             ${bad ? '<p class="network-status error">dns/tun 包含非对象值（或 null），请先在底层配置中明确改为对象；原文保持不变。</p>' : ''}
             <fieldset class="network-fields" ${bad || saving ? 'disabled' : ''}>
             <section class="card"><h3 class="card-title">配置方案</h3><div class="network-actions">
-            ${button('🟢 兼容模式', 'preset', 'data-preset="compatible"')}${button('🛡️ 防 DNS 泄露', 'preset', 'data-preset="protect"')}${button('🔒 严格防泄露', 'preset', 'data-preset="strict"')}</div>
-            <p class="hint">兼容模式仅关闭订阅内 TUN，保留 DNS。防护预设只调整列出的字段，Bootstrap 默认包含明文 DNS。确认后仍需保存。</p></section>
+            ${button('兼容模式', 'preset', 'data-preset="compatible"')}${button('防 DNS 泄露', 'preset', 'data-preset="protect"')}${button('严格防泄露', 'preset', 'data-preset="strict"')}</div></section>
             <section class="card"><h3 class="card-title">DNS 基础设置</h3><div class="form-grid">
             ${field('dns', 'enable', '启用 Mihomo DNS', BOOL)}${field('__root__', 'ipv6', '全局 IPv6 流量 (根级 ipv6)', BOOL)}${field('dns', 'ipv6', 'IPv6 DNS (AAAA 解析)', BOOL)}
             ${field('dns', 'enhanced-mode', 'DNS 模式', [['fake-ip', 'Fake-IP'], ['redir-host', 'Redir-Host'], ['normal', 'Normal (标准 DNS)']])}</div>
-            <p class="hint">关闭 IPv6 DNS 后不返回 AAAA 结果；关闭全局 IPv6 流量后客户端将完全禁用 IPv6 栈。未设置模式时，基线内核采用 Redir-Host。</p>
-            <details><summary>高级 DNS 选项</summary>${field('dns', 'respect-rules', 'DNS 查询遵循路由规则', BOOL)}<p class="hint">开启 respect-rules 必须配置代理节点域名 DNS，不建议同时开启 prefer-h3。</p></details></section>
+            <details><summary>高级 DNS 选项</summary>${field('dns', 'respect-rules', 'DNS 查询遵循路由规则', BOOL)}</details></section>
             <section class="card"><h3 class="card-title">DNS 服务器</h3>
-            ${rows('dns', 'nameserver', LISTS.nameserver, '用于普通域名解析；加密地址不代表查询一定经代理。')}
-            ${rows('dns', 'default-nameserver', LISTS['default-nameserver'], '用于解析 DNS 服务器域名。常用地址的主机必须是 IP，可使用加密协议。')}
-            ${rows('dns', 'proxy-server-nameserver', LISTS['proxy-server-nameserver'], '用于解析代理节点服务器域名。')}
-            <details><summary>Direct Nameserver</summary>${rows('dns', 'direct-nameserver', LISTS['direct-nameserver'], '用于 DIRECT 流量；是否遵循策略由下方选项决定。')}
+            ${rows('dns', 'nameserver', LISTS.nameserver)}
+            ${rows('dns', 'default-nameserver', LISTS['default-nameserver'])}
+            ${rows('dns', 'proxy-server-nameserver', LISTS['proxy-server-nameserver'])}
+            <details><summary>Direct Nameserver</summary>${rows('dns', 'direct-nameserver', LISTS['direct-nameserver'])}
             ${field('dns', 'direct-nameserver-follow-policy', 'Direct DNS 遵循策略', BOOL)}</details></section>
-            <section class="card"><h3 class="card-title">DNS 分流策略</h3><p class="hint">直接填写 Mihomo matcher。geosite 依赖客户端数据；未命中域名由其他 DNS 配置处理。</p>
+            <section class="card"><h3 class="card-title">DNS 分流策略</h3>
             ${policyKeys.map((key, index) => `<div class="network-row"><span class="network-address">${escape(key)} → ${escape(JSON.stringify(policies[key]))}</span>${button('编辑', 'policy', `data-index="${index}"`)}${button('删除', 'delete-policy', `data-index="${index}"`)}</div>`).join('')}
             ${policies != null && !mapping(policies) ? '<p class="network-status error">现有策略类型无效，请在底层配置中修复。</p>' : ''}
-            ${button('+ 添加策略', 'policy', 'data-index="-1"')}${button('🇨🇳 国内 / 🌍 国外 DNS 分流', 'recommend')}</section>
+            ${button('+ 添加策略', 'policy', 'data-index="-1"')}${button('国内 / 国外推荐分流', 'recommend')}</section>
             ${dns['enhanced-mode'] === 'fake-ip' ? `<section class="card"><h3 class="card-title">Fake-IP</h3>
             <div class="form-grid">
-            <div class="form-group"><label for="net-range">Fake-IP IPv4 网段</label><input id="net-range" data-section="dns" data-field="fake-ip-range" value="${escape(dns['fake-ip-range'] ?? '')}" placeholder="未设置 · 198.18.0.1/16">${button('恢复未设置', 'unset', 'data-section="dns" data-key="fake-ip-range"')}</div>
-            <div class="form-group"><label for="net-range6">Fake-IP IPv6 网段</label><input id="net-range6" data-section="dns" data-field="fake-ip-range6" value="${escape(dns['fake-ip-range6'] ?? '')}" placeholder="未设置 · fdfe:dcba:9876::1/64">${button('恢复未设置', 'unset', 'data-section="dns" data-key="fake-ip-range6"')}</div>
+            <div class="form-group"><label for="net-range">Fake-IP IPv4 网段</label><input id="net-range" data-section="dns" data-field="fake-ip-range" value="${escape(dns['fake-ip-range'] ?? '')}" placeholder="198.18.0.1/16">${button('恢复未设置', 'unset', 'data-section="dns" data-key="fake-ip-range"')}</div>
+            <div class="form-group"><label for="net-range6">Fake-IP IPv6 网段</label><input id="net-range6" data-section="dns" data-field="fake-ip-range6" value="${escape(dns['fake-ip-range6'] ?? '')}" placeholder="fdfe:dcba:9876::1/64">${button('恢复未设置', 'unset', 'data-section="dns" data-key="fake-ip-range6"')}</div>
             </div>
-            ${filterEditable ? rows('dns', 'fake-ip-filter', filterMode === 'whitelist' ? 'Fake-IP 白名单' : 'Fake-IP 排除列表') + button('批量追加（每行一个）', 'import-filter') : '<p class="hint">当前为高级过滤模式，保留原值，请到 Raw YAML 编辑。</p>'}</section>` : ''}
+            ${filterEditable ? rows('dns', 'fake-ip-filter', filterMode === 'whitelist' ? 'Fake-IP 白名单' : 'Fake-IP 排除列表') + button('批量追加（每行一个）', 'import-filter') : '<p class="network-status neutral">当前为高级过滤模式，请到底层配置编辑。</p>'}</section>` : ''}
             <section class="card"><h3 class="card-title">TUN 与 DNS 防泄露</h3><div class="form-grid">
             ${field('tun', 'enable', '启用 TUN', BOOL)}${field('tun', 'stack', 'TUN 协议栈', [['mixed', 'mixed'], ['system', 'system'], ['gvisor', 'gvisor']])}
             ${field('tun', 'auto-route', '自动配置路由', BOOL)}${field('tun', 'auto-detect-interface', '自动检测出口网卡', BOOL)}${field('tun', 'strict-route', 'Strict Route', BOOL)}</div>
-            <p class="hint">Strict Route 依赖 auto-route，可降低 Windows 多网卡 DNS 绕过风险，也可能影响部分应用。多出口环境应核对出口网卡。TUN 必须由客户端支持并具备所需权限。</p>
-            <div class="network-actions"><label><input type="checkbox" data-hijack="udp" ${hijack.udp ? 'checked' : ''}> 劫持 UDP 53</label><label><input type="checkbox" data-hijack="tcp" ${hijack.tcp ? 'checked' : ''}> 劫持 TCP 53</label></div>
-            <p class="hint">${draft.tun?.['dns-hijack'] === undefined ? '未显式设置：显示基线默认的 UDP 映射。' : ''} 映射只作用于进入 TUN 的匹配流量；需要 DNS 与 TUN 开启，不代表全系统 DNS 都被覆盖。</p>
+            <div class="network-actions" style="margin-top:8px;"><label><input type="checkbox" data-hijack="udp" ${hijack.udp ? 'checked' : ''}> 劫持 UDP 53</label><label><input type="checkbox" data-hijack="tcp" ${hijack.tcp ? 'checked' : ''}> 劫持 TCP 53</label></div>
             <details><summary>高级 DNS Hijack 列表</summary>${rows('tun', 'dns-hijack', '全部映射（含自定义项）')}</details></section>
             </fieldset><section class="card"><h3 class="card-title">配置检查 ${dirty ? '· 当前草稿' : '· 已保存模板'}</h3><div id="network-check" aria-live="polite"></div>${button('重新检查', 'validate')}</section>
-            <section class="card"><details><summary>高级 DNS / TUN YAML · ${dirty ? '未保存预览' : '已保存'}</summary><pre class="network-yaml"></pre><p class="hint">只读预览。高级字段请在底层配置页编辑。字段值会保留，YAML 注释与排版不保证保留。</p></details></section>`;
+            <section class="card"><details><summary>高级 DNS / TUN YAML · ${dirty ? '未保存预览' : '已保存'}</summary><pre class="network-yaml"></pre></details></section>`;
         const network = {};
         for (const key of ['ipv6', 'dns', 'tun']) if (own(draft, key)) put(network, key, draft[key]);
         container.querySelector('.network-yaml').textContent = dump(network);
@@ -329,7 +324,7 @@
         const isDNS = own(LISTS, key);
         const html = `${isDNS ? `<div class="form-grid"><div class="form-group"><label for="net-provider">服务商</label><select id="net-provider"><option>自定义</option>${Object.keys(PROVIDERS).map(v => `<option>${v}</option>`).join('')}</select></div>
             <div class="form-group"><label for="net-protocol">协议</label><select id="net-protocol">${['自定义', 'DoH', 'DoT', 'UDP', 'TCP'].map(v => `<option>${v}</option>`).join('')}</select></div></div>` : ''}
-            <div class="form-group"><label for="net-address">${isDNS ? 'DNS 地址' : '条目'}</label><input id="net-address" value="${escape(current)}"><p class="hint" id="net-address-hint">保留完整地址与参数。${key === 'default-nameserver' ? 'Bootstrap 请选择 IP 主机地址。' : ''}</p></div>`;
+            <div class="form-group"><label for="net-address">${isDNS ? 'DNS 地址' : '条目'}</label><input id="net-address" value="${escape(current)}" placeholder="${key === 'default-nameserver' ? '223.5.5.5 或 https://1.1.1.1/dns-query' : 'https://dns.alidns.com/dns-query'}"><p class="network-status neutral" id="net-address-hint" hidden></p></div>`;
         hooks.openModal(index < 0 ? '添加条目' : '编辑条目', html, () => {
             try {
                 const value = document.getElementById('net-address').value.trim();
@@ -342,8 +337,14 @@
             protocolInput.value = protocol(current);
             const fill = () => {
                 const address = providerOptions(providerInput.value, key === 'default-nameserver')[protocolInput.value];
-                if (address) document.getElementById('net-address').value = address;
-                document.getElementById('net-address-hint').textContent = address ? '已填写，可继续手工修改。Bootstrap 主机需为 IP。' : '该组合无内置地址，请手工填写；不自动猜测端点。';
+                const hintEl = document.getElementById('net-address-hint');
+                if (address) {
+                    document.getElementById('net-address').value = address;
+                    if (hintEl) hintEl.hidden = true;
+                } else if (hintEl) {
+                    hintEl.hidden = false;
+                    hintEl.textContent = '该组合无内置地址，请手工填写。';
+                }
             };
             providerInput.addEventListener('change', () => {
                 const available = providerOptions(providerInput.value, key === 'default-nameserver');

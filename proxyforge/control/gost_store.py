@@ -349,6 +349,7 @@ class GostStoreMixin:
             'fail_timeout': opts.get('fail_timeout', 10),
             'proxy_protocol': opts.get('proxy_protocol', 0),
             'interface': opts.get('interface', ''),
+            'rewrite_subscription': bool(opts.get('rewrite_subscription', False)),
             'enabled': bool(row['enabled']),
             'revision': row['revision'],
             'job_id': row['job_id'],
@@ -406,6 +407,7 @@ class GostStoreMixin:
                 'fail_timeout': data.get('fail_timeout', 10),
                 'proxy_protocol': data.get('proxy_protocol', 0),
                 'interface': data.get('interface', ''),
+                'rewrite_subscription': bool(data.get('rewrite_subscription', False)),
             }
             if db.execute('SELECT 1 FROM forward_rules WHERE agent_id=? AND name=?', (agent_id, data['name'])).fetchone():
                 raise JobConflict()
@@ -449,6 +451,22 @@ class GostStoreMixin:
             self._audit(db, 'forward_toggled', target_agent)
             return self._forward_view(db, db.execute('SELECT * FROM forward_rules WHERE id=?', (rule_id,)).fetchone())
 
+    def set_forward_rewrite_subscription(self, rule_id, rewrite_subscription, *, agent_id=None):
+        with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT * FROM forward_rules WHERE id=?', (rule_id,)).fetchone()
+            if not row or (agent_id is not None and row['agent_id'] != agent_id):
+                raise JobNotFound()
+            opts = json.loads(row['settings']) if row['settings'] else {}
+            opts['rewrite_subscription'] = bool(rewrite_subscription)
+            now = self.clock()
+            db.execute(
+                'UPDATE forward_rules SET settings=?,updated_at=? WHERE id=?',
+                (json.dumps(opts), now, rule_id),
+            )
+            self._audit(db, 'forward_subscription_updated', row['agent_id'])
+            return self._forward_view(db, db.execute('SELECT * FROM forward_rules WHERE id=?', (rule_id,)).fetchone())
+
     def delete_forward(self, agent_id, rule_id, request_id):
         with self.connection() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -481,6 +499,10 @@ class GostStoreMixin:
                     meta = {}
                 ipv4, ipv6 = _extract_public_ips(meta.get('addresses', []), row['observed_ip'] or '')
                 listen_host = ipv4 or ipv6 or row['observed_ip']
+                try:
+                    opts = json.loads(row['settings']) if row['settings'] else {}
+                except Exception:
+                    opts = {}
                 entry = {
                     'id': row['id'],
                     'agent_id': row['agent_id'],
@@ -490,6 +512,7 @@ class GostStoreMixin:
                     'listen_port': row['listen_port'],
                     'protocol': row['protocol'],
                     'mode': row['mode'],
+                    'rewrite_subscription': bool(opts.get('rewrite_subscription', False)),
                     'targets': json.loads(row['targets']),
                 }
                 if row['mode'] == 'best_exit' and row['exit_group_id']:

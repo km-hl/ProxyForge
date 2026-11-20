@@ -142,9 +142,16 @@ def create_subscription_router(
 
             base_url = str(request.base_url).rstrip("/")
             builder_kwargs = {'managed_references': managed_names_reader()}
-            if effective_prefer_relay and relay_resolver is not None:
-                builder_kwargs['relays'] = relay_resolver()
-                builder_kwargs['prefer_relay'] = True
+            if relay_resolver is not None:
+                all_relays = relay_resolver() or []
+                if effective_prefer_relay:
+                    builder_kwargs['relays'] = all_relays
+                    builder_kwargs['prefer_relay'] = True
+                else:
+                    marked_relays = [r for r in all_relays if isinstance(r, dict) and r.get('rewrite_subscription')]
+                    if marked_relays:
+                        builder_kwargs['relays'] = marked_relays
+                        builder_kwargs['prefer_relay'] = True
             if allowed_groups:
                 builder_kwargs['allowed_groups'] = allowed_groups
 

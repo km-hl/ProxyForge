@@ -18,6 +18,7 @@ from proxyforge.subscription.validation import (
 from proxyforge.subscription.builder import (
     build_airport_providers, build_airport_provider_document,
     cleanup_proxy_group_references, build_subscription_config,
+    rename_proxy_references,
 )
 from proxyforge.subscription.egern import build_egern_config
 from proxyforge.subscription.egern_resources import load_rule_resource, resolve_provider_nodes
@@ -617,12 +618,36 @@ def _replace_manual_node_on_adoption(old_name: str, new_name: str) -> Dict[str, 
         return {"replaced": True, "old_name": old_clean, "new_name": new_clean, "migrated_groups": migrated_groups}
 
 
+def _rename_proxy_references_in_template(old_name: str, new_name: str) -> Dict[str, Any]:
+    """Rename references to a managed proxy in template.yaml when its name changes."""
+    old_clean = str(old_name or "").strip()
+    new_clean = str(new_name or "").strip()
+    if not old_clean or not new_clean or old_clean == new_clean:
+        return {"groupReferences": 0, "ruleReferences": 0, "total": 0}
+    with configuration_lock():
+        raw_tpl = load_template_content()
+        if not raw_tpl:
+            return {"groupReferences": 0, "ruleReferences": 0, "total": 0}
+        try:
+            tpl_obj = yaml.safe_load(raw_tpl)
+        except yaml.YAMLError:
+            return {"groupReferences": 0, "ruleReferences": 0, "total": 0}
+        res = rename_proxy_references(tpl_obj, old_clean, new_clean)
+        if res["total"] > 0:
+            template_store().commit(
+                {"template.yaml": yaml.safe_dump(tpl_obj, allow_unicode=True, sort_keys=False)},
+                source="node_rename",
+            )
+        return res
+
+
 attach_agent_routes(
     app,
     verify_api_token,
     control_store,
     manual_nodes_reader=load_manual_nodes,
     replace_manual_node=_replace_manual_node_on_adoption,
+    rename_template_references=_rename_proxy_references_in_template,
 )
 app.include_router(create_sub_user_router(verify_management=verify_api_token, store_provider=control_store))
 

@@ -180,6 +180,15 @@ def build_surge_config(
             policy = parts[1] if len(parts) > 1 else 'DIRECT'
             final_line = f'FINAL,{policy}'
             continue
+        if len(parts) >= 3 and kind == 'GEOSITE':
+            tag = parts[1].strip().lower()
+            if re.fullmatch(r'[a-z0-9][a-z0-9_@!.\-]{0,127}', tag) and '..' not in tag:
+                policy = parts[2].replace(',', '_').replace('=', '_')
+                if policy not in seen:
+                    policy = 'DIRECT'
+                url = f'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/{tag}.list'
+                rule_lines.append(f'RULE-SET,{url},{policy}')
+            continue
         if len(parts) >= 3 and kind in {'DOMAIN', 'DOMAIN-SUFFIX', 'DOMAIN-KEYWORD', 'IP-CIDR', 'IP-CIDR6', 'GEOIP', 'DST-PORT', 'PROCESS-NAME'}:
             policy = parts[2].replace(',', '_').replace('=', '_')
             if policy not in seen:

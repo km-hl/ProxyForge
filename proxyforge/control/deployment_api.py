@@ -77,7 +77,7 @@ class LandingKeyHelperRequest(Payload):
     protocol: Literal['ss2022', 'reality', 'trojan', 'anytls', 'vless-ws', 'hysteria2'] = 'reality'
 
 
-def attach_deployment_routes(app, admin, store_provider):
+def attach_deployment_routes(app, admin, store_provider, *, rename_template_references=None):
     @admin.get('/managed/nodes')
     def managed_nodes(include_discovered: bool = False):
         return {'nodes': store_provider().managed_inventory(include_discovered=include_discovered)}
@@ -166,7 +166,7 @@ def attach_deployment_routes(app, admin, store_provider):
     @admin.post('/{agent_id}/nodes')
     def create_agent_node(agent_id: str, data: AgentNodeUpsertRequest):
         try:
-            return store_provider().upsert_agent_node(
+            result = store_provider().upsert_agent_node(
                 agent_id,
                 data.request_id,
                 data.protocol,
@@ -174,6 +174,13 @@ def attach_deployment_routes(app, admin, store_provider):
                 secrets_input=data.secrets,
                 key_ref=data.key_ref,
             )
+            if (isinstance(result, dict) and result.get('renamed_from') and result.get('renamed_to')
+                    and callable(rename_template_references)):
+                try:
+                    result['template_migrated'] = rename_template_references(result['renamed_from'], result['renamed_to'])
+                except Exception:
+                    pass
+            return result
         except DeploymentValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
         except ValueError:
@@ -182,7 +189,7 @@ def attach_deployment_routes(app, admin, store_provider):
     @admin.put('/{agent_id}/nodes/{node_id}')
     def update_agent_node(agent_id: str, node_id: str, data: AgentNodeUpsertRequest):
         try:
-            return store_provider().upsert_agent_node(
+            result = store_provider().upsert_agent_node(
                 agent_id,
                 data.request_id,
                 data.protocol,
@@ -191,6 +198,13 @@ def attach_deployment_routes(app, admin, store_provider):
                 secrets_input=data.secrets,
                 key_ref=data.key_ref,
             )
+            if (isinstance(result, dict) and result.get('renamed_from') and result.get('renamed_to')
+                    and callable(rename_template_references)):
+                try:
+                    result['template_migrated'] = rename_template_references(result['renamed_from'], result['renamed_to'])
+                except Exception:
+                    pass
+            return result
         except DeploymentValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
         except ValueError:

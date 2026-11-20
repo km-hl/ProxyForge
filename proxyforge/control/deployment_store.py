@@ -11,6 +11,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat
 
 from agent.deployment_spec import client_node, node_name, spec_hash, validate_settings
 from agent.landing_spec import (
+    CLIENT_METADATA_ONLY_FIELDS,
     LANDING_PROTOCOLS,
     METHOD,
     PROTOCOL_SPEC,
@@ -370,6 +371,17 @@ class DeploymentStoreMixin:
                     'status': 'ready',
                 })
             return sorted(landings, key=lambda item: (item['agent_name'], item['listen_port'], item['node_id']))
+
+    @staticmethod
+    def _runtime_settings_signature(settings, existing_spec=None):
+        sig = {
+            k: v for k, v in (settings or {}).items()
+            if k not in CLIENT_METADATA_ONLY_FIELDS and k not in ('protocol', 'node_id')
+        }
+        sig.setdefault('outbound_mode', 'direct')
+        if existing_spec is not None and sig.get('reality_public_key') == existing_spec.get('reality_public_key'):
+            sig.pop('reality_public_key', None)
+        return sig
 
     def _resolve_managed_ss_hop(self, db, entry_agent_id, target_agent_id, target_node_id):
         if target_agent_id == entry_agent_id:
@@ -1116,6 +1128,17 @@ class DeploymentStoreMixin:
                     if k not in ('reality_private_key', 'reality_public_key')
                 }
 
+            old_name = (existing_settings or {}).get('name') or ''
+            new_name = clean_settings.get('name') or ''
+            metadata_only = bool(
+                existing_row is not None
+                and existing_proto == protocol
+                and not secrets_input
+                and not key_ref
+                and self._runtime_settings_signature(existing_settings, existing_spec)
+                == self._runtime_settings_signature(clean_settings, existing_spec)
+            )
+
             if is_primary_target:
                 identifier = primary['id'] if primary else (node_id or uuid.uuid4().hex)
                 if existing_row and existing_proto == protocol:
@@ -1141,9 +1164,24 @@ class DeploymentStoreMixin:
 
                 full_spec = self._attach_aggregated_nodes(db, agent_id, base_spec)
                 validate_landing_spec('landing.apply', full_spec)
+                encrypted_base = cipher.encrypt(json.dumps(base_spec).encode()).decode()
+                if metadata_only:
+                    db.execute(
+                        'UPDATE deployments SET protocol=?,settings=?,secret_spec=?,updated_at=? WHERE id=?',
+                        (protocol, json.dumps(clean_settings), encrypted_base, self.clock(), identifier),
+                    )
+                    self._audit(db, 'deployment_metadata_updated', agent_id)
+                    view = self._deployment_view(db, db.execute('SELECT * FROM deployments WHERE id=?', (identifier,)).fetchone())
+                    view['node_id'] = identifier
+                    view['applied'] = 'metadata_only'
+                    view['restarted'] = False
+                    if old_name and new_name and old_name != new_name:
+                        view['renamed_from'] = old_name
+                        view['renamed_to'] = new_name
+                    return view
+
                 rev = (primary['revision'] + 1) if primary else 1
                 payload = {'deployment_id': identifier, 'revision': rev, 'spec_hash': spec_hash(full_spec)}
-                encrypted_base = cipher.encrypt(json.dumps(base_spec).encode()).decode()
                 job = self._enqueue_job(db, agent_id, request_id, 'landing.apply', payload)
                 db.execute(
                     'UPDATE jobs SET secret_payload=? WHERE id=?',
@@ -1159,6 +1197,11 @@ class DeploymentStoreMixin:
                 self._audit(db, 'deployment_requested', agent_id)
                 view = self._deployment_view(db, db.execute('SELECT * FROM deployments WHERE id=?', (identifier,)).fetchone())
                 view['node_id'] = identifier
+                view['applied'] = 'runtime_job'
+                view['restarted'] = True
+                if old_name and new_name and old_name != new_name:
+                    view['renamed_from'] = old_name
+                    view['renamed_to'] = new_name
                 return view
 
             # Extra node in agent_nodes
@@ -1188,6 +1231,37 @@ class DeploymentStoreMixin:
                 self._sync_shared_listener_peers(db, cipher, shared_peers, protocol, clean_settings, node_spec)
 
             encrypted_node = cipher.encrypt(json.dumps(node_spec).encode()).decode()
+            if metadata_only:
+                now = self.clock()
+                db.execute(
+                    'UPDATE agent_nodes SET protocol=?,settings=?,secret_spec=?,updated_at=? WHERE id=?',
+                    (protocol, json.dumps(clean_settings), encrypted_node, now, target_id),
+                )
+                self._audit(db, 'deployment_metadata_updated', agent_id)
+                job_info = None
+                if primary:
+                    pview = self._deployment_view(db, primary)
+                    job_info = {'job_id': pview['job_id'], 'action': pview['action'], 'status': pview['status'], 'error': pview['error']}
+                view = {
+                    'id': target_id,
+                    'node_id': target_id,
+                    'agent_id': agent_id,
+                    'protocol': protocol,
+                    'settings': clean_settings,
+                    'revision': existing_extra['revision'],
+                    'job_id': job_info['job_id'] if job_info else '',
+                    'action': job_info['action'] if job_info else 'landing.apply',
+                    'status': job_info['status'] if job_info else 'success',
+                    'error': job_info['error'] if job_info else None,
+                    'updated_at': now,
+                    'applied': 'metadata_only',
+                    'restarted': False,
+                }
+                if old_name and new_name and old_name != new_name:
+                    view['renamed_from'] = old_name
+                    view['renamed_to'] = new_name
+                return view
+
             rev = (existing_extra['revision'] + 1) if existing_extra else 1
             db.execute(
                 '''INSERT INTO agent_nodes(id,agent_id,protocol,settings,secret_spec,revision,updated_at)
@@ -1199,6 +1273,11 @@ class DeploymentStoreMixin:
             self._audit(db, 'deployment_requested', agent_id)
             view = self._dispatch_aggregated_runtime(db, agent_id, request_id)
             view['node_id'] = target_id
+            view['applied'] = 'runtime_job'
+            view['restarted'] = True
+            if old_name and new_name and old_name != new_name:
+                view['renamed_from'] = old_name
+                view['renamed_to'] = new_name
             return view
 
     def delete_agent_node(self, agent_id, node_id, request_id):

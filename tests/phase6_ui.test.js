@@ -48,6 +48,7 @@ function loadAgentsSandbox() {
             querySelector: () => makeEl(),
             querySelectorAll: () => [],
             createElement: tag => makeEl(tag),
+            addEventListener: () => {},
         },
         console,
         Math,
@@ -109,5 +110,5 @@ test('Phase 6 static assets include Caddy auxiliary label, chain outbound mode, 
     assert.ok(src.includes('/agents/deployments/ss-landings'), 'ss-landings API fetch required');
     assert.ok(src.includes('TUNNEL_TRANSPORT_PRESETS'), 'go-gost tunnel transport presets required');
     assert.ok(src.includes('relay+tcp (国内↔IX 推荐'), 'CN-to-IX relay+tcp preset required');
-    assert.match(indexHtml, /agents\.js\?v=phase(?:6|7|8)-/, 'agents.js cache-bust version must be bumped');
+    assert.match(indexHtml, /agents\.js\?v=phase(?:6|7|8|9)-/, 'agents.js cache-bust version must be bumped');
 });

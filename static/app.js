@@ -37,10 +37,12 @@ let modalConfirmAction = null;
 // Form Elements
 const subLink = document.getElementById('sub-link');
 const copyBtn = document.getElementById('copy-btn');
+const mobileCopyBtn = document.getElementById('mobile-copy-btn');
+const mobileNavToggle = document.getElementById('mobile-nav-toggle');
+const sidebarEl = document.getElementById('sidebar');
+const sidebarBackdrop = document.getElementById('sidebar-backdrop');
 const subscriptionFormat = document.getElementById('sub-format');
-const preferRelayCheck = document.getElementById('sub-prefer-relay');
 const subQrBtn = document.getElementById('sub-qr-btn');
-const subFormatHint = document.getElementById('sub-format-hint');
 const secretToken = document.getElementById('secret-token');
 const saveConfigBtn = document.getElementById('save-config-btn');
 const newAdminToken = document.getElementById('new-admin-token');
@@ -117,12 +119,11 @@ ProxyForgeNetwork.init({
 document.addEventListener('click', event => {
     const target = event.target.closest('button, [onclick]');
     if (!target || target.id === 'logout-btn' || target.closest('#login-overlay')) return;
-    if (target.closest('#managed-nodes-section')) return;
     if (target.id === 'modal-cancel' || target.id === 'modal-close') return;
     let message = '';
     if (templateSession.isBusy() || externalTemplateBusy) message = '正在保存，请稍候';
     else if (templateParseError && target.closest('#panel-groups, #panel-rules')) message = '请先修复底层 YAML';
-    else if (target.closest('#panel-groups, #panel-rules, #panel-nodes, #panel-airports') || target.id === 'global-import-btn') {
+    else if (target.closest('#panel-groups, #panel-rules, #manual-nodes-section, #panel-airports') || target.id === 'global-import-btn') {
         if (rawIsDirty() || ProxyForgeNetwork.isDirty()) message = '请先保存或放弃底层配置/网络草稿';
     }
     if (message) { event.preventDefault(); event.stopImmediatePropagation(); showToast(message, 'warning'); }
@@ -323,6 +324,23 @@ fetch(`${API_BASE}/auth`, { credentials: 'same-origin' }).then(res => {
     }
 }).catch(showLogin);
 
+function setMobileSidebarOpen(open) {
+    if (!sidebarEl) return;
+    sidebarEl.classList.toggle('open', Boolean(open));
+    if (sidebarBackdrop) sidebarBackdrop.hidden = !open;
+    if (mobileNavToggle) mobileNavToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+if (mobileNavToggle) {
+    mobileNavToggle.addEventListener('click', () => {
+        const nextOpen = !sidebarEl?.classList.contains('open');
+        setMobileSidebarOpen(nextOpen);
+    });
+}
+if (sidebarBackdrop) {
+    sidebarBackdrop.addEventListener('click', () => setMobileSidebarOpen(false));
+}
+
 // === Navigation ===
 sidebarItems.forEach(item => {
     item.addEventListener('click', () => {
@@ -335,20 +353,13 @@ sidebarItems.forEach(item => {
         item.setAttribute('aria-current', 'page');
         item.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         document.getElementById(item.getAttribute('data-panel')).classList.add('active');
+        setMobileSidebarOpen(false);
     });
 });
 
 // === Data Loading & Rendering ===
-const SUB_FORMAT_HINTS = {
-    clash: '请将此链接复制并添加到您的 Clash / Mihomo 客户端中。修改名称或中转开关后链接会自动更新。',
-    egern: 'Egern 原生配置：保留节点、代理组和分流。跳过不兼容节点并在预览中提示；空组使用 REJECT。DNS/TUN 请在 Egern 中设置。',
-    singbox: 'Sing-box 客户端 JSON：自动渲染 outbounds、route 与 DNS；兼容原生 Sing-box / v2rayN / Nekobox。',
-    surge: 'Surge INI 配置：输出 [Proxy] / [Proxy Group] / [Rule] 段落，可直接导入 Surge / Surfboard。',
-    uri: '通用 URI / Base64：输出兼容节点的标准分享链接（Base64 编码），适合 v2rayN / Shadowrocket 等轻量客户端。',
-};
-
 function subscriptionOptions() {
-    return { preferRelay: Boolean(preferRelayCheck && preferRelayCheck.checked) };
+    return {};
 }
 
 function updateSubLink() {
@@ -359,19 +370,12 @@ function updateSubLink() {
         subscriptionFormat.value,
         subscriptionOptions(),
     );
-    if (subFormatHint) subFormatHint.textContent = SUB_FORMAT_HINTS[subscriptionFormat.value] || SUB_FORMAT_HINTS.clash;
 }
 document.getElementById('sub-name').addEventListener('input', updateSubLink);
 subscriptionFormat.addEventListener('change', () => {
     updateSubLink();
     if (document.getElementById('panel-preview').classList.contains('active')) loadFinalPreview();
 });
-if (preferRelayCheck) {
-    preferRelayCheck.addEventListener('change', () => {
-        updateSubLink();
-        if (document.getElementById('panel-preview').classList.contains('active')) loadFinalPreview();
-    });
-}
 if (subQrBtn) {
     subQrBtn.addEventListener('click', () => {
         openSubscriptionQrModal(subLink.value, document.getElementById('sub-name').value || 'ProxyForge');
@@ -431,7 +435,7 @@ function toLocalDatetimeInputValue(unixSeconds) {
 function buildUserSubUrlForCurrentFormat(token, user) {
     const baseName = (document.getElementById('sub-name')?.value || '').trim() || 'ProxyForge';
     const name = user?.username ? `${baseName}-${user.username}` : baseName;
-    const opts = { preferRelay: Boolean(preferRelayCheck?.checked || user?.prefer_relay) };
+    const opts = user?.prefer_relay ? { preferRelay: true } : {};
     return ProxyForgeSubscription.buildUserUrl(window.location.origin, token, name, subscriptionFormat.value, opts);
 }
 
@@ -470,9 +474,9 @@ function renderSubUsers() {
         nameEl.textContent = user.username;
         titleWrap.appendChild(nameEl);
         const prefixEl = document.createElement('span');
-        prefixEl.className = 'hint';
+        prefixEl.className = 'sub-user-meta';
         prefixEl.style.marginLeft = '8px';
-        prefixEl.textContent = `Token: ${user.token_prefix || ''}…`;
+        prefixEl.textContent = `${user.token_prefix || ''}…`;
         titleWrap.appendChild(prefixEl);
 
         const badge = document.createElement('span');
@@ -498,16 +502,15 @@ function renderSubUsers() {
         card.appendChild(barTrack);
 
         const usageLine = document.createElement('div');
-        usageLine.className = 'hint';
+        usageLine.className = 'sub-user-meta';
         usageLine.textContent = quota > 0
             ? `已用 ${formatBytes(used)} / ${formatBytes(quota)} (${pct}%) · 上行 ${formatBytes(user.upload_bytes)} / 下行 ${formatBytes(user.download_bytes)}`
             : `已用 ${formatBytes(used)} / 不限配额 · 上行 ${formatBytes(user.upload_bytes)} / 下行 ${formatBytes(user.download_bytes)}`;
         card.appendChild(usageLine);
 
         const metaLine = document.createElement('div');
-        metaLine.className = 'hint';
+        metaLine.className = 'sub-user-meta';
         const tags = [`到期: ${formatExpireAt(user.expire_at)}`];
-        if (user.prefer_relay) tags.push('中转优先');
         if (Array.isArray(user.allowed_groups) && user.allowed_groups.length) tags.push(`分组: ${user.allowed_groups.join(', ')}`);
         if (Array.isArray(user.forward_rule_ids) && user.forward_rule_ids.length) tags.push(`绑定转发: ${user.forward_rule_ids.length} 条`);
         if (user.max_connections > 0) tags.push(`并发: ${user.max_connections}`);
@@ -594,7 +597,6 @@ function openSubUserModal(existing = null) {
         </div>
         <div class="form-grid">
             <label class="inline-check" style="display:flex; align-items:center; gap:6px;"><input type="checkbox" id="m-su-enabled" checked> 启用该用户</label>
-            <label class="inline-check" style="display:flex; align-items:center; gap:6px;"><input type="checkbox" id="m-su-relay"> 强制中转优先 (prefer_relay)</label>
         </div>
     `;
     openModal(isNew ? '新建订阅用户' : '编辑订阅用户', html, async () => {
@@ -614,7 +616,7 @@ function openSubUserModal(existing = null) {
             quota_bytes: Math.max(0, Math.round(quotaGb * 1024 * 1024 * 1024)),
             expire_at: expireAt,
             enabled: document.getElementById('m-su-enabled').checked,
-            prefer_relay: document.getElementById('m-su-relay').checked,
+            prefer_relay: Boolean(existing?.prefer_relay),
             allowed_groups: parseListInput(document.getElementById('m-su-groups').value),
             forward_rule_ids: parseListInput(document.getElementById('m-su-rules').value),
             max_connections: Math.max(0, Math.round(Number(document.getElementById('m-su-conns').value) || 0)),
@@ -654,7 +656,6 @@ function openSubUserModal(existing = null) {
         document.getElementById('m-su-groups').value = (existing.allowed_groups || []).join(', ');
         document.getElementById('m-su-rules').value = (existing.forward_rule_ids || []).join(', ');
         document.getElementById('m-su-enabled').checked = Boolean(existing.enabled);
-        document.getElementById('m-su-relay').checked = Boolean(existing.prefer_relay);
     }
 }
 
@@ -909,7 +910,7 @@ function getCheckedIndices(cls) {
 function renderAirports() {
     const list = document.getElementById('airports-list');
     if (!state.airports.length) {
-        list.innerHTML = `<div class="empty-state">暂无机场订阅，请点击上方按钮添加</div>`;
+        list.innerHTML = `<div class="empty-state">暂无机场订阅</div>`;
         return;
     }
     let html = '';
@@ -917,7 +918,7 @@ function renderAirports() {
         let url = typeof item === 'string' ? item : item.url;
         let customName = typeof item === 'object' ? item.name : '';
         let info = state.airportsInfo && state.airportsInfo.find(i => i.url === url);
-        
+
         if (info) {
             let usageStr = "获取失败";
             if (!info.error) {
@@ -925,7 +926,7 @@ function renderAirports() {
                     let used = info.download + info.upload;
                     usageStr = `${formatBytes(used)} / ${formatBytes(info.total)}`;
                 } else {
-                    usageStr = "未知流量";
+                    usageStr = "不限";
                 }
             }
             let displayName = customName || info.name || '机场';
@@ -934,22 +935,22 @@ function renderAirports() {
             let safeError = escapeHtml(info.error || '');
             html += `
                 <div class="list-item" style="flex-direction:column; align-items:flex-start;">
-                    <div style="display:flex; width:100%; align-items:center;">
+                    <div style="display:flex; width:100%; align-items:center; gap:8px;">
                         ${getCheckboxHTML('cb-airport', index)}
-                        <span class="type-badge badge-select" style="margin-right:8px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${safeDisplayName}</span>
-                        <div class="item-info" style="flex:1; word-break:break-all; font-size:0.8rem; color:#666;">${safeUrl}</div>
+                        <span class="type-badge badge-select" style="max-width: 160px; overflow: hidden; text-overflow: ellipsis;">${safeDisplayName}</span>
+                        <div class="item-info item-detail" style="margin-top:0; flex:1;">${safeUrl}</div>
                         <div class="item-actions">
-                            <button class="btn btn-sm btn-primary" onclick="editAirport(${index})">编辑</button>
+                            <button class="btn btn-sm" onclick="editAirport(${index})">编辑</button>
                             <button class="btn btn-sm btn-danger" onclick="deleteAirport(${index})">删除</button>
                         </div>
                     </div>
-                    <div style="display:flex; gap:15px; margin-left:34px; margin-top:8px; font-size:0.8rem; flex-wrap:wrap;">
-                        <span style="color:#2e7d32;"><b>📦 节点:</b> ${info.error ? '?' : info.nodesCount}</span>
-                        <span style="color:#1565c0;"><b>📊 流量:</b> ${usageStr}</span>
-                        <span style="color:#e65100;"><b>⏳ 到期:</b> ${info.expire ? formatDate(info.expire) : '长期有效'}</span>
-                        <span style="color:#607d8b;"><b>🔄 刷新:</b> ${info._timestamp ? new Date(info._timestamp * 1000).toLocaleString('zh-CN', {month: 'numeric', day: 'numeric', hour: '2-digit', minute:'2-digit'}) : '未知'}</span>
+                    <div class="sub-user-meta" style="display:flex; gap:14px; margin-left:28px; margin-top:4px; flex-wrap:wrap;">
+                        <span>节点 ${info.error ? '?' : info.nodesCount}</span>
+                        <span>流量 ${usageStr}</span>
+                        <span>到期 ${info.expire ? formatDate(info.expire) : '长期'}</span>
+                        <span>刷新 ${info._timestamp ? new Date(info._timestamp * 1000).toLocaleString('zh-CN', {month: 'numeric', day: 'numeric', hour: '2-digit', minute:'2-digit'}) : '未知'}</span>
                     </div>
-                    ${info.error ? `<div style="color:red; font-size:0.75rem; margin-left:34px; margin-top:4px;">抓取失败: ${safeError}</div>` : ''}
+                    ${info.error ? `<div style="color:var(--danger); font-size:0.76rem; margin-left:28px; margin-top:2px;">抓取失败: ${safeError}</div>` : ''}
                 </div>
             `;
         } else {
@@ -959,11 +960,11 @@ function renderAirports() {
             html += `
                 <div class="list-item">
                     ${getCheckboxHTML('cb-airport', index)}
-                    <span class="type-badge badge-select" style="margin-right:8px;">${safeDisplayName}</span>
-                    <div class="item-info" style="word-break:break-all;">${safeUrl}</div>
-                    <span style="font-size:0.8rem; color:#999;">动态数据加载中...</span>
+                    <span class="type-badge badge-select">${safeDisplayName}</span>
+                    <div class="item-info item-detail" style="margin-top:0;">${safeUrl}</div>
+                    <span class="sub-user-meta">加载中…</span>
                     <div class="item-actions">
-                        <button class="btn btn-sm btn-primary" onclick="editAirport(${index})">编辑</button>
+                        <button class="btn btn-sm" onclick="editAirport(${index})">编辑</button>
                         <button class="btn btn-sm btn-danger" onclick="deleteAirport(${index})">删除</button>
                     </div>
                 </div>
@@ -979,7 +980,7 @@ function renderGroups() {
     const list = document.getElementById('groups-list');
     let groups = state.templateObj['proxy-groups'] || [];
     if (!groups.length) {
-        list.innerHTML = `<div class="empty-state">暂无代理组，请点击上方按钮添加</div>`;
+        list.innerHTML = `<div class="empty-state">暂无代理组</div>`;
         return;
     }
     let html = '';
@@ -989,36 +990,28 @@ function renderGroups() {
         else if (g.type === 'url-test') badgeCls = 'badge-url-test';
         else if (g.type === 'fallback') badgeCls = 'badge-fallback';
         else if (g.type === 'load-balance') badgeCls = 'badge-load-balance';
-        
+
         let pCount = Array.isArray(g.proxies) ? g.proxies.length : 0;
         let uCount = Array.isArray(g.use) ? g.use.length : 0;
         let proxyGroupNames = state.templateObj['proxy-groups'].map(x => x.name);
         let nestedGroups = Array.isArray(g.proxies) ? g.proxies.filter(p => proxyGroupNames.includes(p)) : [];
-        
+
         let summaries = [];
         if (g['include-all']) {
-            summaries.push('全部 (机场+自建)');
+            summaries.push('全部节点');
         } else if (uCount > 0) {
-            let sources = g.use.map(s => s === '_custom_nodes_' ? '🌐自建' : `✈️${s}`);
+            let sources = g.use.map(s => s === '_custom_nodes_' ? '自建节点' : s);
             summaries.push(`${sources.join(', ')}`);
-        } 
-        
-        if (g.filter) {
-            summaries.push(`正则: ${g.filter}`);
         }
-        
-        if (nestedGroups.length > 0) {
-            summaries.push(`嵌套: ${nestedGroups.join(', ')}`);
-        }
-        
+        if (g.filter) summaries.push(`正则: ${g.filter}`);
+        if (nestedGroups.length > 0) summaries.push(`嵌套: ${nestedGroups.join(', ')}`);
         if (!g['include-all'] && uCount === 0 && !g.filter && nestedGroups.length === 0 && pCount > 0) {
             let manuals = g.proxies.filter(p => p !== 'DIRECT' && p !== 'REJECT' && !nestedGroups.includes(p));
             if (manuals.length === 0) manuals = g.proxies;
-            summaries.push(`手动节点: ${manuals.slice(0, 3).join(', ')}${manuals.length > 3 ? '...' : ''}`);
+            summaries.push(`${manuals.slice(0, 3).join(', ')}${manuals.length > 3 ? '…' : ''}`);
         }
-        
-        let proxiesPreview = summaries.length > 0 ? summaries.join(' | ') : '无';
-        
+
+        let proxiesPreview = summaries.length > 0 ? summaries.join(' · ') : '无';
         let displayName = getFlagEmoji(g.name);
 
         html += `
@@ -1029,12 +1022,12 @@ function renderGroups() {
                  ondragleave="handleGroupDragLeave(event)"
                  ondrop="handleGroupDrop(event, ${index})"
                  ondragend="handleGroupDragEnd(event)">
-                <span class="drag-handle" style="cursor: grab; margin-right: 10px; color: #999;">⠿</span>
+                <span class="drag-handle" style="cursor: grab; color: var(--text-muted);">⠿</span>
                 ${getCheckboxHTML('cb-group', index)}
                 <span class="type-badge ${badgeCls}">${escapeHtml(g.type || 'unknown')}</span>
                 <div class="item-info">
                     <div class="item-name">${escapeHtml(displayName)}</div>
-                    <div class="item-detail" style="color: #666; font-size: 0.8rem; margin-top: 4px;">包含: ${escapeHtml(proxiesPreview)}</div>
+                    <div class="item-detail">${escapeHtml(proxiesPreview)}</div>
                 </div>
                 <div class="item-actions">
                     <button class="btn btn-sm" onclick="editGroup(${index})">编辑</button>
@@ -1050,11 +1043,17 @@ function renderGroups() {
 // === Render: Custom Nodes ===
 function renderNodes() {
     const list = document.getElementById('nodes-list');
+    const countBadge = document.getElementById('manual-nodes-count');
+    const bulkDeleteBtn = document.getElementById('btn-bulk-delete-nodes');
     const manual = state.nodes.map((node, index) => ({ node, index })).filter(item => !item.node._managed_by);
+    if (countBadge) countBadge.textContent = String(manual.length);
+    if (bulkDeleteBtn) bulkDeleteBtn.hidden = manual.length === 0;
     if (!manual.length) {
-        list.innerHTML = `<div class="empty-state">暂无手工节点</div>`;
+        list.innerHTML = `<div class="manual-nodes-empty-bar"><span>暂无手工节点</span></div>`;
         return;
     }
+    const upIcon = typeof ProxyForgeIcons !== 'undefined' ? ProxyForgeIcons.svg('arrowUp', 13) : '↑';
+    const downIcon = typeof ProxyForgeIcons !== 'undefined' ? ProxyForgeIcons.svg('arrowDown', 13) : '↓';
     let html = '';
     manual.forEach(({ node: n, index }, position) => {
         let displayName = getFlagEmoji(n.name);
@@ -1066,16 +1065,16 @@ function renderNodes() {
                  ondragleave="handleDragLeave(event)"
                  ondrop="handleDrop(event, ${index})"
                  ondragend="handleDragEnd(event)">
-                <span class="drag-handle" style="cursor: grab; margin-right: 10px; color: #999;">⠿</span>
+                <span class="drag-handle" style="cursor: grab; color: var(--text-muted);">⠿</span>
                 ${getCheckboxHTML('cb-node', index)}
-                <span class="type-badge badge-node">${escapeHtml(n.type || 'unknown')}</span>
+                <span class="type-badge badge-default">${escapeHtml(n.type || 'unknown')}</span>
                 <div class="item-info">
                     <div class="item-name">${escapeHtml(displayName)}</div>
-                    <div class="item-detail">${escapeHtml(n.server || '')} ${escapeHtml(n.port ? ':'+n.port : '')}</div>
+                    <div class="item-detail">${escapeHtml(n.server || '')}${escapeHtml(n.port ? ':' + n.port : '')}</div>
                 </div>
                 <div class="item-actions">
-                    ${position > 0 ? `<button class="btn btn-sm" onclick="moveNodeUp(${index})" title="上移">⬆️</button>` : ''}
-                    ${position < manual.length - 1 ? `<button class="btn btn-sm" onclick="moveNodeDown(${index})" title="下移">⬇️</button>` : ''}
+                    ${position > 0 ? `<button class="btn btn-sm" onclick="moveNodeUp(${index})" title="上移" aria-label="上移">${upIcon}</button>` : ''}
+                    ${position < manual.length - 1 ? `<button class="btn btn-sm" onclick="moveNodeDown(${index})" title="下移" aria-label="下移">${downIcon}</button>` : ''}
                     <button class="btn btn-sm" onclick="editNode(${index})">编辑</button>
                     <button class="btn btn-sm btn-danger" onclick="deleteNode(${index})">删除</button>
                 </div>
@@ -1100,7 +1099,7 @@ function renderRuleProviders() {
         let p = providers[key];
         html += `
             <div class="list-item">
-                <span class="type-badge badge-node">${escapeHtml(p.type || 'http')}</span>
+                <span class="type-badge badge-default">${escapeHtml(p.type || 'http')}</span>
                 <div class="item-info">
                     <div class="item-name">${escapeHtml(key)}</div>
                     <div class="item-detail">${escapeHtml(p.url ? p.url : (p.path || ''))}</div>
@@ -1124,8 +1123,8 @@ function renderRules() {
     const isFiltering = searchQuery.length > 0;
 
     ruleSearchCount.textContent = isFiltering
-        ? `显示 ${visibleRules.length} / 共 ${rules.length} 条`
-        : `共 ${rules.length} 条`;
+        ? `${visibleRules.length} / ${rules.length}`
+        : `${rules.length} 条`;
     clearRuleSearchBtn.disabled = !isFiltering;
 
     if (!rules.length) {
@@ -1133,21 +1132,25 @@ function renderRules() {
         return;
     }
     if (!visibleRules.length) {
-        list.innerHTML = `<div class="empty-state">没有找到匹配的路由规则</div>`;
+        list.innerHTML = `<div class="empty-state">无匹配规则</div>`;
         return;
     }
     let html = '';
     visibleRules.forEach(({ rule: r, index }) => {
-        let parts = r.split(',');
-        let type = parts[0] || '';
-        
-        let typeColor = '#6c757d';
-        if (type.startsWith('DOMAIN')) typeColor = '#007bff';
-        else if (type.startsWith('IP-')) typeColor = '#28a745';
-        else if (type === 'GEOIP') typeColor = '#17a2b8';
-        else if (type === 'MATCH') typeColor = '#dc3545';
-        else if (type === 'RULE-SET') typeColor = '#fd7e14';
-        
+        const parsed = ProxyForgeRuleUtils.parseRuleParts(r);
+        const type = parsed.type;
+        let badgeCls = 'rule-badge-other';
+        if (type.startsWith('DOMAIN')) badgeCls = 'rule-badge-domain';
+        else if (type.startsWith('IP-')) badgeCls = 'rule-badge-ip';
+        else if (type === 'GEOSITE') badgeCls = 'rule-badge-geosite';
+        else if (type === 'GEOIP') badgeCls = 'rule-badge-geoip';
+        else if (type === 'MATCH') badgeCls = 'rule-badge-match';
+        else if (type === 'RULE-SET') badgeCls = 'rule-badge-ruleset';
+
+        const payloadLabel = parsed.isLogical
+            ? parsed.payload.replace(/\)\s*,\s*[^,]+?\s*$/, ')')
+            : parsed.payload;
+
         html += `
             <div class="list-item" draggable="${isFiltering ? 'false' : 'true'}" data-index="${index}"
                  ondragstart="handleRuleDragStart(event, ${index})"
@@ -1157,12 +1160,13 @@ function renderRules() {
                  ondrop="handleRuleDrop(event, ${index})"
                  ondragend="handleRuleDragEnd(event)">
                 <span class="drag-handle" title="${isFiltering ? '清空搜索后可拖拽排序' : '拖拽排序'}"
-                      style="cursor: ${isFiltering ? 'not-allowed' : 'grab'}; margin-right: 10px; color: #999;">⠿</span>
+                      style="cursor: ${isFiltering ? 'not-allowed' : 'grab'}; color: var(--text-muted);">⠿</span>
                 ${getCheckboxHTML('cb-rule', index)}
-                <span class="type-badge" style="background:${typeColor}; min-width: 90px; text-align: center;">${escapeHtml(type)}</span>
-                <div class="item-info" style="font-family: monospace; display:flex; align-items:center;">
-                    <span style="font-weight:600; color:#333; margin-right:8px;">${escapeHtml(parts.slice(1, -1).join(','))}</span>
-                    <span style="color:#888; font-size:0.85em;">➔ ${escapeHtml(parts[parts.length-1] || '')}</span>
+                <span class="type-badge ${badgeCls}" style="min-width: 96px; justify-content: center;">${escapeHtml(type)}</span>
+                <div class="item-info" style="font-family: var(--font-mono); font-size: 0.82rem; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                    ${payloadLabel ? `<span style="font-weight:500; color:var(--text);">${escapeHtml(payloadLabel)}</span>` : ''}
+                    ${parsed.noResolve ? '<span class="type-badge badge-default">no-resolve</span>' : ''}
+                    <span style="color:var(--text-muted);">→ ${escapeHtml(parsed.target)}</span>
                 </div>
                 <div class="item-actions">
                     <button class="btn btn-sm" onclick="editRule(${index})">编辑</button>
@@ -1370,8 +1374,8 @@ window.editGroup = function(index) {
             
             <div style="font-size:0.8rem; margin:8px 0 4px 0; color:#666; font-weight: 600;">2. 快速选择节点来源:</div>
             <div class="filter-tags" id="tags-sources">
-                ${Array.from(airportNames).map(name => `<div class="filter-tag" data-val="${escapeHtml(name)}">✈️ ${escapeHtml(name)}</div>`).join('')}
-                <div class="filter-tag" data-val="_custom_nodes_">🌐 自建节点</div>
+                ${Array.from(airportNames).map(name => `<div class="filter-tag" data-val="${escapeHtml(name)}">${escapeHtml(name)}</div>`).join('')}
+                <div class="filter-tag" data-val="_custom_nodes_">自建节点</div>
             </div>
             
             <div style="font-size:0.8rem; margin:8px 0 4px 0; color:#666; font-weight: 600;">底层正则表达式 (可手动修改):</div>
@@ -1758,27 +1762,24 @@ document.getElementById('btn-bulk-smart-filter').addEventListener('click', () =>
     });
     
     let html = `
-        <div class="form-group full-width" style="margin-top: 10px;">
-            <label style="color:var(--primary); font-size:0.9rem; font-weight: 600;">✨ 批量设置智能筛选器</label>
-            <div style="font-size:0.8rem; color:#888; margin-bottom:10px;">此操作将覆盖选中代理组的智能筛选配置，不会影响手动勾选的节点或嵌套代理组。</div>
-            
-            <label style="display:flex; align-items:center; cursor:pointer; font-size:0.9rem; margin-bottom:15px; color:#333;">
+        <div class="form-group full-width" style="margin-top: 4px;">
+            <label style="display:flex; align-items:center; cursor:pointer; font-size:0.88rem; margin-bottom:12px;">
                 <input type="checkbox" id="bulk-group-include-all" style="margin-right:8px; width:16px; height:16px;"> 
-                自动包含全部节点 (后续新增节点也会自动加入)
+                自动包含全部节点
             </label>
             
-            <div style="font-size:0.8rem; margin:8px 0 4px 0; color:#666; font-weight: 600;">1. 快速选择地区 (覆盖正则):</div>
+            <div style="font-size:0.8rem; margin:8px 0 4px 0; color:var(--text-secondary); font-weight: 600;">快速选择地区:</div>
             <div class="filter-tags" id="bulk-tags-regions">
                 ${regions.map(r => `<div class="filter-tag" data-val="${r.key}">${r.label}</div>`).join('')}
             </div>
             
-            <div style="font-size:0.8rem; margin:8px 0 4px 0; color:#666; font-weight: 600;">2. 快速选择节点来源 (覆盖来源):</div>
+            <div style="font-size:0.8rem; margin:8px 0 4px 0; color:var(--text-secondary); font-weight: 600;">快速选择节点来源:</div>
             <div class="filter-tags" id="bulk-tags-sources">
-                ${Array.from(airportNames).map(name => `<div class="filter-tag" data-val="${escapeHtml(name)}">✈️ ${escapeHtml(name)}</div>`).join('')}
-                <div class="filter-tag" data-val="_custom_nodes_">🌐 自建节点</div>
+                ${Array.from(airportNames).map(name => `<div class="filter-tag" data-val="${escapeHtml(name)}">${escapeHtml(name)}</div>`).join('')}
+                <div class="filter-tag" data-val="_custom_nodes_">自建节点</div>
             </div>
             
-            <div style="font-size:0.8rem; margin:8px 0 4px 0; color:#666; font-weight: 600;">底层正则表达式 (可手动修改):</div>
+            <div style="font-size:0.8rem; margin:8px 0 4px 0; color:var(--text-secondary); font-weight: 600;">正则表达式:</div>
             <input type="text" id="bulk-group-filter" value="" placeholder="例如: (?i)hk|香港">
         </div>
     `;
@@ -2071,58 +2072,7 @@ async function saveNodesObj() {
     finally { if (locked) { externalTemplateBusy = false; rulesEditor.readOnly = false; } }
 }
 
-// === Actions: Rules ===
-document.getElementById('btn-add-rule').addEventListener('click', () => {
-    const html = `
-        <div class="form-group full-width">
-            <label>单条路由规则</label>
-            <input type="text" id="m-rule-input" placeholder="DOMAIN-SUFFIX,google.com,Proxy">
-        </div>
-    `;
-    openModal('添加路由规则', html, () => {
-        let val = document.getElementById('m-rule-input').value.trim();
-        if(val) {
-            if (!state.templateObj['rules']) state.templateObj['rules'] = [];
-            state.templateObj['rules'].unshift(val);
-            closeModal();
-            saveTemplateObj();
-        }
-    });
-});
-
-document.getElementById('btn-import-rules').addEventListener('click', () => {
-    const html = `
-        <div class="form-group full-width">
-            <label>批量粘贴路由规则 (每行一条)</label>
-            <textarea id="m-rules-import" style="min-height:250px;"></textarea>
-        </div>
-    `;
-    openModal('批量导入规则', html, () => {
-        let lines = document.getElementById('m-rules-import').value.split('\n').map(s=>s.trim()).filter(s=>s);
-        if(lines.length) {
-            if (!state.templateObj['rules']) state.templateObj['rules'] = [];
-            state.templateObj['rules'] = lines.concat(state.templateObj['rules']);
-            closeModal();
-            saveTemplateObj();
-            showToast(`成功导入 ${lines.length} 条规则`);
-        }
-    });
-});
-
-window.deleteRule = function(index) {
-    state.templateObj['rules'].splice(index, 1);
-    saveTemplateObj();
-};
-
-document.getElementById('btn-bulk-delete-rules').addEventListener('click', () => {
-    let indices = getCheckedIndices('cb-rule');
-    if(!indices.length) return alert('请先勾选要删除的项');
-    if(confirm(`确定删除这 ${indices.length} 项吗？`)) {
-        indices.forEach(i => state.templateObj['rules'].splice(i, 1));
-        saveTemplateObj();
-    }
-});
-
+// === Template Save Helper ===
 async function saveTemplateObj(candidate = state.templateObj, source = 'other', raw = null, successMessage = '') {
     try {
         templateGuard(source);
@@ -2161,10 +2111,9 @@ if (globalImportBtn) {
                 <label>选择 YAML 文件上传，或在下方直接粘贴</label>
                 <input type="file" id="m-global-file" accept=".yaml,.yml,.txt" style="margin-bottom: 10px; cursor: pointer;">
                 <textarea id="m-global-yaml" style="min-height:300px; font-family:monospace;" placeholder="proxies: ...\nproxy-groups: ...\nrules: ..."></textarea>
-                <span class="hint">系统会自动提取 proxies 合并到您的“自建节点”，并将 proxy-groups 和 rules 等覆盖到“底层配置”。</span>
             </div>
         `;
-        openModal('📥 全局 YAML 智能导入', html, async () => {
+        openModal('全局 YAML 导入', html, async () => {
             let locked = false;
             try {
                 templateGuard();
@@ -2305,61 +2254,100 @@ window.deleteRuleProviderByIndex = function(index) {
     if (key !== undefined) deleteRuleProvider(key);
 };
 
-const RULE_TYPES = ['DOMAIN-SUFFIX', 'DOMAIN-KEYWORD', 'DOMAIN', 'IP-CIDR', 'GEOIP', 'MATCH', 'RULE-SET'];
+const RULE_TYPES = [
+    'DOMAIN-SUFFIX', 'DOMAIN-KEYWORD', 'DOMAIN', 'DOMAIN-REGEX',
+    'GEOSITE', 'GEOIP', 'IP-CIDR', 'IP-CIDR6',
+    'DST-PORT', 'PROCESS-NAME', 'RULE-SET', 'MATCH',
+];
+const GEOSITE_SUGGESTIONS = [
+    'cn', 'geolocation-!cn', 'openai', 'google', 'youtube',
+    'netflix', 'apple', 'microsoft', 'telegram', 'github',
+    'category-ads-all', 'private',
+];
+const NO_RESOLVE_RULE_TYPES = new Set(['IP-CIDR', 'IP-CIDR6', 'GEOIP', 'RULE-SET']);
 
 window.editRule = function(index) {
     let isNew = index < 0;
     let r = isNew ? '' : state.templateObj['rules'][index];
-    let parts = r ? r.split(',') : [];
-    
-    let type = parts[0] || 'DOMAIN-SUFFIX';
-    let payload = '';
-    let target = '';
-    if (type === 'MATCH') {
-        target = parts[1] || '';
-    } else {
-        payload = parts[1] || '';
-        target = parts[2] || '';
+    const parsed = isNew
+        ? { type: 'DOMAIN-SUFFIX', payload: '', target: '', noResolve: false, extraArgs: [], isLogical: false, raw: '' }
+        : ProxyForgeRuleUtils.parseRuleParts(r);
+
+    if (parsed.isLogical) {
+        openModal('编辑逻辑规则', `
+            <div class="form-group full-width">
+                <label>逻辑规则原文</label>
+                <input type="text" id="m-rule-logical-raw" value="${escapeHtml(parsed.raw)}">
+            </div>
+        `, () => {
+            const rawVal = document.getElementById('m-rule-logical-raw').value.trim();
+            if (!rawVal) return alert('请输入规则内容');
+            state.templateObj['rules'][index] = rawVal;
+            saveTemplateObj();
+            closeModal();
+        });
+        return;
     }
-    
+
     let targetsHtml = ['DIRECT', 'REJECT'];
     let proxyGroups = state.templateObj['proxy-groups'] || [];
-    proxyGroups.forEach(g => { if(g.name) targetsHtml.push(g.name); });
-    
+    proxyGroups.forEach(g => { if (g.name) targetsHtml.push(g.name); });
+    const ruleTypeChoices = RULE_TYPES.includes(parsed.type) ? RULE_TYPES : [parsed.type, ...RULE_TYPES];
+
+    function payloadPlaceholder(t) {
+        if (t === 'GEOSITE') return 'cn / geolocation-!cn / openai';
+        if (t === 'GEOIP') return 'CN / LAN / private';
+        if (t === 'IP-CIDR' || t === 'IP-CIDR6') return '192.168.0.0/16';
+        if (t === 'DST-PORT') return '443';
+        if (t === 'PROCESS-NAME') return 'curl';
+        if (t === 'RULE-SET') return 'reject_list';
+        return 'google.com';
+    }
+
     let html = `
         <div class="form-group full-width">
             <label>规则类型 (Type)</label>
             <select id="m-rule-type">
-                ${RULE_TYPES.map(t => `<option value="${t}" ${t===type?'selected':''}>${t}</option>`).join('')}
+                ${ruleTypeChoices.map(t => `<option value="${escapeHtml(t)}" ${t === parsed.type ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('')}
             </select>
         </div>
-        <div class="form-group full-width" id="m-rule-payload-group" style="${type==='MATCH' ? 'display:none;' : ''}">
+        <div class="form-group full-width" id="m-rule-payload-group" style="${parsed.type === 'MATCH' ? 'display:none;' : ''}">
             <label>匹配内容 (Payload)</label>
-            <input type="text" id="m-rule-payload" value="${escapeHtml(payload)}" placeholder="如 google.com 或 reject_list">
+            <input type="text" id="m-rule-payload" value="${escapeHtml(parsed.payload)}" placeholder="${escapeHtml(payloadPlaceholder(parsed.type))}" ${parsed.type === 'GEOSITE' ? 'list="m-rule-geosite-list"' : ''}>
+            <datalist id="m-rule-geosite-list">
+                ${GEOSITE_SUGGESTIONS.map(s => `<option value="${escapeHtml(s)}"></option>`).join('')}
+            </datalist>
         </div>
         <div class="form-group full-width">
             <label>目标策略 (Target)</label>
             <select id="m-rule-target">
-                ${targetsHtml.map(t => `<option value="${escapeHtml(t)}" ${t===target?'selected':''}>${escapeHtml(t)}</option>`).join('')}
+                ${targetsHtml.map(t => `<option value="${escapeHtml(t)}" ${t === parsed.target ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('')}
             </select>
+        </div>
+        <div class="form-group full-width" id="m-rule-noresolve-group" style="${NO_RESOLVE_RULE_TYPES.has(parsed.type) ? '' : 'display:none;'}">
+            <label class="inline-check">
+                <input type="checkbox" id="m-rule-no-resolve" ${parsed.noResolve ? 'checked' : ''}>
+                no-resolve (跳过 DNS 解析)
+            </label>
         </div>
     `;
     openModal(isNew ? '新建规则' : '编辑规则', html, () => {
         let nType = document.getElementById('m-rule-type').value;
         let nPayload = document.getElementById('m-rule-payload').value.trim();
         let nTarget = document.getElementById('m-rule-target').value;
-        
-        let newRule = '';
-        if (nType === 'MATCH') {
-            newRule = `${nType},${nTarget}`;
-        } else {
-            if(!nPayload) return alert('请输入匹配内容');
-            newRule = `${nType},${nPayload},${nTarget}`;
-        }
-        
+        let nNoResolve = Boolean(document.getElementById('m-rule-no-resolve')?.checked);
+
+        if (nType !== 'MATCH' && !nPayload) return alert('请输入匹配内容');
+        let newRule = ProxyForgeRuleUtils.buildRuleString({
+            type: nType,
+            payload: nPayload,
+            target: nTarget,
+            noResolve: nNoResolve,
+            extraArgs: parsed.extraArgs,
+        });
+
         if (!state.templateObj['rules']) state.templateObj['rules'] = [];
         if (isNew) {
-            // New routing rules take highest priority; MATCH remains the final fallback.
             ProxyForgeRuleUtils.insertNewRule(state.templateObj['rules'], newRule);
         } else {
             state.templateObj['rules'][index] = newRule;
@@ -2367,10 +2355,19 @@ window.editRule = function(index) {
         saveTemplateObj();
         closeModal();
     });
-    
+
     document.getElementById('m-rule-type').addEventListener('change', function() {
-        if(this.value === 'MATCH') document.getElementById('m-rule-payload-group').style.display = 'none';
-        else document.getElementById('m-rule-payload-group').style.display = 'block';
+        const val = this.value;
+        const payloadGroup = document.getElementById('m-rule-payload-group');
+        const payloadInput = document.getElementById('m-rule-payload');
+        const noResolveGroup = document.getElementById('m-rule-noresolve-group');
+        payloadGroup.style.display = val === 'MATCH' ? 'none' : 'block';
+        noResolveGroup.style.display = NO_RESOLVE_RULE_TYPES.has(val) ? 'block' : 'none';
+        if (payloadInput) {
+            payloadInput.placeholder = payloadPlaceholder(val);
+            if (val === 'GEOSITE') payloadInput.setAttribute('list', 'm-rule-geosite-list');
+            else payloadInput.removeAttribute('list');
+        }
     });
 };
 

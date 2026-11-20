@@ -41,6 +41,7 @@ class ForwardCreateRequest(Payload):
     proxy_protocol: StrictInt = Field(default=0, ge=0, le=2)
     interface: constr(strict=True, max_length=32) = ''
     enabled: StrictBool = True
+    rewrite_subscription: StrictBool = False
 
     @model_validator(mode='after')
     def validate_mode(self):
@@ -60,6 +61,10 @@ class ForwardCreateRequest(Payload):
 class ForwardToggleRequest(Payload):
     request_id: Identifier
     enabled: StrictBool
+
+
+class ForwardSubscriptionRequest(Payload):
+    rewrite_subscription: StrictBool
 
 
 class ForwardDeleteRequest(Payload):
@@ -210,6 +215,12 @@ def attach_gost_routes(admin, agent, store_provider):
     @admin.post('/{agent_id}/forwards/{rule_id}/toggle')
     def toggle_agent_forward(agent_id: str, rule_id: str, data: ForwardToggleRequest):
         return store_provider().set_forward_enabled(rule_id, data.enabled, data.request_id, agent_id=agent_id)
+
+    @admin.post('/{agent_id}/forwards/{rule_id}/subscription')
+    def toggle_agent_forward_subscription(agent_id: str, rule_id: str, data: ForwardSubscriptionRequest):
+        return store_provider().set_forward_rewrite_subscription(
+            rule_id, data.rewrite_subscription, agent_id=agent_id,
+        )
 
     @admin.delete('/{agent_id}/forwards/{rule_id}')
     def delete_agent_forward(agent_id: str, rule_id: str, request_id: Identifier):

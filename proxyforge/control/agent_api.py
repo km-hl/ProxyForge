@@ -174,6 +174,7 @@ def attach_agent_routes(
     *,
     manual_nodes_reader=None,
     replace_manual_node=None,
+    rename_template_references=None,
 ):
     admin = APIRouter(prefix="/api/agents", dependencies=[Depends(management_auth)])
     agent = APIRouter(prefix="/api/agent")
@@ -394,7 +395,12 @@ def attach_agent_routes(
     from proxyforge.control.job_api import attach_job_routes
     attach_job_routes(app, admin, agent, store_provider)
     from proxyforge.control.deployment_api import attach_deployment_routes
-    attach_deployment_routes(app, admin, store_provider)
+    attach_deployment_routes(
+        app,
+        admin,
+        store_provider,
+        rename_template_references=rename_template_references,
+    )
     from proxyforge.control.gost_api import attach_gost_routes
     attach_gost_routes(admin, agent, store_provider)
     app.add_middleware(AgentBodyLimit)

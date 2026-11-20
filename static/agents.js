@@ -198,11 +198,6 @@ function _createOutboundHopsEditor({ container, initialHops = [], ssLandings = [
 
     function renderEditor() {
         container.replaceChildren();
-        const intro = document.createElement('div');
-        intro.className = 'hint';
-        intro.style.marginBottom = '8px';
-        intro.textContent = '按顺序级联出站 (本机入口 → 第 1 跳 → 第 2 跳 → … → 最终落地，原生 sing-box detour，完整支持 TCP + UDP，最多 4 跳)。受管 SS2022 跳会自动读取最新端口与密钥，无需手工复制密码。';
-        container.append(intro);
 
         if (hops.length) {
             const flow = document.createElement('div');
@@ -479,7 +474,6 @@ async function showAgentChain(agent) {
     }
 
     openModal('多落地 / 多跳链式出站 · ' + agent.name,
-        '<p class="hint">同一台入口 Agent 可挂载多条链式节点：既可分配独立端口（如 20001），也可直接<strong>复用已有端口（如 TCP 443 Reality）</strong>，经 sing-box 原生 <code>auth_user</code> 实现同端口“直出 + 多跳链式落地”并存（完整支持 TCP + UDP，1~4 跳）。</p>' +
         '<div id="chain-legacy-banner" hidden style="margin-bottom:10px;"></div>' +
         '<h4 style="margin:8px 0 6px;">本机已有链式出站节点</h4>' +
         '<div id="chain-nodes-list" style="margin-bottom:12px;"></div>' +
@@ -509,7 +503,6 @@ async function showAgentChain(agent) {
         '<div class="form-group" id="chain-node-sspub-wrap" hidden style="display:flex; align-items:flex-end;"><label class="inline-check"><input type="checkbox" id="chain-node-sspub"> 同时加入客户端订阅</label></div>' +
         '</div>' +
         '<div id="chain-node-hops-box" style="margin:10px 0;"></div>' +
-        '<p class="hint">应用仅重载/重启代理服务进程（不会重启服务器），不中断宿主机及其他共存直连节点。</p>' +
         '<div style="display:flex; gap:8px; flex-wrap:wrap;">' +
         '<button type="button" class="btn btn-primary" id="chain-node-save">保存并应用链式节点</button>' +
         '<button type="button" class="btn" id="chain-node-refresh">刷新列表</button></div>' +
@@ -711,7 +704,7 @@ async function showAgentChain(agent) {
         if (!chained.length) {
             const empty = document.createElement('div');
             empty.className = 'hint';
-            empty.textContent = `当前暂无链式出站节点（本机共有 ${directCount} 个直连节点，互不干扰）。在下方选择目标 SS2022 落地，可直接复用已有 443 端口或使用独立端口添加多条链路。`;
+            empty.textContent = `暂无链式出站节点（直连节点 ${directCount} 个）。`;
             listEl.append(empty);
         } else {
             for (const n of chained) {
@@ -857,11 +850,14 @@ async function showAgentChain(agent) {
             const endpoint = editingNodeId
                 ? '/agents/' + agent.id + '/nodes/' + encodeURIComponent(editingNodeId)
                 : '/agents/' + agent.id + '/nodes';
-            await fetchAgentJson(endpoint, { method: editingNodeId ? 'PUT' : 'POST', body: JSON.stringify(body) });
+            const res = await fetchAgentJson(endpoint, { method: editingNodeId ? 'PUT' : 'POST', body: JSON.stringify(body) });
             hopEditor.clearSecrets();
-            statusEl.textContent = '链式节点已下发至代理服务进程！';
+            const chainNotice = (res && res.restarted === false) ? '已保存（无需重启服务）' : '链式节点已下发至代理服务进程！';
+            statusEl.textContent = chainNotice;
+            if (res && res.restarted === false) showToast('已保存（无需重启服务）', 'success');
             resetToCreate();
             await refreshAll();
+            statusEl.textContent = chainNotice;
             if (typeof ProxyForgeManagedNodes !== 'undefined') ProxyForgeManagedNodes.refresh();
             refreshAgents().catch(() => {});
         } catch (e) {
@@ -946,18 +942,16 @@ async function showAgentDeployment(agent, initialNodeId = null) {
     let generatedKeyRef = null;
 
     openModal('节点 / 落地部署 · ' + agent.name,
-        '<p class="hint">单台 Agent 支持多协议节点共存（例如 TCP 443 VLESS Reality + UDP 443 Hysteria2 + AnyTLS + Trojan + SS2022），统一编译至本机 proxyforge-singbox 实例。</p>' +
         '<div id="deployment-nodes-bar" style="margin-bottom:12px;"></div>' +
         '<div class="form-grid">' +
-        '<div class="form-group full-width"><label>部署协议类型 (五大抗封锁协议)</label><select id="deployment-protocol">' +
+        '<div class="form-group full-width"><label>部署协议类型</label><select id="deployment-protocol">' +
         '<option value="reality">VLESS Reality (XTLS-Vision · 自建回环偷自己 / 外部目标)</option>' +
         '<option value="hysteria2">Hysteria2 (QUIC/UDP · ACME 自动证书 · 端口跳跃)</option>' +
         '<option value="ss2022">Shadowsocks 2022 (2022-blake3 · 内部落地 / 直连订阅)</option>' +
         '<option value="anytls">AnyTLS (TLS 1.3 · 消除 TLS-in-TLS 特征)</option>' +
         '<option value="trojan">Trojan (TLS 1.3 + 本机 Caddy 防探测回落)</option></select></div>' +
         '</div>' +
-        '<p id="deployment-help" class="hint"></p>' +
-        _agentRegionPickerHtml('deployment-region', agent.region || '', '节点地区 / 国旗 (可输入搜索或选择，自动添加在节点名称前)') +
+        _agentRegionPickerHtml('deployment-region', agent.region || '', '节点地区 / 国旗 (自动添加在节点名称前)') +
         '<div class="form-grid">' +
         '<div class="form-group"><label>节点名称</label><input id="deployment-name" maxlength="64" placeholder="如 🇭🇰 HK Reality"></div>' +
         '<div class="form-group"><label>监听端口</label><input id="deployment-port" type="number" min="1" max="65535" value="443"></div>' +
@@ -1036,7 +1030,6 @@ async function showAgentDeployment(agent, initialNodeId = null) {
         '</div></div>' +
         '<div id="deployment-outbound-chain-fields" hidden style="margin-top:8px;"></div></details>' +
         '<div style="margin:8px 0;"><button type="button" class="btn btn-sm" id="deployment-keygen-btn">🔑 服务端预生成密钥对</button> <span id="deployment-keyref-status" class="hint"></span></div>' +
-        '<p class="hint">应用仅重载/重启代理服务进程（不会重启服务器），可能短暂中断当前节点连接。</p>' +
         '<button type="button" class="btn btn-primary" id="deployment-apply">保存并应用节点</button> ' +
         '<button type="button" class="btn btn-danger" id="deployment-remove">删除当前节点</button> ' +
         '<button type="button" class="btn" id="deployment-refresh">刷新状态</button><pre id="deployment-state" style="white-space:pre-wrap; margin-top:8px;"></pre>', closeModal);
@@ -1349,14 +1342,6 @@ async function showAgentDeployment(agent, initialNodeId = null) {
         keyrefStatus.textContent = sharedCtx.joiningShared
             ? '同端口复用将自动沿用已有监听器的密钥对，无需重新生成。'
             : (generatedKeyRef ? '已生成服务端密钥引用，提交部署时将自动注入（私钥不落地浏览器）。' : '');
-        const helpMap = {
-            reality: 'VLESS + XTLS-Vision + REALITY（开启 max_time_difference 1m）。可选“自建回环偷自己”（Caddy 在 127.0.0.1 提供真实 TLS 1.3 证书与伪装站）或“外部目标模式”（免域名）。',
-            hysteria2: 'Hysteria2 (QUIC/UDP + TLS 1.3 ALPN h3)，支持 ACME 自动证书、上下行带宽提示与多端口跳跃 (mport) 防 UDP QoS 限速。',
-            ss2022: 'Shadowsocks 2022 AEAD (TCP+UDP)，既可作为中转/链式代理的高性能内部落地，也可勾选直接加入客户端订阅。',
-            anytls: 'sing-box 原生 AnyTLS 入站 + TLS 1.3 自动证书，内置分段填充方案 (padding_scheme) 彻底消除 TLS-in-TLS 长度特征。',
-            trojan: 'Trojan + TLS 1.3 自动证书，自动编排本机回环 Caddy 提供真实网页 Fallback，抵御主动探测。',
-        };
-        document.getElementById('deployment-help').textContent = helpMap[proto] || '';
         const capable = agentCanLand(agent) || agentCanDeploy(agent);
         const busy = agentNodes.some(n => ['pending', 'assigned', 'running'].includes(n.status));
         apply.disabled = !capable || busy;
@@ -1543,6 +1528,7 @@ async function showAgentDeployment(agent, initialNodeId = null) {
         if (!confirm(removing ? `确认删除节点 ${current.settings?.name || ''} 并重载代理服务进程？` : '确认保存配置并重载/重启代理服务进程（不会重启服务器）？')) return;
         apply.disabled = true; remove.disabled = true;
         try {
+            let savedNoRestart = false;
             if (removing) {
                 await fetchAgentJson('/agents/' + agent.id + '/nodes/' + encodeURIComponent(current.id), {
                     method: 'DELETE',
@@ -1561,10 +1547,11 @@ async function showAgentDeployment(agent, initialNodeId = null) {
                 const endpoint = current
                     ? '/agents/' + agent.id + '/nodes/' + encodeURIComponent(current.id)
                     : '/agents/' + agent.id + '/nodes';
-                await fetchAgentJson(endpoint, {
+                const res = await fetchAgentJson(endpoint, {
                     method: current ? 'PUT' : 'POST',
                     body: JSON.stringify(body),
                 });
+                savedNoRestart = Boolean(res && res.restarted === false);
                 const tokField = document.getElementById('deployment-dns-token');
                 if (tokField) tokField.value = '';
                 const outPassField = document.getElementById('deployment-out-pass');
@@ -1573,6 +1560,10 @@ async function showAgentDeployment(agent, initialNodeId = null) {
                 generatedKeyRef = null;
             }
             await refresh();
+            if (savedNoRestart) {
+                showToast('已保存（无需重启服务）', 'success');
+                status.textContent = '已保存（无需重启服务）';
+            }
             if (typeof ProxyForgeManagedNodes !== 'undefined') ProxyForgeManagedNodes.refresh();
             refreshAgents().catch(() => {});
         } catch (error) {
@@ -1718,7 +1709,6 @@ async function showAgentAdoptions(agent) {
     let pollTimer = null;
     let showIgnored = false;
     openModal('存量节点接管与清理 · ' + agent.name,
-        '<p class="hint">经由 root 权限 runtime_helper 扫描目标主机已运行的 sing-box / xray / caddy 服务，自动提取认证凭据并与已有手工节点交叉去重。支持「完全接管（自动替换重复手工节点并迁移策略组引用）」、「忽略（不动原进程）」或「停用并清理原服务（备份释放端口，可恢复）」。</p>' +
         '<div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">' +
         '<button type="button" class="btn btn-primary btn-sm" id="adopt-scan-trigger">🔍 一键特权扫描 (adopt_scan)</button>' +
         '<button type="button" class="btn btn-sm" id="adopt-scan-refresh">刷新扫描结果</button>' +
@@ -1995,13 +1985,7 @@ async function showAgentAdoptions(agent) {
                 const cfg = document.createElement('div');
                 cfg.className = 'hint';
                 cfg.textContent = `原配置: ${item.config_path}`;
-                const note = document.createElement('div');
-                note.className = 'hint';
-                note.style.marginTop = '4px';
-                note.textContent = isCaddy
-                    ? 'ℹ️ 宿主机回环 TLS / 伪装站辅助服务（如 NodePilot Caddy）。如旧节点已停用且需释放 80/回环端口，可点击下方按钮停用（支持一键恢复）。'
-                    : 'ℹ️ 宿主机前置端口分流 / SNI 门户组件（如 dokodemo-door），不直接作为客户端代理节点接管。';
-                card.append(head, meta, cfg, note);
+                card.append(head, meta, cfg);
                 if (item.service_name) {
                     const auxActions = document.createElement('div');
                     auxActions.className = 'item-actions';
@@ -2107,6 +2091,7 @@ async function showAgentForwards(agent) {
         '<div class="form-group"><label>关联多跳隧道 (chain 模式可选)</label><select id="fwd-chain-id"><option value="">无</option></select></div>' +
         '<div class="form-group"><label>关联 Best Exit 组 (best_exit 模式)</label><select id="fwd-exit-group"><option value="">无</option></select></div>' +
         '<div class="form-group full-width"><label>目标地址列表 (direct 模式，每行 host:port 或 名称|host:port)</label><textarea id="fwd-targets" rows="2" placeholder="198.51.100.10:443"></textarea></div>' +
+        '<div class="form-group full-width"><label class="inline-check"><input type="checkbox" id="fwd-rewrite-sub"> 订阅自动走此中转</label></div>' +
         '</div><button type="button" class="btn btn-primary btn-sm" id="fwd-create-btn">创建转发</button></details>' +
         '<h4 style="margin:12px 0 4px;">Best Exit 自动优选组</h4><div id="best-exit-list"></div>' +
         '<details style="margin-top:8px;"><summary>➕ 新建 Best Exit 出口组</summary><div class="form-grid" style="margin-top:8px;">' +
@@ -2157,14 +2142,32 @@ async function showAgentForwards(agent) {
                 const head = document.createElement('div'); head.className = 'sub-user-header';
                 const title = document.createElement('strong');
                 title.textContent = `${f.name} · :${f.listen_port} (${f.protocol} / ${f.mode})`;
+                const pillGroup = document.createElement('div'); pillGroup.style.display = 'flex'; pillGroup.style.gap = '6px'; pillGroup.style.alignItems = 'center';
+                if (f.rewrite_subscription) {
+                    const subPill = document.createElement('span'); subPill.className = 'status-pill is-online';
+                    subPill.textContent = '订阅中转';
+                    pillGroup.append(subPill);
+                }
                 const pill = document.createElement('span'); pill.className = `status-pill ${f.enabled ? 'is-online' : 'is-offline'}`;
                 pill.textContent = f.enabled ? '运行中' : '已停用';
-                head.append(title, pill);
+                pillGroup.append(pill);
+                head.append(title, pillGroup);
                 const info = document.createElement('div'); info.className = 'hint';
                 const targetText = (f.targets || []).map(t => t.addr).join(', ') || (f.exit_group_id ? 'BestExit:' + f.exit_group_id : f.chain_id || '-');
                 info.textContent = `出口: ${targetText} · 流量: ${formatAgentBytes(f.total_bytes)} (↓${formatAgentBytes(f.rx_bytes)} / ↑${formatAgentBytes(f.tx_bytes)})` +
                     (f.job_status ? ` · 任务: ${f.job_status}` : '');
                 const acts = document.createElement('div'); acts.className = 'item-actions';
+                const subBtn = document.createElement('button'); subBtn.type = 'button';
+                subBtn.className = `btn btn-sm ${f.rewrite_subscription ? 'btn-primary' : ''}`.trim();
+                subBtn.textContent = f.rewrite_subscription ? '订阅走此中转 ✓' : '订阅走此中转';
+                subBtn.onclick = async () => {
+                    try {
+                        await fetchAgentJson('/agents/' + agent.id + '/forwards/' + f.id + '/subscription', {
+                            method: 'POST', body: JSON.stringify({ rewrite_subscription: !f.rewrite_subscription })
+                        });
+                        await loadAll();
+                    } catch (e) { notice.textContent = e.message; }
+                };
                 const toggleBtn = document.createElement('button'); toggleBtn.type = 'button'; toggleBtn.className = 'btn btn-sm';
                 toggleBtn.textContent = f.enabled ? '停用' : '启用';
                 toggleBtn.onclick = async () => {
@@ -2183,7 +2186,7 @@ async function showAgentForwards(agent) {
                         await loadAll();
                     } catch (e) { notice.textContent = e.message; }
                 };
-                acts.append(toggleBtn, delBtn);
+                acts.append(subBtn, toggleBtn, delBtn);
                 card.append(head, info, acts);
                 fwdList.append(card);
             }
@@ -2257,6 +2260,7 @@ async function showAgentForwards(agent) {
                 protocol: document.getElementById('fwd-proto').value,
                 mode,
                 proxy_protocol: Number(document.getElementById('fwd-pp').value) || 0,
+                rewrite_subscription: Boolean(document.getElementById('fwd-rewrite-sub')?.checked),
             };
             const targets = parseForwardTargetsInput(document.getElementById('fwd-targets').value);
             if (targets.length) body.targets = targets;
@@ -2310,7 +2314,6 @@ async function showGlobalTunnelsModal() {
         '<div id="global-traffic-box" style="margin-bottom:12px;">正在统计全网流量…</div>' +
         '<h4 style="margin:8px 0 4px;">已配置的 go-gost 多跳隧道链</h4><div id="global-chains-list"></div>' +
         '<details open style="margin-top:10px;"><summary>➕ 创建多跳隧道链 (支持 1~8 跳 · TCP+UDP)</summary>' +
-        '<p class="hint" style="margin:6px 0;">适用于「国内中转机 → 深港 IX → 多台落地机」场景：在此定义国内入口到 IX（或更多级中继）的 go-gost 隧道，然后在入口机「转发」中选「多跳隧道链 (chain)」并按落地机分配独立入口端口即可。</p>' +
         '<div class="form-grid" style="margin-top:8px;">' +
         '<div class="form-group"><label>隧道名称 (字母/数字/短横线)</label><input id="tunnel-name" placeholder="如 cn-ix-relay"></div>' +
         '<div class="form-group"><label>入口 Agent (客户端直连的机器，如国内机)</label><select id="tunnel-entry-agent"></select></div>' +
@@ -2573,54 +2576,49 @@ function agentStatusLabel(agent) {
         (!agent.metadata.supported ? ' · 未支持的系统' : '');
 }
 
-function _osBadgeElement(osName) {
-    const osLower = String(osName || '').toLowerCase();
-    const badge = document.createElement('span');
-    badge.className = 'komari-os-badge';
-    if (osLower.includes('debian')) badge.title = 'Debian';
-    else if (osLower.includes('ubuntu')) badge.title = 'Ubuntu';
-    else if (osLower.includes('alpine')) badge.title = 'Alpine Linux';
-    else badge.title = osName || 'Linux';
-    const label = osLower.includes('debian') ? '🌀' : (osLower.includes('ubuntu') ? '🟠' : (osLower.includes('alpine') ? '🏔️' : '🐧'));
-    badge.textContent = label;
-    return badge;
-}
-
-function _formatUptimeCompact(seconds) {
-    const s = Math.max(0, Number(seconds || 0));
-    if (s >= 86400) return `${Math.floor(s / 86400)} 天`;
-    if (s >= 3600) return `${Math.floor(s / 3600)} 小时`;
-    return `${Math.max(1, Math.floor(s / 60))} 分钟`;
-}
-
-function _formatExpireDays(expireAt) {
-    if (!expireAt || Number(expireAt) <= 0) return '长期有效';
-    const days = Math.ceil((Number(expireAt) - Date.now() / 1000) / 86400);
-    return days > 0 ? `${days} 天` : '已到期';
-}
-
-function _buildSegBar(ratio, active) {
-    const bar = document.createElement('div');
-    bar.className = 'komari-seg-bar';
-    const litCount = ratio > 0 ? Math.max(1, Math.min(20, Math.round(ratio * 20))) : 0;
-    const toneClass = ratio >= 0.9 ? 'is-danger' : (ratio >= 0.7 ? 'is-warn' : 'is-good');
-    for (let i = 0; i < 20; i += 1) {
-        const seg = document.createElement('span');
-        seg.className = 'komari-seg' + (active && i < litCount ? ' ' + toneClass : '');
-        bar.append(seg);
+function _iconOrText(name, fallbackText, size = 15) {
+    if (typeof ProxyForgeIcons !== 'undefined' && ProxyForgeIcons && typeof ProxyForgeIcons.el === 'function') {
+        try {
+            const node = ProxyForgeIcons.el(name, size);
+            if (node) return node;
+        } catch (_) {}
     }
-    return bar;
+    const span = document.createElement('span');
+    span.textContent = fallbackText;
+    return span;
 }
 
-function _buildTrafficDots(active, colorClass) {
-    const row = document.createElement('div');
-    row.className = 'komari-dot-track';
-    for (let i = 0; i < 12; i += 1) {
-        const d = document.createElement('span');
-        d.className = 'komari-mini-dot' + (active && i >= 6 ? ' ' + colorClass : '');
-        row.append(d);
-    }
-    return row;
+function _formatOsSubtitle(agent) {
+    const m = agent.metadata || {};
+    const osRaw = String(m.os || 'linux');
+    const osLower = osRaw.toLowerCase();
+    const osMap = {
+        debian: 'Debian',
+        ubuntu: 'Ubuntu',
+        alpine: 'Alpine',
+        centos: 'CentOS',
+        rocky: 'Rocky',
+        almalinux: 'AlmaLinux',
+        fedora: 'Fedora',
+        arch: 'Arch',
+    };
+    const osLabel = osMap[osLower] || (osLower === 'linux' ? 'Linux' : osRaw);
+    const osFull = m.os_version ? `${osLabel} ${m.os_version}` : osLabel;
+    const primaryIp = agent.public_ipv4 || agent.observed_ip || m.hostname || '';
+    return [osFull, m.arch || '', primaryIp, agent.public_ipv6 ? 'IPv6' : '']
+        .filter(Boolean)
+        .join(' · ');
+}
+
+function _closeAllAgentMenus(exceptWrap = null) {
+    if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return;
+    document.querySelectorAll('.pf-menu-wrap').forEach(wrap => {
+        if (exceptWrap && wrap === exceptWrap) return;
+        const menu = wrap.querySelector('.pf-dropdown-menu');
+        const btn = wrap.querySelector('.pf-icon-btn');
+        if (menu) menu.hidden = true;
+        if (btn) btn.setAttribute('aria-expanded', 'false');
+    });
 }
 
 function _formatRuntimeError(code) {
@@ -2677,26 +2675,28 @@ function _nodeRoleBadge(n) {
 async function refreshAgents() {
     const target = document.getElementById('agent-list');
     try {
-        const [agentsRes, trafficRes, overviewRes] = await Promise.all([
+        const [agentsRes, overviewRes] = await Promise.all([
             fetchAuth('/agents'),
-            fetchAuth('/agents/traffic/summary').catch(() => null),
             fetchAuth('/agents/deployments/overview').catch(() => null),
         ]);
         const { agents } = await agentsRes.json();
-        const trafficData = trafficRes && trafficRes.ok !== false ? await trafficRes.json().catch(() => ({})) : {};
         const overviewData = overviewRes && overviewRes.ok !== false ? await overviewRes.json().catch(() => ({})) : {};
-        const trafficByAgent = new Map((trafficData.agents || []).map(item => [item.agent_id, item]));
         const overviewByAgent = overviewData.agents || {};
 
         target.replaceChildren();
-        if (!agents.length) { target.textContent = '尚无 Agent。点击「添加服务器」获取安装命令，在目标机器执行。'; return; }
+        if (!agents.length) {
+            const emptyState = document.createElement('div');
+            emptyState.className = 'manual-nodes-empty-bar';
+            emptyState.textContent = '尚无托管服务器，点击右上角「添加服务器」获取安装命令。';
+            target.append(emptyState);
+            return;
+        }
 
         const grid = document.createElement('div');
         grid.className = 'komari-agent-grid';
 
         for (const agent of agents) {
             const m = agent.metadata || {};
-            const tr = trafficByAgent.get(agent.id) || { rx_bytes: 0, tx_bytes: 0, total_bytes: 0 };
             const ov = overviewByAgent[agent.id] || {
                 nodes: [],
                 forwards: [],
@@ -2711,87 +2711,99 @@ async function refreshAgents() {
             const card = document.createElement('article');
             card.className = 'komari-agent-card';
 
-            // Header row: flag + os + name + status dot + expand detail button
+            // Header row: single flag + cleaned name + status dot + ⋯ menu
             const head = document.createElement('div');
             head.className = 'komari-card-head';
             const headLeft = document.createElement('div');
             headLeft.className = 'komari-head-left';
 
-            let flagChar = '🌐';
+            let flagChar = '';
             if (typeof ProxyForgeRegions !== 'undefined') {
                 const reg = ProxyForgeRegions.matchRegion(agent.region || agent.name);
-                if (reg) flagChar = reg.flag;
+                if (reg && reg.flag) flagChar = reg.flag;
             }
             const flagEl = document.createElement('span');
             flagEl.className = 'komari-flag';
-            flagEl.textContent = flagChar;
+            if (flagChar) {
+                flagEl.textContent = flagChar;
+            } else {
+                flagEl.append(_iconOrText('globe', '🌐', 15));
+            }
 
             const titleEl = document.createElement('span');
             titleEl.className = 'komari-card-title';
-            titleEl.textContent = agent.name;
+            const strippedName = (typeof ProxyForgeRegions !== 'undefined' && typeof ProxyForgeRegions.stripLeadingFlag === 'function')
+                ? ProxyForgeRegions.stripLeadingFlag(agent.name)
+                : '';
+            titleEl.textContent = strippedName || agent.name;
 
-            headLeft.append(flagEl, _osBadgeElement(m.os), titleEl);
+            headLeft.append(flagEl, titleEl);
 
             const headRight = document.createElement('div');
             headRight.className = 'komari-head-right';
             const dot = document.createElement('span');
             dot.className = `komari-status-dot is-${agent.status || 'offline'}`;
             dot.title = agentStatusLabel(agent);
-            const expandBtn = document.createElement('button');
-            expandBtn.type = 'button';
-            expandBtn.className = 'komari-expand-btn';
-            expandBtn.title = '查看 Agent 详情';
-            expandBtn.textContent = '↗';
-            expandBtn.onclick = () => agentAction(agent, 'details').catch(error => showToast(error.message, 'error'));
-            headRight.append(dot, expandBtn);
+
+            const menuWrap = document.createElement('div');
+            menuWrap.className = 'pf-menu-wrap';
+            const menuBtn = document.createElement('button');
+            menuBtn.type = 'button';
+            menuBtn.className = 'pf-icon-btn';
+            menuBtn.title = '更多操作';
+            menuBtn.setAttribute('aria-label', '更多操作');
+            menuBtn.setAttribute('aria-expanded', 'false');
+            menuBtn.append(_iconOrText('more', '⋯', 16));
+
+            const menu = document.createElement('div');
+            menu.className = 'pf-dropdown-menu';
+            menu.hidden = true;
+            for (const item of [
+                { label: '任务日志', action: 'jobs', icon: 'history' },
+                { label: '编辑服务器', action: 'edit', icon: 'edit' },
+                { label: '查看详情', action: 'details', icon: 'eye' },
+                { divider: true },
+                { label: '撤销凭据', action: 'revoke', icon: 'key' },
+                { label: '移除服务器', action: 'remove', icon: 'trash', danger: true },
+            ]) {
+                if (item.divider) {
+                    const div = document.createElement('div');
+                    div.className = 'pf-menu-divider';
+                    menu.append(div);
+                    continue;
+                }
+                const mBtn = document.createElement('button');
+                mBtn.type = 'button';
+                mBtn.className = `pf-menu-item${item.danger ? ' is-danger' : ''}`;
+                mBtn.append(_iconOrText(item.icon, '', 14));
+                const lbl = document.createElement('span');
+                lbl.textContent = item.label;
+                mBtn.append(lbl);
+                mBtn.onclick = ev => {
+                    ev.stopPropagation();
+                    _closeAllAgentMenus();
+                    agentAction(agent, item.action).catch(error => showToast(error.message, 'error'));
+                };
+                menu.append(mBtn);
+            }
+            menuBtn.onclick = ev => {
+                ev.stopPropagation();
+                const willOpen = menu.hidden;
+                _closeAllAgentMenus(menuWrap);
+                menu.hidden = !willOpen;
+                menuBtn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+            };
+            menuWrap.append(menuBtn, menu);
+
+            headRight.append(dot, menuWrap);
             head.append(headLeft, headRight);
             card.append(head);
 
             // Subtitle: OS Version · Arch · IP
             const sub = document.createElement('div');
             sub.className = 'komari-card-sub';
-            const primaryIp = agent.public_ipv4 || agent.observed_ip || m.hostname || '';
-            sub.textContent = `${m.os || 'linux'} ${m.os_version || ''} · ${m.arch || ''}` +
-                (primaryIp ? ` · ${primaryIp}` : '') +
-                (agent.public_ipv6 ? ' · IPv6' : '');
+            sub.textContent = _formatOsSubtitle(agent);
             card.append(sub);
-
-            // Traffic section (Komari style without hardware bars)
-            const trafficBox = document.createElement('div');
-            trafficBox.className = 'komari-traffic-box';
-            const tRow = document.createElement('div');
-            tRow.className = 'komari-traffic-cols';
-
-            const upCol = document.createElement('div');
-            upCol.className = 'komari-traffic-col';
-            const upHead = document.createElement('div');
-            upHead.className = 'komari-traffic-line';
-            const upLbl = document.createElement('span'); upLbl.className = 'komari-lbl-up'; upLbl.textContent = '↑ 出站';
-            const upVal = document.createElement('span'); upVal.className = 'komari-val-up'; upVal.textContent = formatAgentBytes(tr.tx_bytes);
-            upHead.append(upLbl, upVal);
-            upCol.append(upHead, _buildTrafficDots(agent.status === 'online', 'is-up'));
-
-            const dnCol = document.createElement('div');
-            dnCol.className = 'komari-traffic-col';
-            const dnHead = document.createElement('div');
-            dnHead.className = 'komari-traffic-line';
-            const dnLbl = document.createElement('span'); dnLbl.className = 'komari-lbl-dn'; dnLbl.textContent = '↓ 入站';
-            const dnVal = document.createElement('span'); dnVal.className = 'komari-val-dn'; dnVal.textContent = formatAgentBytes(tr.rx_bytes);
-            dnHead.append(dnLbl, dnVal);
-            dnCol.append(dnHead, _buildTrafficDots(agent.status === 'online', 'is-dn'));
-
-            tRow.append(upCol, dnCol);
-            trafficBox.append(tRow);
-
-            const sumRow = document.createElement('div');
-            sumRow.className = 'komari-traffic-summary';
-            const totalLeft = document.createElement('span');
-            totalLeft.textContent = `🌐 总计 ${formatAgentBytes(tr.total_bytes)}`;
-            const statRight = document.createElement('span');
-            statRight.textContent = agentStatusLabel(agent);
-            sumRow.append(totalLeft, statRight);
-            trafficBox.append(sumRow);
-            card.append(trafficBox);
 
             // Managed cores strip
             const coreStrip = document.createElement('div');
@@ -2803,13 +2815,13 @@ async function refreshAgents() {
             if (m.caddy?.installed) {
                 const cPill = document.createElement('span');
                 cPill.className = `komari-core-pill ${m.caddy.running ? 'is-running' : ''}`;
-                cPill.textContent = m.caddy.running ? 'caddy ✓' : 'caddy ■';
+                cPill.textContent = m.caddy.running ? 'caddy 运行中' : 'caddy 已停';
                 coreStrip.append(cPill);
             }
             if (m.gost?.installed) {
                 const gPill = document.createElement('span');
                 gPill.className = `komari-core-pill ${m.gost.running ? 'is-running' : ''}`;
-                gPill.textContent = m.gost.running ? 'go-gost ✓' : 'go-gost ■';
+                gPill.textContent = m.gost.running ? 'go-gost 运行中' : 'go-gost 已停';
                 coreStrip.append(gPill);
             }
             card.append(coreStrip);
@@ -2823,8 +2835,8 @@ async function refreshAgents() {
             const panelTitle = document.createElement('span');
             panelTitle.className = 'komari-nodes-title';
             panelTitle.textContent = agentForwards.length
-                ? `📡 本机节点 (${agentNodes.length}) · 转发 (${agentForwards.length})`
-                : `📡 本机节点 (${agentNodes.length})`;
+                ? `本机节点 (${agentNodes.length}) · 转发 (${agentForwards.length})`
+                : `本机节点 (${agentNodes.length})`;
             const quickAdd = document.createElement('button');
             quickAdd.type = 'button';
             quickAdd.className = 'komari-nodes-add-btn';
@@ -2906,7 +2918,7 @@ async function refreshAgents() {
                     nDot.className = `komari-node-dot ${fw.enabled ? 'is-ok' : 'is-off'}`;
                     const nName = document.createElement('span');
                     nName.className = 'komari-node-name';
-                    nName.textContent = `🔀 ${fw.name}`;
+                    nName.textContent = fw.name;
                     left.append(nDot, nName);
 
                     const right = document.createElement('span');
@@ -2927,7 +2939,7 @@ async function refreshAgents() {
             } else {
                 const empty = document.createElement('div');
                 empty.className = 'komari-nodes-empty';
-                empty.textContent = '暂无托管节点，点击右上角「+ 新建」或下方「接管」添加';
+                empty.textContent = '暂无托管节点';
                 nodesPanel.append(empty);
             }
 
@@ -2940,55 +2952,13 @@ async function refreshAgents() {
                 const scanFooter = document.createElement('button');
                 scanFooter.type = 'button';
                 scanFooter.className = 'komari-scan-summary';
-                scanFooter.textContent = `🔍 宿主机存量: ${scanParts.join(' · ')} →`;
+                scanFooter.textContent = `宿主机存量: ${scanParts.join(' · ')} →`;
                 scanFooter.onclick = () => agentAction(agent, 'adoptions').catch(error => showToast(error.message, 'error'));
                 nodesPanel.append(scanFooter);
             }
             card.append(nodesPanel);
 
-            // Expiry + Uptime + Quota segmented bar (matching Komari screenshot bottom)
-            const metaBox = document.createElement('div');
-            metaBox.className = 'komari-meta-box';
-            const lifeRow = document.createElement('div');
-            lifeRow.className = 'komari-life-row';
-            const expSpan = document.createElement('span');
-            expSpan.innerHTML = '';
-            const expLbl = document.createElement('span'); expLbl.className = 'komari-muted'; expLbl.textContent = '📅 到期 ';
-            const expVal = document.createElement('strong'); expVal.className = 'komari-green'; expVal.textContent = _formatExpireDays(agent.expire_at);
-            expSpan.append(expLbl, expVal);
-
-            const upSpan = document.createElement('span');
-            const uLbl = document.createElement('span'); uLbl.className = 'komari-muted'; uLbl.textContent = '🔄 在线 ';
-            const uVal = document.createElement('strong'); uVal.className = 'komari-blue'; uVal.textContent = _formatUptimeCompact(m.uptime);
-            upSpan.append(uLbl, uVal);
-            lifeRow.append(expSpan, upSpan);
-            metaBox.append(lifeRow);
-
-            const qHead = document.createElement('div');
-            qHead.className = 'komari-quota-head';
-            const quotaBytes = Number(agent.quota_bytes || 0);
-            const usedBytes = Number(tr.total_bytes || 0);
-            const qLeft = document.createElement('span');
-            const qRight = document.createElement('span');
-            qRight.className = 'komari-muted';
-            let segRatio = 0;
-            if (quotaBytes > 0) {
-                const remain = Math.max(0, quotaBytes - usedBytes);
-                qLeft.textContent = `🗄️ 剩余流量 ${formatAgentBytes(remain)}`;
-                qRight.textContent = `${formatAgentBytes(usedBytes)} / ${formatAgentBytes(quotaBytes)}`;
-                segRatio = Math.min(1, usedBytes / quotaBytes);
-            } else {
-                qLeft.textContent = '🗄️ 流量配额 不限';
-                qRight.textContent = `已用 ${formatAgentBytes(usedBytes)}`;
-                segRatio = usedBytes > 0 ? 0.1 : 0;
-            }
-            qHead.append(qLeft, qRight);
-            metaBox.append(qHead, _buildSegBar(segRatio, usedBytes > 0 || quotaBytes > 0));
-            card.append(metaBox);
-
-            // Tags row (colored pills matching Komari)
-            const tagsRow = document.createElement('div');
-            tagsRow.className = 'komari-tags-row';
+            // Tags row (only role + custom tags)
             const pillList = [];
             if (agent.role && agent.role !== 'unassigned') {
                 pillList.push({ text: agent.role, cls: 'is-purple' });
@@ -2996,22 +2966,20 @@ async function refreshAgents() {
             for (const t of (agent.tags || [])) {
                 pillList.push({ text: t, cls: 'is-cyan' });
             }
-            if (agent.billing_label) {
-                pillList.push({ text: agent.billing_label, cls: 'is-green' });
+            if (pillList.length) {
+                const tagsRow = document.createElement('div');
+                tagsRow.className = 'komari-tags-row';
+                pillList.forEach((p, idx) => {
+                    const el = document.createElement('span');
+                    const cycle = ['is-purple', 'is-cyan', 'is-slate'];
+                    el.className = `komari-tag-pill ${p.cls || cycle[idx % cycle.length]}`;
+                    el.textContent = p.text;
+                    tagsRow.append(el);
+                });
+                card.append(tagsRow);
             }
-            if (!pillList.length) {
-                pillList.push({ text: m.agent_version ? `Agent v${m.agent_version}` : 'ProxyForge', cls: 'is-slate' });
-            }
-            pillList.forEach((p, idx) => {
-                const el = document.createElement('span');
-                const cycle = ['is-purple', 'is-cyan', 'is-green'];
-                el.className = `komari-tag-pill ${p.cls || cycle[idx % cycle.length]}`;
-                el.textContent = p.text;
-                tagsRow.append(el);
-            });
-            card.append(tagsRow);
 
-            // Card action buttons
+            // 4 core bottom action buttons
             const actionsRow = document.createElement('div');
             actionsRow.className = 'komari-card-actions';
             for (const [label, action, extraCls] of [
@@ -3019,10 +2987,6 @@ async function refreshAgents() {
                 ['转发', 'forwards', ''],
                 ['接管', 'adoptions', ''],
                 ['链路', 'chain', ''],
-                ['任务', 'jobs', ''],
-                ['编辑', 'edit', ''],
-                ['撤销', 'revoke', ''],
-                ['移除', 'remove', 'komari-btn-danger'],
             ]) {
                 const button = document.createElement('button');
                 button.type = 'button';
@@ -3069,17 +3033,12 @@ async function agentAction(agent, action, opts = {}) {
         return;
     }
     if (action === 'edit') {
-        const expDateStr = agent.expire_at ? new Date(Number(agent.expire_at) * 1000).toISOString().slice(0, 10) : '';
-        const quotaGbStr = agent.quota_bytes ? String(+(Number(agent.quota_bytes) / (1024 * 1024 * 1024)).toFixed(2)) : '';
         openModal('编辑 Agent · ' + agent.name,
-            _agentRegionPickerHtml('agent-edit-region', agent.region || agent.name, '地区 / 国旗 (用于卡片国旗与部署节点自动前缀)') +
+            _agentRegionPickerHtml('agent-edit-region', agent.region || agent.name, '地区 / 国旗') +
             '<div class="form-grid">' +
             '<div class="form-group"><label>名称</label><input id="agent-name"></div>' +
-            '<div class="form-group"><label>角色（仅标签）</label><select id="agent-role"><option>unassigned</option><option>node</option><option>landing</option><option>both</option></select></div>' +
-            '<div class="form-group"><label>到期日期 (可选)</label><input type="date" id="agent-expire" value="' + _escHtml(expDateStr) + '"></div>' +
-            '<div class="form-group"><label>月流量配额 GiB (可选，留空不限)</label><input type="number" min="0" step="1" id="agent-quota-gb" value="' + _escHtml(quotaGbStr) + '" placeholder="如 2000"></div>' +
-            '<div class="form-group"><label>账单 / 费用标签 (可选)</label><input id="agent-billing" value="' + _escHtml(agent.billing_label || '') + '" placeholder="如 $6.75 / 年付"></div>' +
-            '<div class="form-group"><label>标签（逗号分隔）</label><input id="agent-tags" placeholder="如 CN2 GIA, 家宽"></div>' +
+            '<div class="form-group"><label>角色</label><select id="agent-role"><option>unassigned</option><option>node</option><option>landing</option><option>both</option></select></div>' +
+            '<div class="form-group full-width"><label>标签（逗号分隔）</label><input id="agent-tags" placeholder="如 CN2 GIA, 家宽"></div>' +
             '</div>', async () => {
                 try {
                     const regionInput = (document.getElementById('agent-edit-region')?.value || '').trim();
@@ -3090,19 +3049,11 @@ async function agentAction(agent, action, opts = {}) {
                     } else {
                         regionCode = regionInput.slice(0, 32);
                     }
-                    const expVal = document.getElementById('agent-expire')?.value?.trim() || '';
-                    const expireAt = expVal ? Math.floor(Date.parse(expVal + 'T23:59:59Z') / 1000) : null;
-                    const quotaGbRaw = document.getElementById('agent-quota-gb')?.value?.trim() || '';
-                    const quotaBytes = quotaGbRaw && Number(quotaGbRaw) > 0 ? Math.round(Number(quotaGbRaw) * 1024 * 1024 * 1024) : null;
-                    const billingLabel = document.getElementById('agent-billing')?.value?.trim() || '';
                     await fetchAuth('/agents/' + agent.id, { method: 'PATCH', body: JSON.stringify({
                         name: document.getElementById('agent-name').value,
                         role: document.getElementById('agent-role').value,
                         tags: document.getElementById('agent-tags').value.split(',').map(s => s.trim()).filter(Boolean),
                         region: regionCode,
-                        expire_at: expireAt,
-                        quota_bytes: quotaBytes,
-                        billing_label: billingLabel,
                     }) });
                     closeModal(); await refreshAgents();
                 } catch (error) { showToast(error.message, 'error'); }
@@ -3172,9 +3123,8 @@ function buildQuickInstallCommand(info, opts = {}) {
 async function addAgent() {
     let busy = false, issued = false, quickInfo = null, issuedToken = '';
     openModal('添加服务器',
-        '<p class="hint">支持 Komari 风格一条命令完成下载校验、安装与自动注册，并按需勾选 Runtime / 预装内核 / 存量接管。</p>' +
         '<div id="agent-quick-box" class="quick-install-box" hidden>' +
-        _agentRegionPickerHtml('new-agent-region', '', '服务器地区 / 国旗 (可选，自动添加到名称前)') +
+        _agentRegionPickerHtml('new-agent-region', '', '服务器地区 / 国旗 (可选)') +
         '<div class="form-group"><label for="new-agent-name">服务器名称</label><input id="new-agent-name" maxlength="128" autocomplete="off" placeholder="例如: 🇭🇰 hk-landing-01"></div>' +
         '<div class="quick-option-chips">' +
         '<label class="inline-check"><input type="checkbox" id="qi-runtime" checked> 启用托管 Runtime</label>' +
@@ -3197,14 +3147,11 @@ async function addAgent() {
         '<p id="agent-quick-hint" class="hint"></p>' +
         '</div>' +
         '<p id="agent-install-status" class="hint">正在读取安装信息…</p>' +
-        '<details id="agent-legacy-details"><summary>传统 GitHub 固定 Commit 手动校验与交互凭据（兼容旧流程）</summary>' +
-        '<p class="hint">要求：Debian 12/13 或 Ubuntu 22.04/24.04，amd64/arm64，systemd、Python 3.9+。</p>' +
+        '<details id="agent-legacy-details"><summary>手动安装 / 固定 Commit 命令</summary>' +
         '<div id="agent-install-commands"></div>' +
-        '<p><a href="https://github.com/km-hl/ProxyForge/blob/master/docs/AGENT_INSTALL.md" target="_blank" rel="noopener noreferrer">中文安装、升级与恢复指南</a></p>' +
         '<div id="agent-registration-result" hidden><p>一次性注册凭据（10 分钟有效，仅可消费一次）：</p>' +
         '<input id="agent-registration-token" aria-label="一次性注册凭据" readonly autocomplete="off">' +
-        '<p id="agent-registration-expiry"></p>' +
-        '<p class="hint">关闭后不再显示。安装结束后关闭此窗口并刷新服务器列表，确认状态为在线。</p></div>' +
+        '<p id="agent-registration-expiry"></p></div>' +
         '</details>', async () => {
             if (!current() || busy) return;
             if (issued) { closeModal(); return; }
@@ -3365,6 +3312,8 @@ if (typeof document !== 'undefined') {
     document.getElementById('agent-tunnels-btn')?.addEventListener('click', () => showGlobalTunnelsModal().catch(error => showToast(error.message, 'error')));
     document.getElementById('agent-refresh-btn').addEventListener('click', refreshAgents);
     document.querySelector('[data-panel="panel-agents"]').addEventListener('click', refreshAgents);
+    document.addEventListener('click', () => _closeAllAgentMenus());
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') _closeAllAgentMenus(); });
     modalClose.addEventListener('click', clearRegistrationToken);
     modalCancel.addEventListener('click', clearRegistrationToken);
     modalOverlay.addEventListener('keydown', event => { if (event.key === 'Escape') clearRegistrationToken(); });

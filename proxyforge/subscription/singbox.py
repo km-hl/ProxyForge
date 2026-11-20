@@ -204,6 +204,9 @@ def convert_proxy_to_singbox(proxy: Dict[str, Any]) -> Dict[str, Any]:
     raise UnsupportedSingboxNode(f'unsupported protocol {kind}')
 
 
+_GEO_TAG_RE = re.compile(r'[a-z0-9][a-z0-9_@!.\-]{0,127}')
+
+
 def _translate_rule_to_singbox(rule_str: str) -> Optional[Dict[str, Any]]:
     parts = [p.strip() for p in str(rule_str).split(',')]
     if not parts:
@@ -224,6 +227,8 @@ def _translate_rule_to_singbox(rule_str: str) -> Optional[Dict[str, Any]]:
         return {'domain_suffix': [operand], **action_fields}
     if kind == 'DOMAIN-KEYWORD':
         return {'domain_keyword': [operand], **action_fields}
+    if kind == 'DOMAIN-REGEX':
+        return {'domain_regex': [operand], **action_fields}
     if kind == 'IP-CIDR':
         return {'ip_cidr': [operand], **action_fields}
     if kind == 'IP-CIDR6':
@@ -232,6 +237,23 @@ def _translate_rule_to_singbox(rule_str: str) -> Optional[Dict[str, Any]]:
         return {'port': [int(operand)] if operand.isdigit() else [], **action_fields}
     if kind == 'PROCESS-NAME':
         return {'process_name': [operand], **action_fields}
+    if kind in ('GEOSITE', 'GEOIP'):
+        tag = operand.strip().lower()
+        category = 'private' if (kind == 'GEOIP' and tag == 'lan') else tag
+        if not _GEO_TAG_RE.fullmatch(category) or '..' in category:
+            return None
+        geo_kind = 'geosite' if kind == 'GEOSITE' else 'geoip'
+        rs_tag = f'{geo_kind}-{category}'
+        return {
+            'rule_set': [rs_tag],
+            '__rule_set_meta__': {
+                'tag': rs_tag,
+                'type': 'remote',
+                'format': 'binary',
+                'url': f'https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/{geo_kind}/{category}.srs',
+            },
+            **action_fields,
+        }
     return None
 
 
@@ -305,6 +327,7 @@ def build_singbox_config(
         {'ip_is_private': True, 'outbound': 'direct'},
     ]
     final_outbound = default_final
+    rule_sets_by_tag: Dict[str, Dict[str, Any]] = {}
     for raw_rule in config.get('rules', []) or []:
         translated = _translate_rule_to_singbox(raw_rule) if isinstance(raw_rule, str) else None
         if not translated:
@@ -313,11 +336,17 @@ def build_singbox_config(
             target = translated['__final__']
             final_outbound = 'direct' if target == '__reject__' else target
             continue
+        rs_meta = translated.pop('__rule_set_meta__', None)
         target_ob = translated.get('outbound')
         if target_ob and target_ob not in seen_tags:
             continue
         if 'port' in translated and not translated['port']:
             continue
+        if rs_meta and rs_meta['tag'] not in rule_sets_by_tag:
+            entry = dict(rs_meta)
+            if default_final and default_final != 'direct':
+                entry['download_detour'] = default_final
+            rule_sets_by_tag[rs_meta['tag']] = entry
         route_rules.append(translated)
 
     outbounds_final = group_outbounds + outbounds + [{'type': 'direct', 'tag': 'direct'}]
@@ -387,15 +416,19 @@ def build_singbox_config(
         inbounds_list.append(tun_in)
     inbounds_list.append({'type': 'mixed', 'tag': 'mixed-in', 'listen': '127.0.0.1', 'listen_port': 2080})
 
+    route_section: Dict[str, Any] = {
+        'rules': route_rules,
+        'auto_detect_interface': True,
+        'final': final_outbound if final_outbound in seen_tags else 'direct',
+    }
+    if rule_sets_by_tag:
+        route_section['rule_set'] = list(rule_sets_by_tag.values())
+
     profile = {
         'log': {'level': 'info', 'timestamp': True},
         'dns': dns_section,
         'inbounds': inbounds_list,
         'outbounds': outbounds_final,
-        'route': {
-            'rules': route_rules,
-            'auto_detect_interface': True,
-            'final': final_outbound if final_outbound in seen_tags else 'direct',
-        },
+        'route': route_section,
     }
     return profile, skipped

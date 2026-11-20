@@ -116,8 +116,8 @@ test('Phase 8 static UI exposes shared-port selector in chain modal and shared n
     assert.ok(agentsSrc.includes('deployment-share-notice'), 'Deployment modal must show shared listener notice');
     assert.ok(agentsSrc.includes('♻️ 复用已有端口'), 'Chain modal must offer one-click reuse option');
     assert.ok(agentsSrc.includes('auth_user'), 'UI hints must explain sing-box auth_user split routing');
-    assert.ok(indexHtml.includes('agents.js?v=phase8-'), 'index.html must bust cache for Phase 8 agents.js');
-    assert.ok(indexHtml.includes('app.js?v=phase8-'), 'index.html must bust cache for Phase 8 app.js');
+    assert.match(indexHtml, /agents\.js\?v=phase(?:8|9)-/, 'index.html must bust cache for Phase 8+ agents.js');
+    assert.match(indexHtml, /app\.js\?v=phase(?:8|9)-/, 'index.html must bust cache for Phase 8+ app.js');
 });
 
 test('ProxyForgeRegions supports CN / 中国 quick selection without misclassifying CN2 or 深港IX', () => {

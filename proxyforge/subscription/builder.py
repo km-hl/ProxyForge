@@ -150,6 +150,55 @@ def cleanup_proxy_group_references(
     return result
 
 
+def rename_proxy_references(
+    config: Dict[str, Any],
+    old_name: str,
+    new_name: str,
+) -> Dict[str, int]:
+    """Rename references to a managed proxy across proxy-groups and routing rules."""
+    counts = {"groupReferences": 0, "ruleReferences": 0, "total": 0}
+    if not isinstance(config, dict) or not old_name or not new_name or old_name == new_name:
+        return counts
+
+    groups = config.get("proxy-groups")
+    if isinstance(groups, list):
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            refs = group.get("proxies")
+            if isinstance(refs, list) and old_name in refs:
+                next_refs = []
+                for ref in refs:
+                    candidate = new_name if ref == old_name else ref
+                    if candidate not in next_refs:
+                        next_refs.append(candidate)
+                group["proxies"] = next_refs
+                counts["groupReferences"] += 1
+            if group.get("default") == old_name:
+                group["default"] = new_name
+                counts["groupReferences"] += 1
+
+    rules = config.get("rules")
+    if isinstance(rules, list):
+        updated_rules = []
+        for rule in rules:
+            if not isinstance(rule, str):
+                updated_rules.append(rule)
+                continue
+            parts = rule.split(",")
+            rule_type = parts[0].strip().upper() if parts else ""
+            target_idx = 1 if rule_type == "MATCH" else 2
+            if rule_type not in {"AND", "OR", "NOT", "SUB-RULE"} and len(parts) > target_idx:
+                if parts[target_idx].strip() == old_name:
+                    parts[target_idx] = parts[target_idx].replace(old_name, new_name, 1)
+                    counts["ruleReferences"] += 1
+            updated_rules.append(",".join(parts))
+        config["rules"] = updated_rules
+
+    counts["total"] = counts["groupReferences"] + counts["ruleReferences"]
+    return counts
+
+
 def filter_config_by_groups(config: Dict[str, Any], allowed_groups: List[str]) -> Dict[str, Any]:
     """Restrict proxy-groups and rules to groups authorized for a specific subscription user."""
     if not allowed_groups:

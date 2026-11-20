@@ -2,10 +2,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+    buildRuleString,
     filterRules,
     getRuleTarget,
     getRuleType,
     insertNewRule,
+    parseRuleParts,
     removeProxyGroups,
     renameProxyGroupReferences,
 } = require('../static/rule-utils.js');
@@ -190,4 +192,42 @@ test('renaming a proxy group updates references in proxy-groups and rules withou
         'MATCH,HK-Fast',
     ]);
     assert.equal(getRuleTarget('IP-CIDR,1.1.1.1/32,HK-Fast,no-resolve'), 'HK-Fast');
+});
+
+test('parseRuleParts and buildRuleString handle GEOSITE, options, and logical rules', () => {
+    const geo = parseRuleParts('GEOSITE,openai,🚀 节点选择');
+    assert.deepEqual(geo, {
+        type: 'GEOSITE',
+        payload: 'openai',
+        target: '🚀 节点选择',
+        noResolve: false,
+        extraArgs: [],
+        isLogical: false,
+        raw: 'GEOSITE,openai,🚀 节点选择',
+    });
+
+    const cidr = parseRuleParts('IP-CIDR6,2001:db8::/32,DIRECT,no-resolve');
+    assert.deepEqual(cidr, {
+        type: 'IP-CIDR6',
+        payload: '2001:db8::/32',
+        target: 'DIRECT',
+        noResolve: true,
+        extraArgs: [],
+        isLogical: false,
+        raw: 'IP-CIDR6,2001:db8::/32,DIRECT,no-resolve',
+    });
+
+    assert.equal(
+        buildRuleString({ type: 'GEOSITE', payload: 'geolocation-!cn', target: '🚀 节点选择', noResolve: false }),
+        'GEOSITE,geolocation-!cn,🚀 节点选择'
+    );
+    assert.equal(
+        buildRuleString({ type: 'GEOIP', payload: 'cn', target: 'DIRECT', noResolve: true }),
+        'GEOIP,cn,DIRECT,no-resolve'
+    );
+    assert.equal(
+        buildRuleString({ type: 'MATCH', target: '🚀 节点选择' }),
+        'MATCH,🚀 节点选择'
+    );
+    assert.equal(getRuleTarget('IP-CIDR6,2001:db8::/32,DIRECT,no-resolve'), 'DIRECT');
 });
