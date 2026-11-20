@@ -691,6 +691,35 @@ class Phase8ControlPlaneAndSubscriptionTests(unittest.TestCase):
         self.assertEqual(add_flag_to_proxy_name('vps.soy - 深港IX'), '🇭🇰 vps.soy - 深港IX')
         self.assertEqual(add_flag_to_proxy_name('LA CN2 GIA'), 'LA CN2 GIA')
 
+    def test_runtime_download_normalizes_bare_gh_proxy_and_reads_persisted_config(self):
+        from agent.runtime_download import (
+            MIRROR_CONFIG_FILENAME,
+            _resolve_mirror_url,
+            normalize_mirror_prefix,
+            read_configured_mirror,
+        )
+        from proxyforge.control.agent_installation import render_quick_install_script
+
+        self.assertEqual(normalize_mirror_prefix('ghfast.top'), 'https://ghfast.top')
+        self.assertEqual(normalize_mirror_prefix('https://ghfast.top/'), 'https://ghfast.top')
+        self.assertEqual(
+            _resolve_mirror_url('https://github.com/a/b.tar.gz', 'ghfast.top'),
+            ('https://ghfast.top/https://github.com/a/b.tar.gz', None),
+        )
+        for bad in ('http://ghfast.top', 'https://u:p@ghfast.top', 'https://ghfast.top?a=1', '/local/path'):
+            with self.assertRaises(ValueError):
+                normalize_mirror_prefix(bad)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertIsNone(read_configured_mirror(root))
+            (root / MIRROR_CONFIG_FILENAME).write_text('# mirror\nghfast.top\n', encoding='utf-8')
+            self.assertEqual(read_configured_mirror(root), 'https://ghfast.top')
+
+        script = render_quick_install_script('https://ctrl.example.com', bundle_sha256='a' * 64)
+        self.assertIn('MIRROR_CONFIG_FILENAME', script)
+        self.assertIn('normalize_mirror_prefix', script)
+
 
 if __name__ == '__main__':
     unittest.main()

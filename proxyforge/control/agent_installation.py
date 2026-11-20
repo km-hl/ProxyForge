@@ -461,6 +461,23 @@ else
     fi
 fi
 
+if [[ -n "$GH_PROXY" && -d /var/lib/proxyforge-runtime ]]; then
+    echo "正在持久化 GitHub 加速镜像配置，供后续内核下载任务自动使用..."
+    /usr/bin/python3 -I - "$GH_PROXY" <<'PY'
+import os, sys
+from pathlib import Path
+sys.path.insert(0, "/opt/proxyforge-agent")
+from agent.runtime_download import MIRROR_CONFIG_FILENAME, normalize_mirror_prefix
+mirror = normalize_mirror_prefix(sys.argv[1])
+if mirror:
+    dest = Path("/var/lib/proxyforge-runtime") / MIRROR_CONFIG_FILENAME
+    dest.write_text(mirror + "\n", encoding="utf-8")
+    os.chown(dest, 0, 0)
+    dest.chmod(0o644)
+    print(f"已保存 GitHub 镜像前缀: {mirror}")
+PY
+fi
+
 if [[ $WITH_SINGBOX -eq 1 || $WITH_CADDY -eq 1 || $WITH_GOST -eq 1 ]]; then
     echo "正在预装所选内核组件..."
     /usr/bin/python3 -I - "$WITH_SINGBOX" "$WITH_CADDY" "$WITH_GOST" "$GH_PROXY" <<'PY'

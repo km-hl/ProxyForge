@@ -31,16 +31,53 @@ class ReleaseRedirect(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def _resolve_mirror_url(url, mirror_prefix):
+MIRROR_CONFIG_FILENAME = 'gh-proxy'
+
+
+def normalize_mirror_prefix(mirror_prefix):
     if not mirror_prefix:
-        return url, TRUSTED_RELEASE_HOSTS
+        return None
     if not isinstance(mirror_prefix, str):
         raise ValueError('Invalid mirror URL')
-    parsed = urllib.parse.urlsplit(mirror_prefix.strip())
-    if (parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password or
-            parsed.query or parsed.fragment):
+    raw = mirror_prefix.strip()
+    if not raw:
+        return None
+    if any(ord(c) <= 32 for c in raw) or '@' in raw or '?' in raw or '#' in raw:
         raise ValueError('Mirror URL must be a plain https:// URL')
-    prefix = mirror_prefix.strip().rstrip('/')
+    if '://' not in raw:
+        if raw.startswith('/') or ':' in raw.split('/', 1)[0]:
+            raise ValueError('Mirror URL must be a plain https:// URL')
+        raw = 'https://' + raw
+    parsed = urllib.parse.urlsplit(raw)
+    if (parsed.scheme != 'https' or not parsed.hostname or '.' not in parsed.hostname or
+            parsed.username or parsed.password or parsed.query or parsed.fragment):
+        raise ValueError('Mirror URL must be a plain https:// URL')
+    return raw.rstrip('/')
+
+
+def read_configured_mirror(root):
+    """Read optional root-owned GitHub mirror prefix from <runtime_root>/gh-proxy."""
+    if root is not None:
+        path = Path(root) / MIRROR_CONFIG_FILENAME
+        if path.exists() or path.is_symlink():
+            info = path.lstat()
+            if path.is_symlink() or not path.is_file():
+                raise ValueError('Invalid mirror config file')
+            if os.name == 'posix' and (info.st_uid != 0 or info.st_mode & 0o022):
+                raise ValueError('Mirror config file must be root-owned and not group/world writable')
+            for line in path.read_text(encoding='utf-8').splitlines():
+                stripped = line.strip()
+                if stripped and not stripped.startswith('#'):
+                    return normalize_mirror_prefix(stripped)
+            return None
+    env_mirror = os.environ.get('PROXYFORGE_GH_PROXY', '').strip()
+    return normalize_mirror_prefix(env_mirror) if env_mirror else None
+
+
+def _resolve_mirror_url(url, mirror_prefix):
+    prefix = normalize_mirror_prefix(mirror_prefix)
+    if not prefix:
+        return url, TRUSTED_RELEASE_HOSTS
     return prefix + '/' + url, None
 
 

@@ -7,7 +7,12 @@ import socket
 import struct
 import time
 
-from .runtime_download import download_binary, download_caddy_binary, download_gost_binary
+from .runtime_download import (
+    download_binary,
+    download_caddy_binary,
+    download_gost_binary,
+    read_configured_mirror,
+)
 from .runtime_engine import (
     RUNTIME_PROFILES,
     RollbackFailed,
@@ -92,10 +97,10 @@ SERVICE_SUBDIRS = {
 
 
 def build_coordinator(root, arch, *, backend_factory=SystemBackend, downloaders=None,
-                      services=(SERVICE_SINGBOX,)):
+                      services=(SERVICE_SINGBOX,), mirror_prefix=None):
     """Build a multi-service RuntimeCoordinator rooted at `root`."""
     root = Path(root)
-    merged_downloaders = {**DEFAULT_DOWNLOADERS, **(downloaders or {})}
+    custom = downloaders or {}
     engines = {}
     for service in services:
         profile = RUNTIME_PROFILES[service]
@@ -106,8 +111,14 @@ def build_coordinator(root, arch, *, backend_factory=SystemBackend, downloaders=
         service_root.mkdir(parents=True, exist_ok=True)
         backend = backend_factory(profile) if callable(backend_factory) else backend_factory
         kwargs = {'profile': profile}
-        if service in merged_downloaders:
-            kwargs['downloader'] = merged_downloaders[service]
+        if service in custom:
+            kwargs['downloader'] = custom[service]
+        elif service in DEFAULT_DOWNLOADERS:
+            base_dl = DEFAULT_DOWNLOADERS[service]
+            def _wrapped(directory, target_arch, guard=lambda: None, _fn=base_dl, _root=root, _mp=mirror_prefix):
+                effective = _mp if _mp is not None else read_configured_mirror(_root)
+                return _fn(directory, target_arch, guard, mirror_prefix=effective)
+            kwargs['downloader'] = _wrapped
         engines[service] = RuntimeEngine(service_root, backend, arch, **kwargs)
     return RuntimeCoordinator(engines)
 
