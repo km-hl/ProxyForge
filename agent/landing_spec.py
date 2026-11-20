@@ -98,6 +98,27 @@ PROTOCOL_SPEC = {
     },
 }
 
+# Protocols whose single sing-box inbound can serve several logical nodes on one port.
+# Each node keeps its own credential (uuid/password) and is routed by `auth_user`.
+SHARED_PORT_PROTOCOLS = frozenset(('reality', 'trojan', 'anytls', 'hysteria2'))
+_SHARED_LISTENER_COMMON = (
+    'tls_mode', 'domain', 'camouflage_mode', 'camouflage_template', 'camouflage_url', 'camouflage_dir',
+    'acme_email', 'dns_provider', 'dns_zone_id', 'dns_propagation_seconds',
+)
+_SHARED_LISTENER_PUBLIC = {
+    'reality': ('reality_public_key',),
+    'trojan': (),
+    'anytls': ('padding_scheme',),
+    'hysteria2': ('obfs', 'up_mbps', 'down_mbps', 'mport', 'hop_interval'),
+}
+_SHARED_LISTENER_SECRET = {
+    'reality': ('reality_private_key', 'dns_api_token'),
+    'trojan': ('dns_api_token',),
+    'anytls': ('dns_api_token',),
+    'hysteria2': ('obfs_password', 'dns_api_token'),
+}
+_SHARED_CREDENTIAL_FIELD = {'reality': 'uuid', 'trojan': 'password', 'anytls': 'password', 'hysteria2': 'password'}
+
 _COMMON_OPTIONAL = {
     'protocol', 'domain', 'tls_mode',
     'camouflage_url', 'camouflage_mode', 'camouflage_template', 'camouflage_dir',
@@ -359,6 +380,113 @@ def _resolved_protocol(mapping, default='ss2022'):
     return protocol
 
 
+def normalize_protocol(protocol):
+    """Legacy `vless-reality` primaries render exactly like `reality` landings."""
+    return 'reality' if protocol == 'vless-reality' else protocol
+
+
+def shared_listener_key(protocol, listen_port):
+    """Return the (protocol, port) listener key for shareable protocols, otherwise None."""
+    protocol = normalize_protocol(protocol)
+    if protocol not in SHARED_PORT_PROTOCOLS:
+        return None
+    return protocol, int(listen_port)
+
+
+def shared_listener_fields(protocol):
+    """Return (public, secret) field names owned by a shared listener rather than by one node."""
+    protocol = normalize_protocol(protocol)
+    if protocol not in SHARED_PORT_PROTOCOLS:
+        return (), ()
+    return _SHARED_LISTENER_COMMON + _SHARED_LISTENER_PUBLIC[protocol], _SHARED_LISTENER_SECRET[protocol]
+
+
+def shared_credential_field(protocol):
+    return _SHARED_CREDENTIAL_FIELD.get(normalize_protocol(protocol))
+
+
+def shared_user_key(member_id):
+    """Stable ASCII sing-box user name used by `auth_user` routing (never the display name)."""
+    return 'u-primary' if member_id == 'primary' else f'u-{member_id}'
+
+
+def _node_entries(spec):
+    entries = [('primary', spec)]
+    for idx, extra in enumerate(spec.get('extra_nodes') or [], 1):
+        entries.append((str(extra.get('node_id') or idx), extra))
+    return entries
+
+
+def shared_listener_plan(spec):
+    """Group managed nodes that share one (protocol, port) listener.
+
+    Only groups with two or more nodes are returned. The host owns the inbound tag, certificate
+    and Caddy site: the primary when it participates, otherwise the smallest node id, so editing
+    a node (which reorders extras by updated_at) never moves the certificate to another site.
+    """
+    if not isinstance(spec, dict) or spec.get('adopted_only') is True:
+        return {}
+    groups = {}
+    for member_id, node in _node_entries(spec):
+        key = shared_listener_key(_resolved_protocol(node), node['listen_port'])
+        if key is not None:
+            groups.setdefault(key, []).append(member_id)
+    plan = {}
+    for key, members in groups.items():
+        if len(members) >= 2:
+            plan[key] = {'host': 'primary' if 'primary' in members else min(members), 'members': members}
+    return plan
+
+
+def shared_listener_guests(spec):
+    """Extra node ids served by another node's listener; they need no TLS or Caddy of their own."""
+    guests = set()
+    for group in shared_listener_plan(spec).values():
+        guests.update(member for member in group['members'] if member != group['host'])
+    return guests
+
+
+def _validate_shared_listeners(spec):
+    entries = dict(_node_entries(spec))
+    for (protocol, _port), group in shared_listener_plan(spec).items():
+        nodes = [entries[member] for member in group['members']]
+        default_tls = PROTOCOL_SPEC[protocol]['default_tls']
+        if (len({node.get('tls_mode', default_tls) for node in nodes}) != 1 or
+                len({(node.get('domain') or '').lower() for node in nodes}) != 1):
+            raise ValueError('Shared listener nodes must use identical tls_mode and domain')
+        if protocol == 'reality' and len({
+            (node.get('reality_private_key'), node.get('reality_public_key')) for node in nodes
+        }) != 1:
+            raise ValueError('Shared Reality listener nodes must use one key pair')
+        if protocol == 'hysteria2':
+            obfs = {
+                (node.get('obfs') or 'none', node.get('obfs_password') if node.get('obfs') == 'salamander' else None)
+                for node in nodes
+            }
+            if len(obfs) != 1:
+                raise ValueError('Shared Hysteria2 listener nodes must use identical obfuscation')
+        credentials = [node.get(_SHARED_CREDENTIAL_FIELD[protocol]) for node in nodes]
+        if len(set(credentials)) != len(credentials):
+            raise ValueError('Shared listener credentials must be unique')
+
+
+def _merge_shared_users(inbound, protocol, members):
+    users = []
+    for member_id, node in members:
+        if protocol == 'reality':
+            users.append({'name': shared_user_key(member_id), 'uuid': node['uuid'], 'flow': 'xtls-rprx-vision'})
+        else:
+            users.append({'name': shared_user_key(member_id), 'password': node['password']})
+    inbound['users'] = users
+    if protocol == 'reality':
+        short_ids = []
+        for _member_id, node in members:
+            for short_id in node.get('reality_short_ids') or []:
+                if short_id not in short_ids:
+                    short_ids.append(short_id)
+        inbound['tls']['reality']['short_id'] = short_ids
+
+
 def validate_settings(settings, protocol=None):
     """Validate public, non-secret landing settings passed by Controller admins."""
     if not isinstance(settings, dict):
@@ -586,6 +714,9 @@ def validate_spec(action, spec):
             ):
                 raise ValueError('Nested extra_nodes are not allowed')
             _validate_single_node_spec(item)
+
+    if spec.get('adopted_only') is not True:
+        _validate_shared_listeners(spec)
 
     if 'adopted_nodes' in spec:
         adopted = spec['adopted_nodes']
@@ -948,45 +1079,55 @@ def runtime_config(spec, *, cert_path=None, key_path=None, caddy_port=None, back
             inbounds.append(adopted_in)
         return {'log': {'level': 'warn'}, 'inbounds': inbounds, 'outbounds': [{'type': 'direct', 'tag': 'direct'}]}
 
-    primary_inbound = _render_single_inbound(
-        spec,
-        tag='managed-landing',
-        site_id=site_id,
-        cert_path=cert_path,
-        key_path=key_path,
-        caddy_port=caddy_port,
-        backend_port=backend_port,
-    )
-    inbounds = [primary_inbound]
-    extra_nodes = spec.get('extra_nodes') or []
-    for idx, extra in enumerate(extra_nodes, 1):
-        nid = str(extra.get('node_id') or idx)
-        node_site_id = f'node-{nid}'
-        ov = extra_overrides.get(nid) or {}
-        inbounds.append(
-            _render_single_inbound(
-                extra,
-                tag=f'managed-node-{nid}',
-                site_id=node_site_id,
-                cert_path=ov.get('cert_path'),
-                key_path=ov.get('key_path'),
-                caddy_port=ov.get('caddy_port'),
-                backend_port=ov.get('backend_port'),
+    def inbound_tag(member_id):
+        return 'managed-landing' if member_id == 'primary' else f'managed-node-{member_id}'
+
+    def render_inbound(member_id, node):
+        if member_id == 'primary':
+            return _render_single_inbound(
+                node, tag=inbound_tag(member_id), site_id=site_id, cert_path=cert_path, key_path=key_path,
+                caddy_port=caddy_port, backend_port=backend_port,
             )
+        ov = extra_overrides.get(member_id) or {}
+        return _render_single_inbound(
+            node, tag=inbound_tag(member_id), site_id=f'node-{member_id}', cert_path=ov.get('cert_path'),
+            key_path=ov.get('key_path'), caddy_port=ov.get('caddy_port'), backend_port=ov.get('backend_port'),
         )
+
+    entries = _node_entries(spec)
+    entry_map = dict(entries)
+    shared_plan = shared_listener_plan(spec)
+    member_group = {member: key for key, group in shared_plan.items() for member in group['members']}
+
+    inbounds = []
+    emitted_groups = set()
+    for member_id, node in entries:
+        key = member_group.get(member_id)
+        if key is None:
+            inbounds.append(render_inbound(member_id, node))
+            continue
+        if key in emitted_groups:
+            continue
+        # One listener per shared (protocol, port); the host supplies TLS/Caddy and every
+        # member contributes a named user so `auth_user` can route it independently.
+        emitted_groups.add(key)
+        group = shared_plan[key]
+        merged = render_inbound(group['host'], entry_map[group['host']])
+        _merge_shared_users(merged, key[0], [(member, entry_map[member]) for member in group['members']])
+        inbounds.append(merged)
     for idx, adopted in enumerate(spec.get('adopted_nodes') or [], 1):
         adopted_in = dict(adopted['inbound'])
         adopted_in.setdefault('tag', f"adopted-{str(adopted.get('source_key', idx))[-8:]}")
         inbounds.append(adopted_in)
 
+    extra_nodes = spec.get('extra_nodes') or []
     primary_mode = spec.get('outbound_mode', 'direct')
     primary_strategy = spec.get('outbound_strategy')
-    has_custom_extra = any(
-        (item.get('outbound_mode', 'direct') != 'direct' or item.get('outbound_strategy'))
-        for item in extra_nodes
-    )
 
-    if primary_mode == 'direct' and not has_custom_extra:
+    def has_custom_outbound(node):
+        return node.get('outbound_mode', 'direct') != 'direct' or bool(node.get('outbound_strategy'))
+
+    if primary_mode == 'direct' and not any(has_custom_outbound(item) for item in extra_nodes):
         direct_out = {'type': 'direct', 'tag': 'direct'}
         _apply_domain_resolver(direct_out, primary_strategy)
         cfg = {'log': {'level': 'warn'}, 'inbounds': inbounds, 'outbounds': [direct_out]}
@@ -997,19 +1138,26 @@ def runtime_config(spec, *, cert_path=None, key_path=None, caddy_port=None, back
     outbounds = []
     route_rules = []
     primary_final_tag = 'direct'
-    if primary_mode != 'direct' or primary_strategy:
-        p_outs, p_tag = _build_node_outbounds(spec, 'out-primary')
-        outbounds.extend(p_outs)
-        route_rules.append({'inbound': ['managed-landing'], 'action': 'route', 'outbound': p_tag})
-        primary_final_tag = p_tag
-    for idx, extra in enumerate(extra_nodes, 1):
-        nid = str(extra.get('node_id') or idx)
-        e_mode = extra.get('outbound_mode', 'direct')
-        e_strategy = extra.get('outbound_strategy')
-        if e_mode != 'direct' or e_strategy:
-            e_outs, e_tag = _build_node_outbounds(extra, f'out-node-{nid}')
-            outbounds.extend(e_outs)
-            route_rules.append({'inbound': [f'managed-node-{nid}'], 'action': 'route', 'outbound': e_tag})
+    for member_id, node in entries:
+        key = member_group.get(member_id)
+        if has_custom_outbound(node):
+            outs, out_tag = _build_node_outbounds(node, 'out-primary' if member_id == 'primary' else f'out-node-{member_id}')
+            outbounds.extend(outs)
+            if member_id == 'primary':
+                primary_final_tag = out_tag
+        elif key is not None:
+            out_tag = 'direct'  # Shared listener members are always routed explicitly.
+        else:
+            continue
+        if key is None:
+            route_rules.append({'inbound': [inbound_tag(member_id)], 'action': 'route', 'outbound': out_tag})
+        else:
+            route_rules.append({
+                'inbound': [inbound_tag(shared_plan[key]['host'])],
+                'auth_user': [shared_user_key(member_id)],
+                'action': 'route',
+                'outbound': out_tag,
+            })
     outbounds.append({'type': 'direct', 'tag': 'direct'})
     final_tag = primary_final_tag if (primary_mode != 'direct' and not extra_nodes) else 'direct'
     cfg = {

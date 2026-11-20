@@ -70,6 +70,79 @@ function _bindAgentRegionPicker(pickerId, targetInputId) {
     });
 }
 
+const SHARED_PORT_PROTOCOLS = new Set(['reality', 'trojan', 'anytls', 'hysteria2']);
+const _SHARED_LISTENER_COPY_KEYS = [
+    'tls_mode', 'domain', 'camouflage_mode', 'camouflage_template', 'camouflage_url', 'camouflage_dir',
+    'acme_email', 'dns_provider', 'dns_zone_id', 'dns_propagation_seconds',
+    'reality_public_key', 'padding_scheme', 'obfs', 'up_mbps', 'down_mbps', 'mport', 'hop_interval',
+];
+
+function _normalizeNodeProto(proto) {
+    return proto === 'vless-reality' ? 'reality' : String(proto || 'reality');
+}
+
+function _isShareableProtocol(proto) {
+    return SHARED_PORT_PROTOCOLS.has(_normalizeNodeProto(proto));
+}
+
+function _findSharedPortPeers(agentNodes, proto, port, excludeId = null) {
+    const normProto = _normalizeNodeProto(proto);
+    const portNum = Number(port);
+    if (!SHARED_PORT_PROTOCOLS.has(normProto) || !Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
+        return [];
+    }
+    return (agentNodes || []).filter(n => {
+        if (!n || (excludeId && n.id === excludeId)) return false;
+        const p = _normalizeNodeProto(n.protocol);
+        const np = Number((n.settings || {}).listen_port);
+        return p === normProto && np === portNum;
+    });
+}
+
+function _listReusableListenerHosts(agentNodes, excludeId = null) {
+    const byKey = new Map();
+    for (const n of (agentNodes || [])) {
+        if (!n || (excludeId && n.id === excludeId)) continue;
+        const p = _normalizeNodeProto(n.protocol);
+        const portNum = Number((n.settings || {}).listen_port);
+        if (!SHARED_PORT_PROTOCOLS.has(p) || !Number.isInteger(portNum) || portNum < 1 || portNum > 65535) continue;
+        const key = `${p}:${portNum}`;
+        const existing = byKey.get(key);
+        if (!existing || (n.is_primary && !existing.is_primary)) {
+            byKey.set(key, n);
+        }
+    }
+    return [...byKey.values()];
+}
+
+function _copySharedListenerSettings(targetSettings, hostNode) {
+    const hs = (hostNode && hostNode.settings) || {};
+    const proto = _normalizeNodeProto(hostNode && hostNode.protocol);
+    for (const k of _SHARED_LISTENER_COPY_KEYS) {
+        if (hs[k] !== undefined && hs[k] !== null && hs[k] !== '') {
+            targetSettings[k] = hs[k];
+        } else {
+            delete targetSettings[k];
+        }
+    }
+    if (!targetSettings.domain && hs.server_name) {
+        targetSettings.domain = hs.server_name;
+    }
+    if (!targetSettings.tls_mode && proto !== 'ss2022') {
+        const meta = typeof LANDING_PROTO_META !== 'undefined' && LANDING_PROTO_META[proto];
+        targetSettings.tls_mode = meta ? meta.tlsModes[0][0] : 'reality';
+    }
+    return targetSettings;
+}
+
+function _nodeOutboundRoleText(node) {
+    const s = (node && node.settings) || {};
+    const mode = s.outbound_mode || 'direct';
+    if (mode === 'chain') return `链式×${Array.isArray(s.outbound_hops) ? s.outbound_hops.length : 1}`;
+    if (mode === 'socks5' || mode === 'ss') return '外部出站';
+    return '直连';
+}
+
 function _formatOutboundHopsSummary(settings, ssLandings) {
     const s = settings || {};
     const mode = s.outbound_mode || 'direct';
@@ -406,7 +479,7 @@ async function showAgentChain(agent) {
     }
 
     openModal('多落地 / 多跳链式出站 · ' + agent.name,
-        '<p class="hint">同一台入口 Agent 可同时挂载多条独立链式节点（不同监听端口对应不同落地机或 1~4 跳级联链路，基于 sing-box 原生 detour，完整支持 TCP + UDP）。例如：20001 → 新加坡 SS2022，20002 → 日本 SS2022，20003 → IX SS2022 → SG SS2022 → 家宽 Socks5。</p>' +
+        '<p class="hint">同一台入口 Agent 可挂载多条链式节点：既可分配独立端口（如 20001），也可直接<strong>复用已有端口（如 TCP 443 Reality）</strong>，经 sing-box 原生 <code>auth_user</code> 实现同端口“直出 + 多跳链式落地”并存（完整支持 TCP + UDP，1~4 跳）。</p>' +
         '<div id="chain-legacy-banner" hidden style="margin-bottom:10px;"></div>' +
         '<h4 style="margin:8px 0 6px;">本机已有链式出站节点</h4>' +
         '<div id="chain-nodes-list" style="margin-bottom:12px;"></div>' +
@@ -415,13 +488,15 @@ async function showAgentChain(agent) {
         '<button type="button" class="btn btn-sm" id="chain-new-mode-btn" hidden>切换为新建</button></div>' +
         _agentRegionPickerHtml('chain-node-region', agent.region || '', '节点地区 / 国旗 (自动添加在节点名称前)') +
         '<div class="form-grid">' +
+        '<div class="form-group full-width" id="chain-listener-mode-wrap"><label>端口与监听方式</label><select id="chain-listener-mode"></select></div>' +
+        '<div class="form-group full-width" id="chain-share-banner" hidden style="padding:8px 10px; border-radius:6px; background:rgba(124, 58, 237, 0.10); border:1px solid rgba(124, 58, 237, 0.28); font-size:0.86rem;"></div>' +
         '<div class="form-group"><label>入口协议</label><select id="chain-node-protocol">' +
         '<option value="reality">VLESS Reality (TCP+UDP 推荐)</option>' +
         '<option value="hysteria2">Hysteria2 (QUIC/UDP)</option>' +
         '<option value="anytls">AnyTLS (TLS 1.3)</option>' +
         '<option value="trojan">Trojan (TLS 1.3 + Caddy)</option>' +
         '<option value="ss2022">Shadowsocks 2022 (中继跳板)</option></select></div>' +
-        '<div class="form-group"><label>监听端口 (每条链路独立端口)</label><input id="chain-node-port" type="number" min="1" max="65535" value="' + _escHtml(String(pickNextChainPort())) + '"></div>' +
+        '<div class="form-group"><label>监听端口 (独立端口或填已有端口自动复用)</label><input id="chain-node-port" type="number" min="1" max="65535" value="' + _escHtml(String(pickNextChainPort())) + '"></div>' +
         '<div class="form-group"><label>节点名称</label><input id="chain-node-name" maxlength="64" placeholder="如 🇸🇬 SG 链式落地"></div>' +
         '<div class="form-group"><label>客户端连接地址 (IP / 域名)</label><input id="chain-node-server" value="' + _escHtml(pubIpv4 || pubIpv6) + '" placeholder="自动填入公网 IP 或域名"></div>' +
         '<div class="form-group" id="chain-node-tls-wrap"><label>入口 TLS / 伪装模式</label><select id="chain-node-tls-mode"></select></div>' +
@@ -441,6 +516,9 @@ async function showAgentChain(agent) {
         '<pre id="chain-state" style="white-space:pre-wrap; margin-top:8px;"></pre>', closeModal);
 
     _bindAgentRegionPicker('chain-node-region', 'chain-node-name');
+    const listenerModeEl = document.getElementById('chain-listener-mode');
+    const listenerModeWrap = document.getElementById('chain-listener-mode-wrap');
+    const shareBannerEl = document.getElementById('chain-share-banner');
     const protoEl = document.getElementById('chain-node-protocol');
     const tlsModeEl = document.getElementById('chain-node-tls-mode');
     const domainEl = document.getElementById('chain-node-domain');
@@ -453,6 +531,7 @@ async function showAgentChain(agent) {
     const saveBtn = document.getElementById('chain-node-save');
     const headingEl = document.getElementById('chain-form-heading');
     const newModeBtn = document.getElementById('chain-new-mode-btn');
+    let activeSharedHost = null;
 
     const defaultHops = ssLandings.filter(l => l.agent_id !== agent.id).length
         ? [{ kind: 'managed_ss', agent_id: ssLandings.filter(l => l.agent_id !== agent.id)[0].agent_id, node_id: ssLandings.filter(l => l.agent_id !== agent.id)[0].node_id }]
@@ -479,10 +558,72 @@ async function showAgentChain(agent) {
         document.getElementById('chain-node-sspub-wrap').hidden = proto !== 'ss2022';
     }
 
+    function rebuildListenerOptions() {
+        const hosts = _listReusableListenerHosts(agentNodes, editingNodeId);
+        const prev = listenerModeEl.value || 'standalone';
+        listenerModeEl.replaceChildren();
+        const standaloneOpt = document.createElement('option');
+        standaloneOpt.value = 'standalone';
+        standaloneOpt.textContent = '🆕 独立监听端口（默认 · 互不干扰）';
+        listenerModeEl.append(standaloneOpt);
+        for (const h of hosts) {
+            const hs = h.settings || {};
+            const sni = hs.domain || hs.server_name || '-';
+            const opt = document.createElement('option');
+            opt.value = `share::${h.id}`;
+            opt.textContent = `♻️ 复用已有端口：${hs.name || h.protocol} (${_formatCardProto(h.protocol)} :${hs.listen_port} · SNI ${sni})`;
+            listenerModeEl.append(opt);
+        }
+        listenerModeWrap.hidden = hosts.length === 0;
+        if ([...listenerModeEl.options].some(o => o.value === prev)) {
+            listenerModeEl.value = prev;
+        } else {
+            listenerModeEl.value = 'standalone';
+        }
+    }
+
+    function applySharedHostLock(host) {
+        activeSharedHost = host || null;
+        if (host) {
+            const hs = host.settings || {};
+            const hp = _normalizeNodeProto(host.protocol);
+            protoEl.value = hp;
+            portEl.value = String(hs.listen_port || '');
+            syncChainTls(hp, hs.tls_mode);
+            domainEl.value = hs.domain || hs.server_name || '';
+            if (!serverEl.value.trim() && hs.server) serverEl.value = hs.server;
+            tlsModeEl.disabled = true;
+            domainEl.disabled = true;
+            const shareVal = `share::${host.id}`;
+            if ([...listenerModeEl.options].some(o => o.value === shareVal)) {
+                listenerModeEl.value = shareVal;
+            }
+            shareBannerEl.hidden = false;
+            shareBannerEl.textContent = `♻️ 将与「${hs.name || host.protocol}」共用 ${_formatCardProto(hp)} :${hs.listen_port} 监听器（沿用证书/伪装站与 Reality 密钥），自动生成独立凭据并按 sing-box auth_user 分流至下方链式落地，不影响原有节点直出。`;
+        } else {
+            tlsModeEl.disabled = false;
+            domainEl.disabled = false;
+            listenerModeEl.value = 'standalone';
+            shareBannerEl.hidden = true;
+            shareBannerEl.textContent = '';
+        }
+    }
+
+    function syncSharedFromInputs() {
+        const peers = _findSharedPortPeers(agentNodes, protoEl.value, portEl.value, editingNodeId);
+        if (peers.length) {
+            const host = peers.find(n => n.is_primary) || peers[0];
+            applySharedHostLock(host);
+        } else {
+            applySharedHostLock(null);
+        }
+    }
+
     function resetToCreate() {
         editingNodeId = null;
         headingEl.textContent = '➕ 新增链式落地节点';
         newModeBtn.hidden = true;
+        rebuildListenerOptions();
         protoEl.value = 'reality';
         syncChainTls('reality', 'reality');
         nameEl.value = '';
@@ -491,6 +632,7 @@ async function showAgentChain(agent) {
         domainEl.value = 'www.amazon.com';
         stratEl.value = 'prefer_ipv4';
         sspubEl.checked = false;
+        applySharedHostLock(null);
         const otherLandings = ssLandings.filter(l => l.agent_id !== agent.id);
         hopEditor.setHops(otherLandings.length ? [{ kind: 'managed_ss', agent_id: otherLandings[0].agent_id, node_id: otherLandings[0].node_id }] : []);
     }
@@ -500,7 +642,8 @@ async function showAgentChain(agent) {
         const s = node.settings || {};
         headingEl.textContent = `✏️ 编辑链式节点：${s.name || node.id}`;
         newModeBtn.hidden = false;
-        const p = LANDING_PROTO_META[node.protocol] ? node.protocol : 'reality';
+        rebuildListenerOptions();
+        const p = LANDING_PROTO_META[_normalizeNodeProto(node.protocol)] ? _normalizeNodeProto(node.protocol) : 'reality';
         protoEl.value = p;
         syncChainTls(p, s.tls_mode);
         nameEl.value = s.name || '';
@@ -522,6 +665,7 @@ async function showAgentChain(agent) {
         } else {
             hopEditor.setHops([]);
         }
+        syncSharedFromInputs();
     }
 
     function renderLegacyBanner() {
@@ -559,6 +703,7 @@ async function showAgentChain(agent) {
 
     function renderList() {
         renderLegacyBanner();
+        rebuildListenerOptions();
         const listEl = document.getElementById('chain-nodes-list');
         listEl.replaceChildren();
         const chained = agentNodes.filter(n => ['chain', 'ss', 'socks5'].includes((n.settings || {}).outbound_mode));
@@ -566,18 +711,19 @@ async function showAgentChain(agent) {
         if (!chained.length) {
             const empty = document.createElement('div');
             empty.className = 'hint';
-            empty.textContent = `当前暂无链式出站节点（本机共有 ${directCount} 个直连节点，互不干扰）。在下方选择目标 SS2022 落地即可快速添加多条链路。`;
+            empty.textContent = `当前暂无链式出站节点（本机共有 ${directCount} 个直连节点，互不干扰）。在下方选择目标 SS2022 落地，可直接复用已有 443 端口或使用独立端口添加多条链路。`;
             listEl.append(empty);
         } else {
             for (const n of chained) {
                 const s = n.settings || {};
+                const peers = _findSharedPortPeers(agentNodes, n.protocol, s.listen_port, n.id);
                 const card = document.createElement('div');
                 card.className = 'sub-user-card';
                 card.style.marginBottom = '8px';
                 const head = document.createElement('div');
                 head.className = 'sub-user-header';
                 const title = document.createElement('strong');
-                title.textContent = `${s.name || n.protocol} (${n.protocol} :${s.listen_port || '?'})`;
+                title.textContent = `${s.name || n.protocol} (${_formatCardProto(n.protocol)} :${s.listen_port || '?'}${peers.length ? ' · ♻️ 共用端口' : ''})`;
                 const pill = document.createElement('span');
                 pill.className = `status-pill ${n.status === 'success' ? 'is-online' : (n.status === 'failed' ? 'is-offline' : 'is-degraded')}`;
                 pill.textContent = `${n.status || 'unknown'} · v${n.revision || 1}`;
@@ -606,6 +752,7 @@ async function showAgentChain(agent) {
                         if (editingNodeId === n.id) resetToCreate();
                         await refreshAll();
                         if (typeof ProxyForgeManagedNodes !== 'undefined') ProxyForgeManagedNodes.refresh();
+                        refreshAgents().catch(() => {});
                     } catch (e) { statusEl.textContent = '删除失败：' + e.message; }
                 };
                 acts.append(editBtn, delBtn);
@@ -628,9 +775,29 @@ async function showAgentChain(agent) {
         agentNodes = np.nodes || [];
         ssLandings = sp.landings || [];
         renderList();
+        syncSharedFromInputs();
     }
 
-    protoEl.onchange = () => syncChainTls(protoEl.value);
+    listenerModeEl.onchange = () => {
+        const val = listenerModeEl.value || 'standalone';
+        if (val.startsWith('share::')) {
+            const targetId = val.slice('share::'.length);
+            const host = agentNodes.find(n => n.id === targetId);
+            if (host) applySharedHostLock(host);
+            return;
+        }
+        applySharedHostLock(null);
+        if (!editingNodeId && _findSharedPortPeers(agentNodes, protoEl.value, portEl.value, editingNodeId).length) {
+            portEl.value = String(pickNextChainPort());
+            syncChainTls(protoEl.value, protoEl.value === 'reality' ? 'reality' : undefined);
+            if (protoEl.value === 'reality') domainEl.value = 'www.amazon.com';
+        }
+    };
+    protoEl.onchange = () => {
+        syncChainTls(protoEl.value);
+        syncSharedFromInputs();
+    };
+    portEl.oninput = () => syncSharedFromInputs();
     newModeBtn.onclick = () => resetToCreate();
     document.getElementById('chain-node-refresh').onclick = () => refreshAll().catch(e => { statusEl.textContent = e.message; });
     saveBtn.onclick = async () => {
@@ -644,11 +811,15 @@ async function showAgentChain(agent) {
             }
             if (!nodeName) throw new Error('请填写链式节点名称');
             const proto = protoEl.value;
+            const portVal = Number(portEl.value);
+            if (!Number.isInteger(portVal) || portVal < 1 || portVal > 65535) {
+                throw new Error('监听端口必须为 1–65535 之间的整数');
+            }
             const tlsMode = proto === 'ss2022' ? 'none' : tlsModeEl.value;
             const settings = {
                 name: nodeName,
                 server: serverEl.value.trim(),
-                listen_port: Number(portEl.value),
+                listen_port: portVal,
                 protocol: proto,
                 tls_mode: tlsMode,
                 outbound_strategy: stratEl.value || 'prefer_ipv4',
@@ -663,6 +834,19 @@ async function showAgentChain(agent) {
             } else {
                 settings.method = '2022-blake3-aes-256-gcm';
                 settings.publish_to_subscription = Boolean(sspubEl.checked);
+            }
+            const sharedPeers = _findSharedPortPeers(agentNodes, proto, portVal, editingNodeId);
+            if (sharedPeers.length) {
+                const host = activeSharedHost && sharedPeers.some(p => p.id === activeSharedHost.id)
+                    ? activeSharedHost
+                    : (sharedPeers.find(p => p.is_primary) || sharedPeers[0]);
+                _copySharedListenerSettings(settings, host);
+            } else if (editingNodeId) {
+                const orig = agentNodes.find(n => n.id === editingNodeId);
+                if (orig && _normalizeNodeProto(orig.protocol) === proto && (orig.settings || {}).tls_mode === tlsMode) {
+                    _copySharedListenerSettings(settings, orig);
+                    if (domainEl.value.trim()) settings.domain = domainEl.value.trim();
+                }
             }
             if (!confirm('确认保存链式节点并重载/重启代理服务进程（不会重启服务器）？')) return;
             saveBtn.disabled = true;
@@ -679,6 +863,7 @@ async function showAgentChain(agent) {
             resetToCreate();
             await refreshAll();
             if (typeof ProxyForgeManagedNodes !== 'undefined') ProxyForgeManagedNodes.refresh();
+            refreshAgents().catch(() => {});
         } catch (e) {
             statusEl.textContent = '保存失败：' + e.message;
         } finally {
@@ -688,6 +873,7 @@ async function showAgentChain(agent) {
 
     syncChainTls(protoEl.value, 'reality');
     renderList();
+    syncSharedFromInputs();
 }
 
 const LANDING_PROTO_META = {
@@ -780,8 +966,9 @@ async function showAgentDeployment(agent, initialNodeId = null) {
         (pubIpv4 ? `<button type="button" class="btn btn-sm" data-ip-val="${_escHtml(pubIpv4)}">📡 自动 IPv4 (${_escHtml(pubIpv4)})</button>` : '') +
         (pubIpv6 ? `<button type="button" class="btn btn-sm" data-ip-val="${_escHtml(pubIpv6)}">🌐 自动 IPv6 (${_escHtml(pubIpv6)})</button>` : '') +
         '</div>' +
-        '<input id="deployment-server" placeholder="自动填入公网 IP 或手动输入绑定域名"></div>' +
+        '<input id="deployment-server" placeholder="自动填入公网 IP 或域名"></div>' +
         '</div>' +
+        '<div id="deployment-share-notice" class="hint" hidden style="margin:6px 0 10px; padding:8px 10px; border-radius:6px; background:rgba(124, 58, 237, 0.10); border:1px solid rgba(124, 58, 237, 0.28);"></div>' +
         '<div id="deployment-tls-section"><div class="form-grid">' +
         '<div class="form-group"><label>TLS / 伪装模式</label><select id="deployment-tls-mode"></select></div>' +
         '<div class="form-group"><label id="deployment-domain-label">证书域名 / SNI</label><input id="deployment-domain" placeholder="如 www.amazon.com 或自有时效域名"></div>' +
@@ -859,6 +1046,8 @@ async function showAgentDeployment(agent, initialNodeId = null) {
     const apply = document.getElementById('deployment-apply');
     const remove = document.getElementById('deployment-remove');
     const protocol = document.getElementById('deployment-protocol');
+    const portInputEl = document.getElementById('deployment-port');
+    const shareNoticeEl = document.getElementById('deployment-share-notice');
     const tlsModeEl = document.getElementById('deployment-tls-mode');
     const camModeEl = document.getElementById('deployment-camouflage-mode');
     const camTplEl = document.getElementById('deployment-camouflage-template');
@@ -867,6 +1056,7 @@ async function showAgentDeployment(agent, initialNodeId = null) {
     const keyrefStatus = document.getElementById('deployment-keyref-status');
     const nodesBar = document.getElementById('deployment-nodes-bar');
     const outDetailsEl = document.getElementById('deployment-outbound-details');
+    let lastSyncedSharedHostKey = '';
     const hopEditor = _createOutboundHopsEditor({
         container: document.getElementById('deployment-outbound-chain-fields'),
         initialHops: [],
@@ -882,6 +1072,60 @@ async function showAgentDeployment(agent, initialNodeId = null) {
 
     function getSelectedNode() {
         return agentNodes.find(n => n.id === currentNodeId) || null;
+    }
+
+    function getSharedListenerContext() {
+        const current = getSelectedNode();
+        const proto = _normalizeNodeProto(protocol.value);
+        const portVal = Number(portInputEl.value);
+        const peers = _findSharedPortPeers(agentNodes, proto, portVal, current ? current.id : null);
+        if (!peers.length) {
+            return { peers: [], host: null, alreadySharing: false, joiningShared: false };
+        }
+        const host = peers.find(n => n.is_primary) || peers[0];
+        const alreadySharing = Boolean(
+            current
+            && _normalizeNodeProto(current.protocol) === proto
+            && Number((current.settings || {}).listen_port) === portVal
+        );
+        return { peers, host, alreadySharing, joiningShared: !alreadySharing };
+    }
+
+    function applyHostFieldsToDeploymentForm(host) {
+        if (!host) return;
+        const s = host.settings || {};
+        const p = _normalizeNodeProto(host.protocol);
+        syncTlsOptions(p, s.tls_mode);
+        document.getElementById('deployment-domain').value = s.domain ?? s.server_name ?? '';
+        document.getElementById('deployment-camouflage').value = s.camouflage_url ?? '';
+        document.getElementById('deployment-camouflage-dir').value = s.camouflage_dir ?? '';
+        const inferredCamMode = s.camouflage_mode || (s.camouflage_dir ? 'static_dir' : (s.camouflage_url ? 'proxy' : 'template'));
+        if (camModeEl) camModeEl.value = inferredCamMode;
+        if (camTplEl) camTplEl.value = s.camouflage_template || 'corporate';
+        document.getElementById('deployment-reality-pubkey').value = s.reality_public_key ?? '';
+        document.getElementById('deployment-acme-email').value = s.acme_email ?? '';
+        document.getElementById('deployment-dns-provider').value = s.dns_provider ?? 'cloudflare';
+        document.getElementById('deployment-dns-zone').value = s.dns_zone_id ?? '';
+        document.getElementById('deployment-dns-prop').value = s.dns_propagation_seconds ?? 60;
+        document.getElementById('deployment-hy2-up').value = s.up_mbps ?? '';
+        document.getElementById('deployment-hy2-down').value = s.down_mbps ?? '';
+        document.getElementById('deployment-hy2-obfs').value = s.obfs ?? 'none';
+        document.getElementById('deployment-hy2-mport').value = s.mport ?? '';
+        document.getElementById('deployment-hy2-hop').value = s.hop_interval ?? '';
+    }
+
+    function setListenerFieldsDisabled(disabled) {
+        for (const id of [
+            'deployment-tls-mode', 'deployment-domain', 'deployment-camouflage-mode',
+            'deployment-camouflage-template', 'deployment-camouflage', 'deployment-camouflage-dir',
+            'deployment-reality-pubkey', 'deployment-acme-email', 'deployment-dns-provider',
+            'deployment-dns-zone', 'deployment-dns-prop', 'deployment-dns-token',
+            'deployment-hy2-obfs', 'deployment-hy2-up', 'deployment-hy2-down',
+            'deployment-hy2-mport', 'deployment-hy2-hop',
+        ]) {
+            const el = document.getElementById(id);
+            if (el) el.disabled = Boolean(disabled);
+        }
     }
 
     function syncTlsOptions(proto, preferred) {
@@ -911,10 +1155,14 @@ async function showAgentDeployment(agent, initialNodeId = null) {
             const isSel = n.id === currentNodeId;
             btn.className = isSel ? 'btn btn-primary btn-sm' : 'btn btn-sm';
             const s = n.settings || {};
-            btn.textContent = `${s.name || n.protocol} (${n.protocol} :${s.listen_port || '?'})`;
+            const peers = _findSharedPortPeers(agentNodes, n.protocol, s.listen_port, n.id);
+            const roleText = _nodeOutboundRoleText(n);
+            const shareTag = peers.length ? ' · ♻️' : '';
+            btn.textContent = `${s.name || n.protocol} (${_formatCardProto(n.protocol)} :${s.listen_port || '?'} · ${roleText}${shareTag})`;
             btn.onclick = () => {
                 currentNodeId = n.id;
                 generatedKeyRef = null;
+                lastSyncedSharedHostKey = '';
                 render(true);
             };
             wrap.append(btn);
@@ -926,6 +1174,7 @@ async function showAgentDeployment(agent, initialNodeId = null) {
         addBtn.onclick = () => {
             currentNodeId = null;
             generatedKeyRef = null;
+            lastSyncedSharedHostKey = '';
             protocol.value = 'reality';
             syncTlsOptions('reality', 'reality');
             const usedPorts = new Set(agentNodes.map(x => Number(x.settings?.listen_port)));
@@ -1010,6 +1259,36 @@ async function showAgentDeployment(agent, initialNodeId = null) {
         }
         const proto = protocol.value;
         const meta = LANDING_PROTO_META[proto] || LANDING_PROTO_META.reality;
+        const sharedCtx = getSharedListenerContext();
+        if (sharedCtx.joiningShared && sharedCtx.host) {
+            const syncKey = `${sharedCtx.host.id}:${proto}:${portInputEl.value}`;
+            if (lastSyncedSharedHostKey !== syncKey) {
+                applyHostFieldsToDeploymentForm(sharedCtx.host);
+                generatedKeyRef = null;
+                lastSyncedSharedHostKey = syncKey;
+            }
+            setListenerFieldsDisabled(true);
+            if (shareNoticeEl) {
+                const peerNames = sharedCtx.peers.map(p => (p.settings || {}).name || p.protocol).join('、');
+                shareNoticeEl.hidden = false;
+                shareNoticeEl.textContent = `♻️ 同端口复用模式：将与「${peerNames}」共用 ${_formatCardProto(proto)} :${portInputEl.value} 监听器（自动继承 TLS/证书/伪装站与密钥），自动生成独立凭据并按 sing-box auth_user 走下方所选出站方式。`;
+            }
+        } else {
+            lastSyncedSharedHostKey = '';
+            setListenerFieldsDisabled(false);
+            if (sharedCtx.alreadySharing && sharedCtx.peers.length) {
+                const pubInput = document.getElementById('deployment-reality-pubkey');
+                if (pubInput && proto === 'reality') pubInput.disabled = true;
+                if (shareNoticeEl) {
+                    const peerNames = sharedCtx.peers.map(p => (p.settings || {}).name || p.protocol).join('、');
+                    shareNoticeEl.hidden = false;
+                    shareNoticeEl.textContent = `♻️ 当前端口与「${peerNames}」共用 ${_formatCardProto(proto)} :${portInputEl.value} 监听器（auth_user 独立分流）。修改 TLS 模式、SNI 域名、伪装站或混淆等监听器参数将同步应用到同端口所有节点。`;
+                }
+            } else if (shareNoticeEl) {
+                shareNoticeEl.hidden = true;
+                shareNoticeEl.textContent = '';
+            }
+        }
         const tlsMode = tlsModeEl.value || meta.tlsModes[0][0];
         document.getElementById('deployment-tls-section').hidden = proto === 'ss2022';
         document.getElementById('deployment-reality-ext-fields').hidden = proto === 'ss2022' || proto === 'hysteria2' || proto === 'trojan';
@@ -1066,8 +1345,10 @@ async function showAgentDeployment(agent, initialNodeId = null) {
         document.getElementById('deployment-out-user-wrap').hidden = outMode !== 'socks5';
         document.getElementById('deployment-out-method-wrap').hidden = outMode !== 'ss';
 
-        keygenBtn.hidden = !meta.canKeygen;
-        keyrefStatus.textContent = generatedKeyRef ? '已生成服务端密钥引用，提交部署时将自动注入（私钥不落地浏览器）。' : '';
+        keygenBtn.hidden = !meta.canKeygen || sharedCtx.joiningShared;
+        keyrefStatus.textContent = sharedCtx.joiningShared
+            ? '同端口复用将自动沿用已有监听器的密钥对，无需重新生成。'
+            : (generatedKeyRef ? '已生成服务端密钥引用，提交部署时将自动注入（私钥不落地浏览器）。' : '');
         const helpMap = {
             reality: 'VLESS + XTLS-Vision + REALITY（开启 max_time_difference 1m）。可选“自建回环偷自己”（Caddy 在 127.0.0.1 提供真实 TLS 1.3 证书与伪装站）或“外部目标模式”（免域名）。',
             hysteria2: 'Hysteria2 (QUIC/UDP + TLS 1.3 ALPN h3)，支持 ACME 自动证书、上下行带宽提示与多端口跳跃 (mport) 防 UDP QoS 限速。',
@@ -1199,6 +1480,7 @@ async function showAgentDeployment(agent, initialNodeId = null) {
             if (email) settings.acme_email = email;
         }
         if (tlsMode === 'acme_dns') {
+            const sharedCtx = getSharedListenerContext();
             settings.dns_provider = document.getElementById('deployment-dns-provider').value;
             const zone = document.getElementById('deployment-dns-zone').value.trim();
             if (settings.dns_provider === 'cloudflare' && !/^[0-9a-fA-F]{32}$/.test(zone)) {
@@ -1208,7 +1490,7 @@ async function showAgentDeployment(agent, initialNodeId = null) {
             const prop = Number(document.getElementById('deployment-dns-prop').value);
             if (prop >= 10) settings.dns_propagation_seconds = Math.round(prop);
             const tok = document.getElementById('deployment-dns-token').value.trim();
-            if (isCreating && tok.length < 12) {
+            if (isCreating && !sharedCtx.joiningShared && tok.length < 12) {
                 throw new Error('首次配置 DNS-01 需填写至少 12 位 DNS API Token');
             }
             if (tok) secrets.dns_api_token = tok;
@@ -1273,8 +1555,9 @@ async function showAgentDeployment(agent, initialNodeId = null) {
                     protocol: protocol.value,
                     settings: built.settings,
                 };
+                const sharedCtx = getSharedListenerContext();
                 if (built.secrets) body.secrets = built.secrets;
-                if (generatedKeyRef) body.key_ref = generatedKeyRef;
+                if (generatedKeyRef && !sharedCtx.joiningShared) body.key_ref = generatedKeyRef;
                 const endpoint = current
                     ? '/agents/' + agent.id + '/nodes/' + encodeURIComponent(current.id)
                     : '/agents/' + agent.id + '/nodes';
@@ -1311,8 +1594,10 @@ async function showAgentDeployment(agent, initialNodeId = null) {
         }
         syncTlsOptions(protocol.value);
         generatedKeyRef = null;
+        lastSyncedSharedHostKey = '';
         render(false);
     };
+    portInputEl.oninput = () => render(false);
     tlsModeEl.onchange = () => render(false);
     if (camModeEl) camModeEl.onchange = () => render(false);
     if (camTplEl) camTplEl.onchange = () => render(false);

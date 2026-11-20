@@ -14,8 +14,13 @@ from agent.landing_spec import (
     LANDING_PROTOCOLS,
     METHOD,
     PROTOCOL_SPEC,
+    SHARED_PORT_PROTOCOLS,
     SS2022_METHODS,
     client_node as landing_client_node,
+    normalize_protocol,
+    shared_credential_field,
+    shared_listener_fields,
+    shared_listener_key,
     validate_settings as validate_landing_settings,
     validate_spec as validate_landing_spec,
 )
@@ -23,10 +28,16 @@ from proxyforge.control.job_store import JobConflict, JobNotFound
 
 PROJECTABLE_LANDING_PROTOCOLS = tuple(p for p in LANDING_PROTOCOLS if PROTOCOL_SPEC[p]['project_client'])
 KEY_REF_TTL = 3600
+_ADOPTED_UDP_TYPES = frozenset(('hysteria2', 'hysteria', 'tuic'))
+_ADOPTED_DUAL_TYPES = frozenset(('shadowsocks', 'ss2022'))
 
 
 class DeploymentKeyError(Exception):
     pass
+
+
+class DeploymentValidationError(ValueError):
+    """Validation failure whose message is a fixed, secret-free hint safe to return to admins."""
 
 
 def migrate_deployments(db):
@@ -147,8 +158,22 @@ def _apply_outbound_and_secret_updates(spec, clean_settings, secrets_input):
         spec.pop('camouflage_dir', None)
     elif cam_mode == 'proxy':
         spec.pop('camouflage_dir', None)
+        spec.pop('camouflage_template', None)
     elif cam_mode == 'static_dir':
         spec.pop('camouflage_url', None)
+        spec.pop('camouflage_template', None)
+    tls_mode = clean_settings.get('tls_mode')
+    if tls_mode != 'acme_dns':
+        for k in ('dns_provider', 'dns_zone_id', 'dns_propagation_seconds', 'dns_api_token'):
+            spec.pop(k, None)
+    if tls_mode not in ('acme_http', 'acme_dns'):
+        spec.pop('acme_email', None)
+    if tls_mode == 'reality':
+        for k in ('camouflage_mode', 'camouflage_template', 'camouflage_dir'):
+            if k not in clean_settings:
+                spec.pop(k, None)
+        if 'camouflage_url' not in clean_settings:
+            spec.pop('camouflage_url', None)
     return spec
 
 
@@ -561,6 +586,27 @@ class DeploymentStoreMixin:
             if protocol != 'vless-reality':
                 _apply_outbound_and_secret_updates(base_spec, settings, secrets_input)
                 if not remove:
+                    norm_proto = normalize_protocol(protocol)
+                    self._assert_no_node_port_conflict(
+                        db, agent_id, norm_proto, settings['listen_port'], exclude_id=identifier
+                    )
+                    shared_peers = self._find_shared_listener_peers(
+                        db, agent_id, norm_proto, settings['listen_port'], exclude_id=identifier
+                    )
+                    if shared_peers:
+                        was_same_listener = bool(
+                            row and normalize_protocol(row['protocol']) == norm_proto
+                            and int(json.loads(row['settings']).get('listen_port') or 0) == int(settings['listen_port'])
+                        )
+                        if was_same_listener:
+                            self._sync_shared_listener_peers(
+                                db, cipher, shared_peers, norm_proto, settings, base_spec
+                            )
+                        else:
+                            settings = self._validate_and_inherit_shared_host(norm_proto, settings, shared_peers[0])
+                            base_spec = {**base_spec, **settings}
+                            self._apply_shared_host_secrets(norm_proto, base_spec, shared_peers[0])
+                            self._ensure_unique_shared_credential(norm_proto, base_spec, shared_peers)
                     spec = self._attach_aggregated_nodes(db, agent_id, base_spec)
                     validate_landing_spec('landing.apply', spec)
                 else:
@@ -587,29 +633,249 @@ class DeploymentStoreMixin:
 
     @staticmethod
     def _node_transports(protocol):
-        if protocol == 'hysteria2':
+        proto = normalize_protocol(protocol)
+        if proto == 'hysteria2':
             return ('udp',)
-        if protocol == 'ss2022':
+        if proto == 'ss2022':
             return ('tcp', 'udp')
         return ('tcp',)
 
+    @staticmethod
+    def _adopted_transports(protocol):
+        proto = str(protocol or '').strip().lower()
+        if proto in _ADOPTED_UDP_TYPES:
+            return ('udp',)
+        if proto in _ADOPTED_DUAL_TYPES:
+            return ('tcp', 'udp')
+        return ('tcp',)
+
+    def _normalize_primary_record(self, db, primary):
+        raw_proto = primary['protocol']
+        norm_proto = normalize_protocol(raw_proto)
+        raw_settings = json.loads(primary['settings'])
+        dec = self._decrypt_spec(db, primary['secret_spec'])
+        if raw_proto == 'vless-reality':
+            norm_settings = {
+                'name': raw_settings['name'],
+                'server': raw_settings['server'],
+                'listen_port': raw_settings['listen_port'],
+                'protocol': 'reality',
+                'domain': raw_settings['server_name'],
+                'tls_mode': 'reality',
+            }
+            norm_spec = {
+                **norm_settings,
+                'uuid': dec['uuid'],
+                'reality_private_key': dec['private_key'],
+                'reality_public_key': dec['public_key'],
+                'reality_short_ids': [dec['short_id']],
+            }
+            return norm_proto, norm_settings, norm_spec
+        norm_settings = {**raw_settings, 'protocol': norm_proto}
+        norm_spec = {**dec, **raw_settings, 'protocol': norm_proto}
+        return norm_proto, norm_settings, norm_spec
+
     def _assert_no_node_port_conflict(self, db, agent_id, candidate_protocol, candidate_port, *, exclude_id=None):
-        cand_transports = set(self._node_transports(candidate_protocol))
+        cand_proto = normalize_protocol(candidate_protocol)
+        cand_transports = set(self._node_transports(cand_proto))
+        cand_shareable = cand_proto in SHARED_PORT_PROTOCOLS
         primary = db.execute('SELECT * FROM deployments WHERE agent_id=?', (agent_id,)).fetchone()
         if primary and primary['id'] != exclude_id:
             p_job = db.execute('SELECT type,status FROM jobs WHERE id=?', (primary['job_id'],)).fetchone()
             if not (p_job and p_job['type'].endswith('.remove') and p_job['status'] == 'success'):
+                p_proto = normalize_protocol(primary['protocol'])
                 p_settings = json.loads(primary['settings'])
                 if p_settings.get('listen_port') == candidate_port:
-                    if cand_transports & set(self._node_transports(primary['protocol'])):
-                        raise ValueError('Port conflict with existing node on this Agent')
+                    if cand_transports & set(self._node_transports(p_proto)):
+                        if not (cand_shareable and p_proto == cand_proto):
+                            raise DeploymentValidationError('监听端口与本机其他协议节点冲突（同端口复用仅支持相同协议）')
         for erow in db.execute('SELECT * FROM agent_nodes WHERE agent_id=?', (agent_id,)).fetchall():
             if erow['id'] == exclude_id:
                 continue
+            e_proto = normalize_protocol(erow['protocol'])
             e_settings = json.loads(erow['settings'])
             if e_settings.get('listen_port') == candidate_port:
-                if cand_transports & set(self._node_transports(erow['protocol'])):
-                    raise ValueError('Port conflict with existing node on this Agent')
+                if cand_transports & set(self._node_transports(e_proto)):
+                    if not (cand_shareable and e_proto == cand_proto):
+                        raise DeploymentValidationError('监听端口与本机其他协议节点冲突（同端口复用仅支持相同协议）')
+        for arow in db.execute(
+            '''SELECT a.protocol, a.listen_port
+               FROM adopted_nodes a
+               JOIN adopted_node_secrets s ON s.agent_id=a.agent_id AND s.source_key=a.source_key
+               WHERE a.agent_id=? AND s.adopted_status='adopted' AND a.listen_port=?''',
+            (agent_id, int(candidate_port)),
+        ).fetchall():
+            if cand_transports & set(self._adopted_transports(arow['protocol'])):
+                raise DeploymentValidationError('监听端口已被已接管的存量节点占用，无法共享复用')
+
+    def _find_shared_listener_peers(self, db, agent_id, protocol, listen_port, *, exclude_id=None):
+        key = shared_listener_key(protocol, listen_port)
+        if key is None:
+            return []
+        target_proto, target_port = key
+        peers = []
+        primary = db.execute('SELECT * FROM deployments WHERE agent_id=?', (agent_id,)).fetchone()
+        if primary and primary['id'] != exclude_id:
+            p_job = db.execute('SELECT type,status FROM jobs WHERE id=?', (primary['job_id'],)).fetchone()
+            if not (p_job and p_job['type'].endswith('.remove') and p_job['status'] == 'success'):
+                p_proto, p_settings, p_spec = self._normalize_primary_record(db, primary)
+                if p_proto == target_proto and int(p_settings.get('listen_port') or 0) == target_port:
+                    peers.append({
+                        'table': 'deployments',
+                        'id': primary['id'],
+                        'is_primary': True,
+                        'raw_protocol': primary['protocol'],
+                        'settings': p_settings,
+                        'spec': p_spec,
+                    })
+        for erow in db.execute(
+            'SELECT * FROM agent_nodes WHERE agent_id=? ORDER BY id ASC',
+            (agent_id,),
+        ).fetchall():
+            if erow['id'] == exclude_id:
+                continue
+            e_proto = normalize_protocol(erow['protocol'])
+            e_settings = json.loads(erow['settings'])
+            if e_proto == target_proto and int(e_settings.get('listen_port') or 0) == target_port:
+                e_dec = self._decrypt_spec(db, erow['secret_spec'])
+                e_spec = {**e_dec, **e_settings, 'protocol': e_proto}
+                peers.append({
+                    'table': 'agent_nodes',
+                    'id': erow['id'],
+                    'is_primary': False,
+                    'raw_protocol': erow['protocol'],
+                    'settings': {**e_settings, 'protocol': e_proto},
+                    'spec': e_spec,
+                })
+        return peers
+
+    @staticmethod
+    def _validate_and_inherit_shared_host(protocol, clean_settings, host_peer):
+        default_tls = PROTOCOL_SPEC[protocol]['default_tls']
+        host_settings = host_peer['settings']
+        host_spec = host_peer['spec']
+        host_tls = host_settings.get('tls_mode', default_tls)
+        cand_tls = clean_settings.get('tls_mode', host_tls)
+        if cand_tls != host_tls:
+            raise DeploymentValidationError('同端口复用节点必须与已有节点使用相同的 TLS / 伪装模式')
+        host_domain = (host_settings.get('domain') or '').strip()
+        cand_domain = (clean_settings.get('domain') or '').strip()
+        if cand_domain and cand_domain.lower() != host_domain.lower():
+            raise DeploymentValidationError('同端口复用节点必须与已有节点使用相同的域名 / SNI')
+        if protocol == 'reality' and clean_settings.get('reality_public_key'):
+            if clean_settings['reality_public_key'] != host_spec.get('reality_public_key'):
+                raise DeploymentValidationError('同端口复用 Reality 节点必须沿用已有节点的 Reality 公私钥')
+        if protocol == 'hysteria2' and 'obfs' in clean_settings:
+            if (clean_settings.get('obfs') or 'none') != (host_settings.get('obfs') or 'none'):
+                raise DeploymentValidationError('同端口复用 Hysteria2 节点必须与已有节点使用相同的混淆模式')
+
+        merged = dict(clean_settings)
+        pub_fields, _ = shared_listener_fields(protocol)
+        for field in pub_fields:
+            if field in host_settings and host_settings[field] not in (None, ''):
+                merged[field] = host_settings[field]
+            else:
+                merged.pop(field, None)
+        if protocol == 'reality' and host_spec.get('reality_public_key'):
+            merged['reality_public_key'] = host_spec['reality_public_key']
+        merged['tls_mode'] = host_tls
+        if host_domain:
+            merged['domain'] = host_domain
+        return merged
+
+    @staticmethod
+    def _preserve_omitted_shared_fields(protocol, clean_settings, current_spec):
+        """Preserve omitted companion listener fields when slim editors (e.g. Chain modal) update a shared node."""
+        default_tls = PROTOCOL_SPEC[protocol]['default_tls']
+        merged = dict(clean_settings)
+        cur_tls = current_spec.get('tls_mode', default_tls)
+        new_tls = merged.get('tls_mode', cur_tls)
+        if new_tls == cur_tls:
+            if new_tls == 'acme_dns' and not merged.get('dns_zone_id') and current_spec.get('dns_zone_id'):
+                for k in ('dns_provider', 'dns_zone_id', 'dns_propagation_seconds', 'acme_email'):
+                    if k not in merged and current_spec.get(k) not in (None, ''):
+                        merged[k] = current_spec[k]
+            if new_tls in ('acme_http', 'acme_dns') and protocol in ('reality', 'trojan'):
+                if not merged.get('camouflage_mode') and current_spec.get('camouflage_mode'):
+                    for k in ('camouflage_mode', 'camouflage_template', 'camouflage_url', 'camouflage_dir', 'acme_email'):
+                        if k not in merged and current_spec.get(k) not in (None, ''):
+                            merged[k] = current_spec[k]
+            if protocol == 'hysteria2' and 'obfs' not in merged and current_spec.get('obfs'):
+                for k in ('obfs', 'up_mbps', 'down_mbps', 'mport', 'hop_interval', 'acme_email'):
+                    if k not in merged and current_spec.get(k) not in (None, ''):
+                        merged[k] = current_spec[k]
+            if protocol == 'anytls' and 'padding_scheme' not in merged and current_spec.get('padding_scheme'):
+                merged['padding_scheme'] = current_spec['padding_scheme']
+        return merged
+
+    @staticmethod
+    def _apply_shared_host_secrets(protocol, node_spec, host_peer):
+        host_spec = host_peer['spec']
+        _, secret_fields = shared_listener_fields(protocol)
+        for field in secret_fields:
+            if field in host_spec and host_spec[field] not in (None, ''):
+                node_spec[field] = host_spec[field]
+            else:
+                node_spec.pop(field, None)
+        if protocol == 'reality' and host_spec.get('reality_public_key'):
+            node_spec['reality_public_key'] = host_spec['reality_public_key']
+        return node_spec
+
+    @staticmethod
+    def _ensure_unique_shared_credential(protocol, node_spec, peers):
+        cred_field = shared_credential_field(protocol)
+        if not cred_field or not peers:
+            return node_spec
+        used = {peer['spec'].get(cred_field) for peer in peers if peer['spec'].get(cred_field)}
+        while not node_spec.get(cred_field) or node_spec[cred_field] in used:
+            if cred_field == 'uuid':
+                node_spec[cred_field] = str(uuid.uuid4())
+            else:
+                node_spec[cred_field] = secrets.token_urlsafe(32)
+        return node_spec
+
+    def _sync_shared_listener_peers(self, db, cipher, peers, protocol, source_settings, source_spec):
+        if not peers:
+            return
+        pub_fields, secret_fields = shared_listener_fields(protocol)
+        now = self.clock()
+        for peer in peers:
+            p_settings = dict(peer['settings'])
+            p_spec = dict(peer['spec'])
+            p_settings['protocol'] = protocol
+            p_spec['protocol'] = protocol
+            for field in pub_fields:
+                if field in source_settings and source_settings[field] not in (None, ''):
+                    p_settings[field] = source_settings[field]
+                    p_spec[field] = source_settings[field]
+                else:
+                    p_settings.pop(field, None)
+                    p_spec.pop(field, None)
+            if protocol == 'reality' and source_spec.get('reality_public_key'):
+                p_settings['reality_public_key'] = source_spec['reality_public_key']
+                p_spec['reality_public_key'] = source_spec['reality_public_key']
+            for field in secret_fields:
+                if field in source_spec and source_spec[field] not in (None, ''):
+                    p_spec[field] = source_spec[field]
+                else:
+                    p_spec.pop(field, None)
+            if p_settings.get('tls_mode') != 'acme_dns':
+                for k in ('dns_provider', 'dns_zone_id', 'dns_propagation_seconds', 'dns_api_token'):
+                    p_settings.pop(k, None)
+                    p_spec.pop(k, None)
+            if p_settings.get('obfs') != 'salamander':
+                p_spec.pop('obfs_password', None)
+            encrypted = cipher.encrypt(json.dumps(p_spec).encode()).decode()
+            if peer['table'] == 'deployments':
+                db.execute(
+                    'UPDATE deployments SET protocol=?,settings=?,secret_spec=?,updated_at=? WHERE id=?',
+                    (protocol, json.dumps(p_settings), encrypted, now, peer['id']),
+                )
+            else:
+                db.execute(
+                    'UPDATE agent_nodes SET protocol=?,settings=?,secret_spec=?,updated_at=? WHERE id=?',
+                    (protocol, json.dumps(p_settings), encrypted, now, peer['id']),
+                )
 
     def _dispatch_aggregated_runtime(self, db, agent_id, request_id, *, returned_adoptions=None, disabled_adoptions=None):
         agent = self._job_agent(db, agent_id)
@@ -631,22 +897,7 @@ class DeploymentStoreMixin:
         )
         disabled = list(disabled_adoptions or [])
         if primary and not primary_removed:
-            if primary['protocol'] == 'vless-reality':
-                p_dec = self._decrypt_spec(db, primary['secret_spec'])
-                base_spec = {
-                    'name': p_dec['name'],
-                    'server': p_dec['server'],
-                    'listen_port': p_dec['listen_port'],
-                    'protocol': 'reality',
-                    'domain': p_dec['server_name'],
-                    'tls_mode': 'reality',
-                    'uuid': p_dec['uuid'],
-                    'reality_private_key': p_dec['private_key'],
-                    'reality_public_key': p_dec['public_key'],
-                    'reality_short_ids': [p_dec['short_id']],
-                }
-            else:
-                base_spec = {**self._decrypt_spec(db, primary['secret_spec']), **json.loads(primary['settings']), 'protocol': primary['protocol']}
+            p_proto, p_settings, base_spec = self._normalize_primary_record(db, primary)
             full_spec = self._attach_aggregated_nodes(
                 db, agent_id, base_spec, returned_adoptions=returned_adoptions, disabled_adoptions=disabled
             )
@@ -661,10 +912,24 @@ class DeploymentStoreMixin:
                 'UPDATE jobs SET secret_payload=? WHERE id=?',
                 (cipher.encrypt(json.dumps(full_spec).encode()).decode(), job['id']),
             )
-            db.execute(
-                'UPDATE deployments SET revision=?,job_id=?,updated_at=?,protocol=? WHERE id=?',
-                (rev, job['id'], self.clock(), 'reality' if primary['protocol'] == 'vless-reality' else primary['protocol'], identifier),
-            )
+            if primary['protocol'] == 'vless-reality':
+                db.execute(
+                    'UPDATE deployments SET revision=?,job_id=?,updated_at=?,protocol=?,settings=?,secret_spec=? WHERE id=?',
+                    (
+                        rev,
+                        job['id'],
+                        self.clock(),
+                        p_proto,
+                        json.dumps(p_settings),
+                        cipher.encrypt(json.dumps(base_spec).encode()).decode(),
+                        identifier,
+                    ),
+                )
+            else:
+                db.execute(
+                    'UPDATE deployments SET revision=?,job_id=?,updated_at=?,protocol=? WHERE id=?',
+                    (rev, job['id'], self.clock(), p_proto, identifier),
+                )
             return self._deployment_view(db, db.execute('SELECT * FROM deployments WHERE id=?', (identifier,)).fetchone())
 
         if adopted or returned or disabled:
@@ -759,15 +1024,20 @@ class DeploymentStoreMixin:
         secrets_input=None,
         key_ref=None,
     ):
+        if not isinstance(settings, dict):
+            raise ValueError('Invalid landing settings')
         if protocol == 'vless-reality':
             protocol = 'reality'
             if 'domain' not in settings and 'server_name' in settings:
+                srv_name = settings['server_name']
                 settings = {k: v for k, v in settings.items() if k != 'server_name'}
-                settings['domain'] = settings.get('domain')
+                settings['domain'] = srv_name
         if protocol not in LANDING_PROTOCOLS:
             raise ValueError('Unsupported landing protocol')
         clean_settings = {**settings, 'protocol': protocol}
-        validate_landing_settings(clean_settings, protocol=protocol)
+        listen_port = clean_settings.get('listen_port')
+        if type(listen_port) is not int or not 1 <= listen_port <= 65535:
+            raise ValueError('Invalid listen_port')
         if secrets_input is not None:
             if not isinstance(secrets_input, dict) or set(secrets_input) - {'dns_api_token', 'outbound_password', 'hop_passwords'}:
                 raise ValueError('Unsupported deployment secret input')
@@ -787,7 +1057,7 @@ class DeploymentStoreMixin:
                 raise JobConflict()
 
             self._assert_no_node_port_conflict(
-                db, agent_id, protocol, clean_settings['listen_port'], exclude_id=node_id
+                db, agent_id, protocol, listen_port, exclude_id=node_id
             )
             cipher = self._cipher(db)
             pregenerated = self._unseal_key_ref(db, cipher, key_ref, protocol) if key_ref else None
@@ -798,17 +1068,76 @@ class DeploymentStoreMixin:
                 primary_removed = bool(p_job and p_job['type'].endswith('.remove') and p_job['status'] == 'success')
 
             is_primary_target = (primary is None or primary_removed or (node_id and primary['id'] == node_id))
+            existing_extra = None
+            if not is_primary_target:
+                existing_extra = db.execute(
+                    'SELECT * FROM agent_nodes WHERE id=? AND agent_id=?', (node_id, agent_id)
+                ).fetchone() if node_id else None
+                if node_id and not existing_extra:
+                    raise JobNotFound()
+
+            existing_row = (primary if (primary and not primary_removed) else None) if is_primary_target else existing_extra
+            existing_proto = normalize_protocol(existing_row['protocol']) if existing_row else None
+            existing_settings = None
+            existing_spec = None
+            if existing_row:
+                if is_primary_target:
+                    _, existing_settings, existing_spec = self._normalize_primary_record(db, existing_row)
+                else:
+                    existing_settings = json.loads(existing_row['settings'])
+                    existing_spec = {**self._decrypt_spec(db, existing_row['secret_spec']), **existing_settings, 'protocol': existing_proto}
+
+            shared_peers = self._find_shared_listener_peers(
+                db, agent_id, protocol, listen_port, exclude_id=node_id
+            )
+            already_sharing = bool(
+                existing_row
+                and existing_proto == protocol
+                and int(existing_settings.get('listen_port') or 0) == listen_port
+            )
+
+            if shared_peers and not already_sharing:
+                clean_settings = self._validate_and_inherit_shared_host(protocol, clean_settings, shared_peers[0])
+            elif shared_peers and already_sharing:
+                if protocol == 'reality' and clean_settings.get('reality_public_key'):
+                    if clean_settings['reality_public_key'] != existing_spec.get('reality_public_key'):
+                        raise DeploymentValidationError('同端口复用 Reality 节点不可更改现有 Reality 公私钥')
+                clean_settings = self._preserve_omitted_shared_fields(protocol, clean_settings, existing_spec)
+            elif existing_row and existing_proto == protocol and protocol == 'reality' and clean_settings.get('reality_public_key'):
+                if clean_settings['reality_public_key'] != existing_spec.get('reality_public_key'):
+                    raise DeploymentValidationError('不可更换已有 Reality 节点的公私钥')
+
+            validate_landing_settings(clean_settings, protocol=protocol)
+
+            effective_pregenerated = pregenerated
+            if shared_peers and not already_sharing and effective_pregenerated and protocol == 'reality':
+                effective_pregenerated = {
+                    k: v for k, v in effective_pregenerated.items()
+                    if k not in ('reality_private_key', 'reality_public_key')
+                }
+
             if is_primary_target:
                 identifier = primary['id'] if primary else (node_id or uuid.uuid4().hex)
-                if primary and not primary_removed and primary['protocol'] == protocol:
-                    current = self._decrypt_spec(db, primary['secret_spec'])
+                if existing_row and existing_proto == protocol:
+                    current = dict(existing_spec)
                 else:
-                    current = new_landing_spec(clean_settings, protocol=protocol, secrets_input=secrets_input, pregenerated=pregenerated)
+                    current = new_landing_spec(
+                        clean_settings, protocol=protocol, secrets_input=secrets_input, pregenerated=effective_pregenerated
+                    )
                 base_spec = {
                     k: v for k, v in {**current, **clean_settings}.items()
                     if k not in ('extra_nodes', 'adopted_nodes', 'returned_adoptions')
                 }
                 _apply_outbound_and_secret_updates(base_spec, clean_settings, secrets_input)
+                if shared_peers and not already_sharing:
+                    self._apply_shared_host_secrets(protocol, base_spec, shared_peers[0])
+                elif shared_peers and already_sharing:
+                    if clean_settings.get('tls_mode') == 'acme_dns' and not base_spec.get('dns_api_token'):
+                        if shared_peers[0]['spec'].get('dns_api_token'):
+                            base_spec['dns_api_token'] = shared_peers[0]['spec']['dns_api_token']
+                self._ensure_unique_shared_credential(protocol, base_spec, shared_peers)
+                if shared_peers and already_sharing:
+                    self._sync_shared_listener_peers(db, cipher, shared_peers, protocol, clean_settings, base_spec)
 
                 full_spec = self._attach_aggregated_nodes(db, agent_id, base_spec)
                 validate_landing_spec('landing.apply', full_spec)
@@ -833,23 +1162,30 @@ class DeploymentStoreMixin:
                 return view
 
             # Extra node in agent_nodes
-            existing_extra = db.execute(
-                'SELECT * FROM agent_nodes WHERE id=? AND agent_id=?', (node_id, agent_id)
-            ).fetchone() if node_id else None
-            if node_id and not existing_extra:
-                raise JobNotFound()
             target_id = existing_extra['id'] if existing_extra else uuid.uuid4().hex
-            if existing_extra and existing_extra['protocol'] == protocol:
-                current = self._decrypt_spec(db, existing_extra['secret_spec'])
+            if existing_extra and existing_proto == protocol:
+                current = dict(existing_spec)
             else:
-                current = new_landing_spec(clean_settings, protocol=protocol, secrets_input=secrets_input, pregenerated=pregenerated)
+                current = new_landing_spec(
+                    clean_settings, protocol=protocol, secrets_input=secrets_input, pregenerated=effective_pregenerated
+                )
             node_spec = {
                 k: v for k, v in {**current, **clean_settings, 'node_id': target_id}.items()
                 if k not in ('extra_nodes', 'adopted_nodes', 'returned_adoptions')
             }
             _apply_outbound_and_secret_updates(node_spec, clean_settings, secrets_input)
+            if shared_peers and not already_sharing:
+                self._apply_shared_host_secrets(protocol, node_spec, shared_peers[0])
+            elif shared_peers and already_sharing:
+                if clean_settings.get('tls_mode') == 'acme_dns' and not node_spec.get('dns_api_token'):
+                    if shared_peers[0]['spec'].get('dns_api_token'):
+                        node_spec['dns_api_token'] = shared_peers[0]['spec']['dns_api_token']
+            self._ensure_unique_shared_credential(protocol, node_spec, shared_peers)
             resolved_node_spec = self._resolve_node_outbound_hops(db, agent_id, node_spec)
             validate_landing_spec('landing.apply', resolved_node_spec)
+
+            if shared_peers and already_sharing:
+                self._sync_shared_listener_peers(db, cipher, shared_peers, protocol, clean_settings, node_spec)
 
             encrypted_node = cipher.encrypt(json.dumps(node_spec).encode()).decode()
             rev = (existing_extra['revision'] + 1) if existing_extra else 1
@@ -885,10 +1221,19 @@ class DeploymentStoreMixin:
                 (agent_id,),
             ).fetchone()
             if next_extra:
+                cipher = self._cipher(db)
+                promoted_spec = self._decrypt_spec(db, next_extra['secret_spec'])
+                promoted_spec.pop('node_id', None)
                 db.execute('DELETE FROM agent_nodes WHERE id=?', (next_extra['id'],))
                 db.execute(
                     'UPDATE deployments SET protocol=?,settings=?,secret_spec=?,updated_at=? WHERE id=?',
-                    (next_extra['protocol'], next_extra['settings'], next_extra['secret_spec'], self.clock(), primary['id']),
+                    (
+                        next_extra['protocol'],
+                        next_extra['settings'],
+                        cipher.encrypt(json.dumps(promoted_spec).encode()).decode(),
+                        self.clock(),
+                        primary['id'],
+                    ),
                 )
                 self._audit(db, 'deployment_requested', agent_id)
                 return self._dispatch_aggregated_runtime(db, agent_id, request_id)

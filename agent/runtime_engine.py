@@ -28,7 +28,12 @@ from .runtime_spec import (
     validate_runtime_job,
 )
 from .deployment_spec import runtime_config, spec_hash
-from .landing_spec import build_caddy_site_for_landing, deployment_tls_plan, runtime_config as landing_config
+from .landing_spec import (
+    build_caddy_site_for_landing,
+    deployment_tls_plan,
+    runtime_config as landing_config,
+    shared_listener_guests,
+)
 from .chain_spec import CHAIN_ACTIONS, runtime_config as chain_config
 from .gost_manager import GOST_CONFIG_ACTIONS, render_gost_config
 
@@ -934,6 +939,32 @@ class RuntimeCoordinator:
                 deferred_caddy = (job_id, caddyfile, sites)
         return overrides, staged_caddy_site_id, deferred_caddy
 
+    def _prune_landing_sites(self, active_site_ids, caddy_job_id, guard):
+        """Best-effort removal of landing Caddy sites no longer owned by any listener host.
+
+        Runs only after sing-box committed, so a failure here never rolls back the proxy; a
+        stale loopback site is harmless and is retried on the next landing apply.
+        """
+        if SERVICE_CADDY not in self.engines and self._caddy_manager is None:
+            return
+        try:
+            caddy_manager = self._get_caddy_manager()
+            stale = [
+                sid for sid in caddy_manager.load_sites()
+                if (sid == 'landing' or sid.startswith('node-')) and sid not in active_site_ids
+            ]
+        except Exception:
+            return
+        for sid in stale:
+            try:
+                caddy_manager.remove_site(
+                    sid, job_id=self._derived_caddy_job_id(caddy_job_id + ':prune:' + sid), guard=guard,
+                )
+            except RuntimeCancelled:
+                raise
+            except Exception:
+                continue
+
     def _apply_landing_job(self, job, guard):
         from .adoption import adopt_host_service, return_host_service
         singbox_engine = self.engines[SERVICE_SINGBOX]
@@ -992,12 +1023,18 @@ class RuntimeCoordinator:
         )
         staged_sites = [staged_primary] if staged_primary else []
         deferred_list = [deferred_primary] if deferred_primary else []
+        active_site_ids = {'landing'} if (staged_primary or deferred_primary) else set()
 
         extra_nodes = spec.get('extra_nodes') or []
         if extra_nodes:
+            # Guests reuse the host listener of the same (protocol, port): no certificate,
+            # no Caddy site, no extra port. Only the host prepares TLS once.
+            guests = shared_listener_guests(spec)
             extra_overrides = {}
             for idx, extra in enumerate(extra_nodes, 1):
                 nid = str(extra.get('node_id') or idx)
+                if nid in guests:
+                    continue
                 node_site_id = f'node-{nid}'
                 node_job_id = self._derived_caddy_job_id(f"{job['id']}:{node_site_id}")
                 ov, staged_extra, deferred_extra = self._prepare_node_tls_and_caddy(
@@ -1009,6 +1046,8 @@ class RuntimeCoordinator:
                     staged_sites.append(staged_extra)
                 if deferred_extra:
                     deferred_list.append(deferred_extra)
+                if staged_extra or deferred_extra:
+                    active_site_ids.add(node_site_id)
             if extra_overrides:
                 overrides['extra_overrides'] = extra_overrides
 
@@ -1033,6 +1072,8 @@ class RuntimeCoordinator:
             for def_job_id, caddyfile, sites in deferred_list:
                 caddy_manager.apply_caddyfile(def_job_id, caddyfile, guard=guard)
                 caddy_manager.save_sites(sites)
+
+        self._prune_landing_sites(active_site_ids, caddy_job_id, guard)
 
         for sk in spec.get('returned_adoptions') or []:
             try:

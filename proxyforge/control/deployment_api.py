@@ -9,7 +9,7 @@ from agent.chain_spec import validate_settings as validate_chain_settings
 from agent.deployment_spec import validate_settings
 from agent.landing_spec import PROTOCOL_SPEC, validate_settings as validate_landing_settings
 from proxyforge.control.agent_api import Identifier, Payload
-from proxyforge.control.deployment_store import DeploymentKeyError
+from proxyforge.control.deployment_store import DeploymentKeyError, DeploymentValidationError
 
 
 class ChainRequest(Payload):
@@ -144,6 +144,8 @@ def attach_deployment_routes(app, admin, store_provider):
                 secrets_input=data.secrets,
                 key_ref=data.key_ref,
             )
+        except DeploymentValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
         except ValueError:
             # Never echo user-provided secrets or detailed validation strings.
             raise HTTPException(status_code=422, detail='Invalid deployment specification') from None
@@ -172,6 +174,8 @@ def attach_deployment_routes(app, admin, store_provider):
                 secrets_input=data.secrets,
                 key_ref=data.key_ref,
             )
+        except DeploymentValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
         except ValueError:
             raise HTTPException(status_code=422, detail='Invalid deployment specification') from None
 
@@ -187,6 +191,8 @@ def attach_deployment_routes(app, admin, store_provider):
                 secrets_input=data.secrets,
                 key_ref=data.key_ref,
             )
+        except DeploymentValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
         except ValueError:
             raise HTTPException(status_code=422, detail='Invalid deployment specification') from None
 
@@ -194,5 +200,7 @@ def attach_deployment_routes(app, admin, store_provider):
     def delete_agent_node(agent_id: str, node_id: str, data: AgentNodeDeleteRequest):
         try:
             return store_provider().delete_agent_node(agent_id, node_id, data.request_id)
+        except DeploymentValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
         except ValueError:
             raise HTTPException(status_code=422, detail='Invalid deployment specification') from None
