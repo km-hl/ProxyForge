@@ -124,10 +124,12 @@ test('ProxyForgeRegions supports CN / 中国 quick selection without misclassify
     const src = fs.readFileSync(path.join(__dirname, '..', 'static', 'app.js'), 'utf8');
     const start = src.indexOf('const ProxyForgeRegions = (() => {');
     const end = src.indexOf('const getFlagEmoji = ProxyForgeRegions.getFlagEmoji;', start);
+    const htmlUtils = require('../static/html-utils.js');
     const sandbox = {
         globalThis: {},
         document: { getElementById: () => null },
-        ProxyForgeHtmlUtils: require('../static/html-utils.js'),
+        ProxyForgeHtmlUtils: htmlUtils,
+        escapeHtml: htmlUtils.escapeHtml,
     };
     vm.createContext(sandbox);
     vm.runInContext(src.slice(start, end) + '\nconst getFlagEmoji = ProxyForgeRegions.getFlagEmoji;\n', sandbox);
