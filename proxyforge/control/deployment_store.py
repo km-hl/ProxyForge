@@ -141,6 +141,14 @@ def _apply_outbound_and_secret_updates(spec, clean_settings, secrets_input):
                 k: v for k, v in spec['hop_passwords'].items()
                 if k.isdigit() and int(k) < max_idx and v
             }
+    cam_mode = clean_settings.get('camouflage_mode')
+    if cam_mode == 'template':
+        spec.pop('camouflage_url', None)
+        spec.pop('camouflage_dir', None)
+    elif cam_mode == 'proxy':
+        spec.pop('camouflage_dir', None)
+    elif cam_mode == 'static_dir':
+        spec.pop('camouflage_url', None)
     return spec
 
 
@@ -457,8 +465,11 @@ class DeploymentStoreMixin:
                 })
         return extra_specs, adopted_specs, list(returned_adoptions or [])
 
-    def _attach_aggregated_nodes(self, db, agent_id, base_spec, *, returned_adoptions=None):
-        cleaned = {k: v for k, v in base_spec.items() if k not in ('extra_nodes', 'adopted_nodes', 'returned_adoptions')}
+    def _attach_aggregated_nodes(self, db, agent_id, base_spec, *, returned_adoptions=None, disabled_adoptions=None):
+        cleaned = {
+            k: v for k, v in base_spec.items()
+            if k not in ('extra_nodes', 'adopted_nodes', 'returned_adoptions', 'disabled_adoptions')
+        }
         spec = self._resolve_node_outbound_hops(db, agent_id, cleaned)
         extras, adopted, returned = self._collect_extra_and_adopted_specs(
             db, agent_id, returned_adoptions=returned_adoptions
@@ -469,6 +480,8 @@ class DeploymentStoreMixin:
             spec['adopted_nodes'] = adopted
         if returned:
             spec['returned_adoptions'] = returned
+        if disabled_adoptions:
+            spec['disabled_adoptions'] = list(disabled_adoptions)
         return spec
 
     def put_deployment(
@@ -598,7 +611,7 @@ class DeploymentStoreMixin:
                 if cand_transports & set(self._node_transports(erow['protocol'])):
                     raise ValueError('Port conflict with existing node on this Agent')
 
-    def _dispatch_aggregated_runtime(self, db, agent_id, request_id, *, returned_adoptions=None):
+    def _dispatch_aggregated_runtime(self, db, agent_id, request_id, *, returned_adoptions=None, disabled_adoptions=None):
         agent = self._job_agent(db, agent_id)
         self._expire_jobs(db, agent_id)
         if db.execute(
@@ -616,6 +629,7 @@ class DeploymentStoreMixin:
         extras, adopted, returned = self._collect_extra_and_adopted_specs(
             db, agent_id, returned_adoptions=returned_adoptions
         )
+        disabled = list(disabled_adoptions or [])
         if primary and not primary_removed:
             if primary['protocol'] == 'vless-reality':
                 p_dec = self._decrypt_spec(db, primary['secret_spec'])
@@ -633,7 +647,9 @@ class DeploymentStoreMixin:
                 }
             else:
                 base_spec = {**self._decrypt_spec(db, primary['secret_spec']), **json.loads(primary['settings']), 'protocol': primary['protocol']}
-            full_spec = self._attach_aggregated_nodes(db, agent_id, base_spec, returned_adoptions=returned_adoptions)
+            full_spec = self._attach_aggregated_nodes(
+                db, agent_id, base_spec, returned_adoptions=returned_adoptions, disabled_adoptions=disabled
+            )
             validate_landing_spec('landing.apply', full_spec)
             action = 'landing.apply'
             rev = primary['revision'] + 1
@@ -651,12 +667,14 @@ class DeploymentStoreMixin:
             )
             return self._deployment_view(db, db.execute('SELECT * FROM deployments WHERE id=?', (identifier,)).fetchone())
 
-        if adopted or returned:
+        if adopted or returned or disabled:
             full_spec = {'adopted_only': True}
             if adopted:
                 full_spec['adopted_nodes'] = adopted
             if returned:
                 full_spec['returned_adoptions'] = returned
+            if disabled:
+                full_spec['disabled_adoptions'] = disabled
             validate_landing_spec('landing.apply', full_spec)
             action = 'landing.apply'
             self._runtime_capability(agent, action)

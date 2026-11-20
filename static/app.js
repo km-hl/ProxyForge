@@ -775,8 +775,14 @@ const ProxyForgeRegions = (() => {
         return FLAG_PAIR_RE.test(String(text || ''));
     }
 
-    function keywordMatchesName(lowerName, keyword) {
+    const CASE_SENSITIVE_SHORT_CODES = new Set(['in', 'id', 'no', 'at', 'it']);
+
+    function keywordMatchesName(rawName, lowerName, keyword) {
         if (/[^\x00-\x7F]/.test(keyword)) return lowerName.includes(keyword);
+        if (CASE_SENSITIVE_SHORT_CODES.has(keyword)) {
+            const upper = keyword.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            return new RegExp(`(?<![A-Za-z0-9])${upper}(?![A-Za-z0-9])`).test(rawName);
+        }
         const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         return new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, 'i').test(lowerName);
     }
@@ -794,7 +800,7 @@ const ProxyForgeRegions = (() => {
             if (r.code.toLowerCase() === lower || r.label === raw) return r;
         }
         for (const r of REGIONS) {
-            if (r.keywords.some(kw => keywordMatchesName(lower, kw))) return r;
+            if (r.keywords.some(kw => keywordMatchesName(raw, lower, kw))) return r;
         }
         return null;
     }

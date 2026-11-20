@@ -2,7 +2,7 @@
 import base64
 import binascii
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import urllib.parse
 import uuid
@@ -31,6 +31,13 @@ OUTBOUND_HOP_KINDS = ('managed_ss', 'ss', 'socks5')
 MAX_OUTBOUND_HOPS = 4
 FINGERPRINTS = ('chrome', 'firefox', 'safari', 'edge', 'ios', 'android', 'random', 'randomized')
 DNS_PROVIDERS = ('cloudflare', 'alidns', 'dnspod')
+CAMOUFLAGE_MODES = ('template', 'proxy', 'static_dir')
+CAMOUFLAGE_TEMPLATES = ('corporate', 'blog', 'status', 'nginx')
+_FORBIDDEN_STATIC_PREFIXES = (
+    '/etc', '/proc', '/sys', '/dev', '/run', '/root', '/boot',
+    '/bin', '/sbin', '/usr', '/lib', '/lib64',
+    '/var/lib/proxyforge-runtime', '/opt/proxyforge-agent',
+)
 CAMOUFLAGE_UNSAFE = re.compile(r'[\x00-\x1f\x7f{};"\'\\\r\n]')
 EMAIL_RE = re.compile(r'[^\s@]+@[^\s@]+\.[^\s@]+\Z')
 MPORT_RE = re.compile(r'\d{1,5}(?:[-:]\d{1,5})?(?:,\d{1,5}(?:[-:]\d{1,5})?)*\Z')
@@ -92,7 +99,8 @@ PROTOCOL_SPEC = {
 }
 
 _COMMON_OPTIONAL = {
-    'protocol', 'domain', 'tls_mode', 'camouflage_url',
+    'protocol', 'domain', 'tls_mode',
+    'camouflage_url', 'camouflage_mode', 'camouflage_template', 'camouflage_dir',
     'acme_email', 'dns_provider', 'dns_zone_id', 'dns_propagation_seconds',
     'region', 'outbound_strategy', 'outbound_mode',
     'outbound_server', 'outbound_port', 'outbound_username', 'outbound_method',
@@ -393,6 +401,31 @@ def validate_settings(settings, protocol=None):
 
     camouflage = settings.get('camouflage_url', '')
     _validate_camouflage_url(camouflage)
+    cam_dir = settings.get('camouflage_dir', '')
+    if cam_dir:
+        if not isinstance(cam_dir, str) or len(cam_dir) > 200 or CAMOUFLAGE_UNSAFE.search(cam_dir) or any(ch.isspace() for ch in cam_dir):
+            raise ValueError('Invalid camouflage_dir')
+        if not cam_dir.startswith('/'):
+            raise ValueError('camouflage_dir must be an absolute POSIX path')
+        parsed_dir = PurePosixPath(cam_dir)
+        if '..' in parsed_dir.parts or len(parsed_dir.parts) < 2:
+            raise ValueError('Invalid camouflage_dir path')
+        norm_dir = parsed_dir.as_posix().rstrip('/')
+        if not norm_dir or norm_dir == '/' or any(
+            norm_dir == pfx or norm_dir.startswith(pfx + '/') for pfx in _FORBIDDEN_STATIC_PREFIXES
+        ):
+            raise ValueError('Restricted camouflage_dir path')
+    cam_mode = settings.get('camouflage_mode', '')
+    if cam_mode:
+        if cam_mode not in CAMOUFLAGE_MODES:
+            raise ValueError('Unsupported camouflage_mode')
+        if cam_mode == 'proxy' and not camouflage:
+            raise ValueError('Proxy camouflage mode requires camouflage_url')
+        if cam_mode == 'static_dir' and not cam_dir:
+            raise ValueError('Static directory camouflage mode requires camouflage_dir')
+    cam_tpl = settings.get('camouflage_template', '')
+    if cam_tpl and cam_tpl not in CAMOUFLAGE_TEMPLATES:
+        raise ValueError('Unsupported camouflage_template')
     _validate_acme_fields(settings, tls_mode)
     _validate_outbound_settings(settings)
 
@@ -443,7 +476,7 @@ def _validate_single_node_spec(spec):
         | rules['secret_fields']
         | {
             'reality_public_key', 'uuid', 'extra_nodes', 'adopted_nodes',
-            'returned_adoptions', 'hop_passwords', 'resolved_outbound_hops',
+            'returned_adoptions', 'disabled_adoptions', 'hop_passwords', 'resolved_outbound_hops',
         }
     )
     if set(spec) - allowed:
@@ -512,6 +545,22 @@ def _validate_adopted_inbound(item):
         raise ValueError('Invalid adopted inbound type')
 
 
+def _validate_disabled_adoption(item):
+    if not isinstance(item, dict):
+        raise ValueError('Invalid disabled adoption entry')
+    if set(item) - {'source_key', 'original_service', 'original_config_path'}:
+        raise ValueError('Unsupported disabled adoption field')
+    sk = item.get('source_key', '')
+    if not isinstance(sk, str) or not re.fullmatch(r'(?:adopt-[0-9a-f]{16}|[0-9a-f]{32})', sk):
+        raise ValueError('Invalid disabled adoption source_key')
+    svc = item.get('original_service', '')
+    if not isinstance(svc, str) or not svc or len(svc) > 100 or not re.fullmatch(r'[A-Za-z0-9_.@-]+\.service\Z', svc):
+        raise ValueError('Invalid disabled adoption original_service')
+    cfg = item.get('original_config_path', '')
+    if cfg and (not isinstance(cfg, str) or len(cfg) > 256):
+        raise ValueError('Invalid disabled adoption original_config_path')
+
+
 def validate_spec(action, spec):
     """Validate full landing specification (including encrypted secrets) sent to Agents."""
     if action == 'landing.remove':
@@ -522,7 +571,7 @@ def validate_spec(action, spec):
         raise ValueError('Invalid landing specification')
 
     if spec.get('adopted_only') is True:
-        if set(spec) - {'adopted_only', 'adopted_nodes', 'returned_adoptions'}:
+        if set(spec) - {'adopted_only', 'adopted_nodes', 'returned_adoptions', 'disabled_adoptions'}:
             raise ValueError('Invalid adopted_only specification')
     else:
         _validate_single_node_spec(spec)
@@ -532,7 +581,9 @@ def validate_spec(action, spec):
         if not isinstance(extras, list) or len(extras) > 32:
             raise ValueError('Invalid extra_nodes list')
         for item in extras:
-            if not isinstance(item, dict) or any(k in item for k in ('extra_nodes', 'adopted_nodes', 'returned_adoptions')):
+            if not isinstance(item, dict) or any(
+                k in item for k in ('extra_nodes', 'adopted_nodes', 'returned_adoptions', 'disabled_adoptions')
+            ):
                 raise ValueError('Nested extra_nodes are not allowed')
             _validate_single_node_spec(item)
 
@@ -550,6 +601,13 @@ def validate_spec(action, spec):
         for sk in returned:
             if not isinstance(sk, str) or not re.fullmatch(r'(?:adopt-[0-9a-f]{16}|[0-9a-f]{32})', sk):
                 raise ValueError('Invalid returned source_key')
+
+    if 'disabled_adoptions' in spec:
+        disabled = spec['disabled_adoptions']
+        if not isinstance(disabled, list) or len(disabled) > 16:
+            raise ValueError('Invalid disabled_adoptions list')
+        for item in disabled:
+            _validate_disabled_adoption(item)
 
 
 def deployment_tls_plan(spec, site_id='landing'):
@@ -620,7 +678,10 @@ def build_caddy_site_for_landing(spec, *, site_id='landing', listen_port=None, b
             'site_id': site_id,
             'domain': plan['domain'],
             'tls_mode': 'none',
+            'camouflage_mode': spec.get('camouflage_mode', ''),
+            'camouflage_template': spec.get('camouflage_template', 'corporate'),
             'camouflage_url': plan['camouflage_url'],
+            'camouflage_dir': spec.get('camouflage_dir', ''),
             'email': spec.get('acme_email', ''),
             'listen_port': int(listen_port or 18443),
             'bind_host': '127.0.0.1',
@@ -629,7 +690,10 @@ def build_caddy_site_for_landing(spec, *, site_id='landing', listen_port=None, b
         'site_id': site_id,
         'domain': plan['domain'],
         'tls_mode': plan['tls_mode'],
+        'camouflage_mode': spec.get('camouflage_mode', ''),
+        'camouflage_template': spec.get('camouflage_template', 'corporate'),
         'camouflage_url': plan['camouflage_url'],
+        'camouflage_dir': spec.get('camouflage_dir', ''),
         'email': spec.get('acme_email', ''),
         'dns_provider': spec.get('dns_provider', 'cloudflare'),
         'dns_zone_id': spec.get('dns_zone_id', ''),

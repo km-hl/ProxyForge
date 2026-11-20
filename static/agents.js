@@ -781,8 +781,19 @@ async function showAgentDeployment(agent) {
         '<div id="deployment-tls-section"><div class="form-grid">' +
         '<div class="form-group"><label>TLS / 伪装模式</label><select id="deployment-tls-mode"></select></div>' +
         '<div class="form-group"><label id="deployment-domain-label">证书域名 / SNI</label><input id="deployment-domain" placeholder="如 www.amazon.com 或自有时效域名"></div>' +
-        '<div class="form-group full-width"><label>伪装目标 / 反代上游 URL (可选，需 https://)</label><input id="deployment-camouflage" placeholder="https://www.apple.com (留空使用内置静态伪装页或 SNI 域名)"></div>' +
-        '</div></div>' +
+        '<div class="form-group" id="deployment-cam-mode-wrap" hidden><label>回环伪装站内容方式 (Caddy)</label><select id="deployment-camouflage-mode">' +
+        '<option value="template">内置拟真静态站模板（零外联反代特征 · 推荐）</option>' +
+        '<option value="proxy">反代外部真实 HTTPS 站点</option>' +
+        '<option value="static_dir">自定义宿主机静态网页目录</option></select></div>' +
+        '<div class="form-group" id="deployment-cam-tpl-wrap" hidden><label>内置静态伪装模板</label><select id="deployment-camouflage-template">' +
+        '<option value="corporate">企业科技官网 (corporate · 默认)</option>' +
+        '<option value="blog">极简技术博客 (blog)</option>' +
+        '<option value="status">云服务状态监测页 (status)</option>' +
+        '<option value="nginx">标准极简欢迎页 (nginx)</option></select></div>' +
+        '<div class="form-group full-width" id="deployment-cam-url-wrap"><label id="deployment-cam-url-label">伪装目标 / 反代上游 URL (可选，需 https://)</label><input id="deployment-camouflage" placeholder="https://www.apple.com (留空使用 SNI 域名)"></div>' +
+        '<div class="form-group full-width" id="deployment-cam-dir-wrap" hidden><label>自定义静态网页目录 (宿主机绝对路径)</label><input id="deployment-camouflage-dir" placeholder="如 /var/www/site (需保证 proxyforge-caddy 可读)"></div>' +
+        '</div>' +
+        '<div id="deployment-caddy-summary" class="hint" hidden style="margin:6px 0 8px; padding:6px 10px; border-radius:6px; background:var(--surface-2, rgba(148,163,184,0.12));"></div></div>' +
         '<div id="deployment-reality-ext-fields" hidden><div class="form-grid">' +
         '<div class="form-group"><label>uTLS 客户端指纹</label><select id="deployment-fingerprint"><option value="chrome">chrome (推荐)</option><option value="firefox">firefox</option><option value="safari">safari</option><option value="edge">edge</option><option value="ios">ios</option><option value="android">android</option><option value="random">random</option></select></div>' +
         '<div class="form-group"><label>Reality Public Key</label><input id="deployment-reality-pubkey" placeholder="留空自动生成或点击下方按钮预生成"></div>' +
@@ -845,6 +856,8 @@ async function showAgentDeployment(agent) {
     const remove = document.getElementById('deployment-remove');
     const protocol = document.getElementById('deployment-protocol');
     const tlsModeEl = document.getElementById('deployment-tls-mode');
+    const camModeEl = document.getElementById('deployment-camouflage-mode');
+    const camTplEl = document.getElementById('deployment-camouflage-template');
     const outModeEl = document.getElementById('deployment-outbound-mode');
     const keygenBtn = document.getElementById('deployment-keygen-btn');
     const keyrefStatus = document.getElementById('deployment-keyref-status');
@@ -918,6 +931,9 @@ async function showAgentDeployment(agent) {
             document.getElementById('deployment-server').value = pubIpv4 || pubIpv6 || '';
             document.getElementById('deployment-domain').value = 'www.amazon.com';
             document.getElementById('deployment-camouflage').value = '';
+            document.getElementById('deployment-camouflage-dir').value = '';
+            if (camModeEl) camModeEl.value = 'template';
+            if (camTplEl) camTplEl.value = 'corporate';
             document.getElementById('deployment-reality-pubkey').value = '';
             document.getElementById('deployment-reality-shortids').value = '';
             document.getElementById('deployment-hy2-mport').value = '';
@@ -949,6 +965,10 @@ async function showAgentDeployment(agent) {
                 document.getElementById('deployment-port').value = s.listen_port ?? 443;
                 document.getElementById('deployment-domain').value = s.domain ?? s.server_name ?? '';
                 document.getElementById('deployment-camouflage').value = s.camouflage_url ?? '';
+                document.getElementById('deployment-camouflage-dir').value = s.camouflage_dir ?? '';
+                const inferredCamMode = s.camouflage_mode || (s.camouflage_dir ? 'static_dir' : (s.camouflage_url ? 'proxy' : 'template'));
+                if (camModeEl) camModeEl.value = inferredCamMode;
+                if (camTplEl) camTplEl.value = s.camouflage_template || 'corporate';
                 document.getElementById('deployment-fingerprint').value = s.fingerprint ?? 'chrome';
                 document.getElementById('deployment-reality-pubkey').value = s.reality_public_key ?? '';
                 document.getElementById('deployment-reality-shortids').value = Array.isArray(s.reality_short_ids) ? s.reality_short_ids.join(', ') : '';
@@ -992,6 +1012,43 @@ async function showAgentDeployment(agent) {
         document.getElementById('deployment-dns-fields').hidden = tlsMode !== 'acme_dns';
         document.getElementById('deployment-domain-label').textContent =
             (proto === 'reality' && tlsMode === 'reality') ? '偷取目标域名 SNI (需支持 TLS 1.3 + H2，如 www.amazon.com)' : '证书域名 / SNI (需解析到本机或配置 DNS-01)';
+
+        const usesCaddyCamo = (proto === 'reality' && usesAcme) || proto === 'trojan';
+        const camMode = (camModeEl && camModeEl.value) || 'template';
+        const camModeWrap = document.getElementById('deployment-cam-mode-wrap');
+        const camTplWrap = document.getElementById('deployment-cam-tpl-wrap');
+        const camUrlWrap = document.getElementById('deployment-cam-url-wrap');
+        const camDirWrap = document.getElementById('deployment-cam-dir-wrap');
+        const camUrlLabel = document.getElementById('deployment-cam-url-label');
+        const caddySummary = document.getElementById('deployment-caddy-summary');
+        if (camModeWrap) camModeWrap.hidden = !usesCaddyCamo;
+        if (camTplWrap) camTplWrap.hidden = !(usesCaddyCamo && camMode === 'template');
+        if (camDirWrap) camDirWrap.hidden = !(usesCaddyCamo && camMode === 'static_dir');
+        if (camUrlWrap) {
+            const showUrl = (usesCaddyCamo && camMode === 'proxy') || (proto === 'reality' && tlsMode === 'reality') || proto === 'hysteria2';
+            camUrlWrap.hidden = !showUrl;
+        }
+        if (camUrlLabel) {
+            camUrlLabel.textContent = usesCaddyCamo
+                ? '反代上游 HTTPS URL (必填，如 https://www.apple.com)'
+                : (proto === 'hysteria2' ? 'Masquerade 伪装站点 URL (可选，需 https://)' : '可选回落目标 URL (留空直接使用上方 SNI 域名)');
+        }
+        if (caddySummary) {
+            if (usesCaddyCamo) {
+                const domPreview = document.getElementById('deployment-domain').value.trim() || '待填域名';
+                const tplNames = { corporate: '企业科技官网', blog: '极简技术博客', status: '云服务状态监测页', nginx: '标准极简欢迎页' };
+                const modeDesc = camMode === 'template'
+                    ? `内置静态模板「${tplNames[(camTplEl && camTplEl.value) || 'corporate'] || 'corporate'}」`
+                    : (camMode === 'proxy'
+                        ? `反代 ${document.getElementById('deployment-camouflage').value.trim() || '(待填 URL)'}`
+                        : `自定义静态目录 ${document.getElementById('deployment-camouflage-dir').value.trim() || '(待填路径)'}`);
+                const roleLabel = proto === 'trojan' ? 'Trojan 防探测 Fallback' : 'Reality 回环“偷自己”';
+                caddySummary.hidden = false;
+                caddySummary.textContent = `🛡️ 本机回环 Caddy 伪装站（${roleLabel}）：绑定 127.0.0.1 自动回环端口（禁用 HTTP/3 免占 UDP 443）· 证书域名：${domPreview}（${tlsMode}）· 内容：${modeDesc}`;
+            } else {
+                caddySummary.hidden = true;
+            }
+        }
 
         const outMode = outModeEl.value || 'direct';
         document.getElementById('deployment-outbound-proxy-fields').hidden = !(outMode === 'socks5' || outMode === 'ss');
@@ -1069,8 +1126,24 @@ async function showAgentDeployment(agent) {
         if (regionVal) settings.region = regionVal;
         const domain = document.getElementById('deployment-domain').value.trim();
         const cam = document.getElementById('deployment-camouflage').value.trim();
+        const camDir = document.getElementById('deployment-camouflage-dir')?.value?.trim() || '';
+        const usesCaddyCamo = (proto === 'reality' && (tlsMode === 'acme_http' || tlsMode === 'acme_dns')) || proto === 'trojan';
         if (domain) settings.domain = domain;
-        if (cam) settings.camouflage_url = cam;
+        if (usesCaddyCamo) {
+            const cMode = (camModeEl && camModeEl.value) || 'template';
+            settings.camouflage_mode = cMode;
+            if (cMode === 'template') {
+                settings.camouflage_template = (camTplEl && camTplEl.value) || 'corporate';
+            } else if (cMode === 'proxy') {
+                if (!cam) throw new Error('选择“反代外部真实 HTTPS 站点”时必须填写反代上游 URL');
+                settings.camouflage_url = cam;
+            } else if (cMode === 'static_dir') {
+                if (!camDir) throw new Error('选择“自定义静态网页目录”时必须填写宿主机绝对路径');
+                settings.camouflage_dir = camDir;
+            }
+        } else if (cam) {
+            settings.camouflage_url = cam;
+        }
         if (proto === 'ss2022') {
             settings.method = document.getElementById('deployment-ss2022-method').value;
             settings.publish_to_subscription = Boolean(document.getElementById('deployment-ss2022-publish').checked);
@@ -1185,6 +1258,8 @@ async function showAgentDeployment(agent) {
         render(false);
     };
     tlsModeEl.onchange = () => render(false);
+    if (camModeEl) camModeEl.onchange = () => render(false);
+    if (camTplEl) camTplEl.onchange = () => render(false);
     outModeEl.onchange = () => render(false);
     document.getElementById('deployment-refresh').onclick = () => refresh().catch(error => { status.textContent = error.message; });
     const firstProto = getSelectedNode()?.protocol || protocol.value;
@@ -1300,11 +1375,13 @@ function parseForwardTargetsInput(raw) {
 
 async function showAgentAdoptions(agent) {
     let pollTimer = null;
-    openModal('存量节点完全接管 · ' + agent.name,
-        '<p class="hint">经由 root 权限 runtime_helper 扫描目标主机已运行的 sing-box / xray / caddy 服务，自动提取认证凭据（UUID、密码、私钥推导 Reality 公钥、shortId）。点击「完全接管」将备份并停止原服务，无缝迁入 proxyforge-singbox 统一托管并直接加入客户端订阅（支持一键归还原服务）。</p>' +
-        '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">' +
+    let showIgnored = false;
+    openModal('存量节点接管与清理 · ' + agent.name,
+        '<p class="hint">经由 root 权限 runtime_helper 扫描目标主机已运行的 sing-box / xray / caddy 服务，自动提取认证凭据并与已有手工节点交叉去重。支持「完全接管（自动替换重复手工节点并迁移策略组引用）」、「忽略（不动原进程）」或「停用并清理原服务（备份释放端口，可恢复）」。</p>' +
+        '<div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">' +
         '<button type="button" class="btn btn-primary btn-sm" id="adopt-scan-trigger">🔍 一键特权扫描 (adopt_scan)</button>' +
-        '<button type="button" class="btn btn-sm" id="adopt-scan-refresh">刷新扫描结果</button></div>' +
+        '<button type="button" class="btn btn-sm" id="adopt-scan-refresh">刷新扫描结果</button>' +
+        '<label class="inline-check" style="margin-left:auto; font-size:0.85rem;"><input type="checkbox" id="adopt-show-ignored"> <span id="adopt-ignored-label">显示已忽略 (0)</span></label></div>' +
         '<p id="adopt-scan-status" class="hint"></p><div id="adopt-scan-list"></div>', () => {
             if (pollTimer) clearInterval(pollTimer);
             closeModal();
@@ -1312,16 +1389,53 @@ async function showAgentAdoptions(agent) {
     const statusEl = document.getElementById('adopt-scan-status');
     const listEl = document.getElementById('adopt-scan-list');
     const triggerBtn = document.getElementById('adopt-scan-trigger');
+    const showIgnoredEl = document.getElementById('adopt-show-ignored');
+    const ignoredLblEl = document.getElementById('adopt-ignored-label');
     triggerBtn.disabled = !agentCanRunJobs(agent);
+    if (showIgnoredEl) {
+        showIgnoredEl.onchange = () => {
+            showIgnored = Boolean(showIgnoredEl.checked);
+            loadAdoptions().catch(e => { statusEl.textContent = e.message; });
+        };
+    }
+
+    function _isAuxiliaryItem(item) {
+        return Boolean(item.is_auxiliary) || item.core === 'caddy' || ['caddy-site', 'dokodemo-door'].includes(item.protocol);
+    }
+
+    function _describeServiceImpact(allItems, serviceName) {
+        if (!serviceName) return '';
+        const shared = allItems.filter(x => x.service_name === serviceName);
+        if (!shared.length) return '';
+        return shared.map(x => `[${x.core}] ${x.tag || x.protocol} (${x.listen}:${x.listen_port})`).join('、');
+    }
 
     async function loadAdoptions() {
         const { adoptions } = await fetchAgentJson('/agents/' + agent.id + '/adoptions');
         listEl.replaceChildren();
-        if (!adoptions || !adoptions.length) {
+        const allItems = adoptions || [];
+        if (!allItems.length) {
+            if (ignoredLblEl) ignoredLblEl.textContent = '显示已忽略 (0)';
             listEl.textContent = '暂无接管扫描记录，点击上方「一键特权扫描」下发探测任务（扫描完成后将自动刷新）。';
             return;
         }
-        for (const item of adoptions) {
+        const proxyItems = allItems.filter(item => !_isAuxiliaryItem(item));
+        const auxItems = allItems.filter(item => _isAuxiliaryItem(item));
+        const ignoredCount = proxyItems.filter(item => item.adopted_status === 'ignored').length;
+        if (ignoredLblEl) ignoredLblEl.textContent = `显示已忽略 (${ignoredCount})`;
+
+        const visibleProxies = proxyItems.filter(item => showIgnored || item.adopted_status !== 'ignored');
+        if (!visibleProxies.length) {
+            const emptyHint = document.createElement('div');
+            emptyHint.className = 'hint';
+            emptyHint.style.marginBottom = '10px';
+            emptyHint.textContent = ignoredCount > 0
+                ? `当前无待处理代理节点（已隐藏 ${ignoredCount} 条忽略记录，勾选右上角「显示已忽略」可恢复查看）。`
+                : '当前主机未发现可接管的存量代理节点。';
+            listEl.append(emptyHint);
+        }
+
+        for (const item of visibleProxies) {
             const card = document.createElement('div');
             card.className = 'sub-user-card';
             card.style.marginBottom = '10px';
@@ -1331,13 +1445,16 @@ async function showAgentAdoptions(agent) {
             title.textContent = `[${item.core}] ${item.custom_name || item.tag || item.service_name} (${item.protocol} :${item.listen_port})`;
             const badge = document.createElement('span');
             const isAdopted = item.adopted_status === 'adopted';
-            const isAuxCaddy = item.core === 'caddy' || item.protocol === 'caddy-site';
-            badge.className = `status-pill ${isAdopted ? 'is-online' : (isAuxCaddy ? 'is-online' : (item.has_credentials ? 'is-degraded' : 'is-offline'))}`;
+            const isDisabled = item.adopted_status === 'disabled';
+            const isIgnored = item.adopted_status === 'ignored';
+            badge.className = `status-pill ${isAdopted ? 'is-online' : ((isDisabled || isIgnored) ? 'is-offline' : (item.has_credentials ? 'is-degraded' : 'is-offline'))}`;
             badge.textContent = isAdopted
                 ? '已完全接管 · 已入订阅'
-                : (isAuxCaddy
-                    ? '关联伪装站（运行中，无需单独接管）'
-                    : (item.has_credentials ? '已提取凭据 · 可一键接管' : (item.adoptable ? '待特权提取凭据' : '仅观测')));
+                : (isDisabled
+                    ? '已停用原服务 · 端口已释放'
+                    : (isIgnored
+                        ? '已忽略（原服务未改动）'
+                        : (item.has_credentials ? '已提取凭据 · 可一键接管' : (item.adoptable ? '待特权提取凭据' : '仅观测'))));
             head.append(title, badge);
 
             const meta = document.createElement('div');
@@ -1350,82 +1467,200 @@ async function showAgentAdoptions(agent) {
             cfg.textContent = `原配置: ${item.config_path}`;
 
             const notes = [];
-            if (isAuxCaddy) {
-                const auxNote = document.createElement('div');
-                auxNote.className = 'hint';
-                auxNote.style.marginTop = '4px';
-                auxNote.textContent = 'ℹ️ 宿主机回环 TLS / 伪装站辅助服务（如 NodePilot Caddy）。接管上方代理节点时将保持本服务原样运行，无需单独接管。';
-                notes.push(auxNote);
+            if (item.matched_manual_name && !isAdopted) {
+                const dupNote = document.createElement('div');
+                dupNote.className = 'hint';
+                dupNote.style.marginTop = '4px';
+                dupNote.style.padding = '5px 8px';
+                dupNote.style.borderRadius = '6px';
+                dupNote.style.background = 'rgba(59, 130, 246, 0.12)';
+                const reasonLbl = item.matched_manual_reason === 'credential' ? '凭据指纹匹配' : '地址端口匹配';
+                dupNote.textContent = `🔗 已在手工节点中：「${item.matched_manual_name}」(${reasonLbl})。点击「接管并替换手工节点」将自动继承原名称、删除重复手工条目并同步迁移模板策略组引用；若保持原服务运行请直接点「忽略」。`;
+                notes.push(dupNote);
             }
             if (item.has_xray_xver) {
                 const xverNote = document.createElement('div');
                 xverNote.className = 'hint';
                 xverNote.style.marginTop = '4px';
-                xverNote.textContent = '⚠️ 原 Xray Reality 启用了 xver PROXY Protocol；若宿主机回环 Caddy 强制 proxy_protocol fallback_policy=REJECT，迁入 sing-box 后回落探测可能被拒（可将 Caddy 改为 IGNORE 或改用 ProxyForge 新建节点）。';
+                xverNote.textContent = '⚠️ 原 Xray Reality 启用了 xver PROXY Protocol；若宿主机回环 Caddy 强制 proxy_protocol fallback_policy=REJECT，迁入 sing-box 后回落探测可能被拒（可将 Caddy 改为 IGNORE 或直接停用旧服务并用 ProxyForge 新建节点）。';
                 notes.push(xverNote);
             }
 
             const actions = document.createElement('div');
             actions.className = 'item-actions';
-            actions.style.marginTop = '6px';
-            if (isAdopted) {
+            actions.style.marginTop = '8px';
+            actions.style.display = 'flex';
+            actions.style.gap = '6px';
+            actions.style.flexWrap = 'wrap';
+
+            if (isAdopted || isDisabled) {
                 const retBtn = document.createElement('button');
                 retBtn.type = 'button';
-                retBtn.className = 'btn btn-danger btn-sm';
-                retBtn.textContent = '↩️ 归还原服务';
+                retBtn.className = isAdopted ? 'btn btn-danger btn-sm' : 'btn btn-primary btn-sm';
+                retBtn.textContent = isAdopted ? '↩️ 归还原服务' : '↩️ 恢复原服务';
                 retBtn.onclick = async () => {
-                    if (!confirm(`确认从 proxyforge-singbox 移除 ${item.tag || item.listen_port} 并恢复启动原服务 ${item.service_name || ''}？`)) return;
+                    const confirmText = isAdopted
+                        ? `确认从 proxyforge-singbox 移除 ${item.tag || item.listen_port} 并恢复启动原服务 ${item.service_name || ''}？`
+                        : `确认从备份恢复并重新启动原服务 ${item.service_name || ''}？`;
+                    if (!confirm(confirmText)) return;
                     retBtn.disabled = true;
                     try {
                         await fetchAgentJson(`/agents/${agent.id}/adoptions/${encodeURIComponent(item.source_key)}/return`, {
                             method: 'POST',
                             body: JSON.stringify({ request_id: randomRequestId() }),
                         });
-                        statusEl.textContent = '已下发归还原服务任务，代理服务重载后原服务将自动恢复运行。';
+                        statusEl.textContent = isAdopted
+                            ? '已下发归还原服务任务，代理服务重载后原服务将自动恢复运行。'
+                            : '已下发恢复原服务任务，原服务将自动重新启动。';
                         await loadAdoptions();
                         if (typeof ProxyForgeManagedNodes !== 'undefined') ProxyForgeManagedNodes.refresh();
                     } catch (e) {
-                        statusEl.textContent = '归还失败：' + e.message;
+                        statusEl.textContent = '操作失败：' + e.message;
                         retBtn.disabled = false;
                     }
                 };
                 actions.append(retBtn);
-            } else if (!isAuxCaddy && item.adoptable) {
-                const adoptBtn = document.createElement('button');
-                adoptBtn.type = 'button';
-                adoptBtn.className = 'btn btn-primary btn-sm';
-                adoptBtn.disabled = !item.has_credentials;
-                adoptBtn.textContent = item.has_credentials ? '🚀 完全接管 (停用原服务并加入订阅)' : '请先点击上方特权扫描提取凭据';
-                adoptBtn.onclick = async () => {
-                    if (!confirm(`确认完全接管 [${item.core}] :${item.listen_port}？系统将备份并停止原服务 ${item.service_name || ''}，将其无缝并入 proxyforge-singbox 并直接加入客户端订阅。`)) return;
-                    adoptBtn.disabled = true;
+            } else {
+                if (item.adoptable && !isIgnored) {
+                    const adoptBtn = document.createElement('button');
+                    adoptBtn.type = 'button';
+                    adoptBtn.className = 'btn btn-primary btn-sm';
+                    adoptBtn.disabled = !item.has_credentials;
+                    adoptBtn.textContent = !item.has_credentials
+                        ? '请先点击上方特权扫描提取凭据'
+                        : (item.matched_manual_name ? '🚀 接管并替换手工节点' : '🚀 完全接管 (停用原服务并加入订阅)');
+                    adoptBtn.onclick = async () => {
+                        const replaceHint = item.matched_manual_name
+                            ? `\n\n同时将自动删除重复的手工节点「${item.matched_manual_name}」并无缝迁移模板策略组引用。`
+                            : '';
+                        if (!confirm(`确认完全接管 [${item.core}] :${item.listen_port}？系统将备份并停止原服务 ${item.service_name || ''}，将其无缝并入 proxyforge-singbox 并直接加入客户端订阅。${replaceHint}`)) return;
+                        adoptBtn.disabled = true;
+                        try {
+                            const defaultName = item.matched_manual_name || item.custom_name || `${agent.name}-${item.protocol}-${item.listen_port}`;
+                            const finalName = (!item.matched_manual_name && typeof ProxyForgeRegions !== 'undefined' && agent.region)
+                                ? ProxyForgeRegions.applyRegionPrefix(defaultName, agent.region)
+                                : defaultName;
+                            const res = await fetchAgentJson(`/agents/${agent.id}/adoptions/${encodeURIComponent(item.source_key)}/adopt`, {
+                                method: 'POST',
+                                body: JSON.stringify({
+                                    request_id: randomRequestId(),
+                                    custom_name: finalName,
+                                    server_override: agent.public_ipv4 || agent.public_ipv6 || agent.observed_ip || '',
+                                    replace_manual: Boolean(item.matched_manual_name),
+                                }),
+                            });
+                            const rep = res && res.manual_replacement;
+                            statusEl.textContent = (rep && rep.replaced)
+                                ? `已下发完全接管任务，并已自动替换手工节点「${rep.old_name}」（同步迁移 ${rep.migrated_groups || 0} 个策略组引用）！`
+                                : '已下发完全接管任务，该存量节点已加入受管清单与客户端订阅！';
+                            await loadAdoptions();
+                            if (typeof ProxyForgeManagedNodes !== 'undefined') ProxyForgeManagedNodes.refresh();
+                            if (rep && rep.replaced && typeof loadData === 'function') loadData();
+                        } catch (e) {
+                            statusEl.textContent = '接管失败：' + e.message;
+                            adoptBtn.disabled = false;
+                        }
+                    };
+                    actions.append(adoptBtn);
+                }
+
+                const ignBtn = document.createElement('button');
+                ignBtn.type = 'button';
+                ignBtn.className = 'btn btn-sm';
+                ignBtn.textContent = isIgnored ? '👁️ 取消忽略' : '🙈 忽略';
+                ignBtn.onclick = async () => {
+                    ignBtn.disabled = true;
                     try {
-                        const defaultName = item.custom_name || `${agent.name}-${item.protocol}-${item.listen_port}`;
-                        const finalName = typeof ProxyForgeRegions !== 'undefined' && agent.region
-                            ? ProxyForgeRegions.applyRegionPrefix(defaultName, agent.region)
-                            : defaultName;
-                        await fetchAgentJson(`/agents/${agent.id}/adoptions/${encodeURIComponent(item.source_key)}/adopt`, {
+                        await fetchAgentJson(`/agents/${agent.id}/adoptions/${encodeURIComponent(item.source_key)}/ignore`, {
                             method: 'POST',
-                            body: JSON.stringify({
-                                request_id: randomRequestId(),
-                                custom_name: finalName,
-                                server_override: agent.public_ipv4 || agent.public_ipv6 || agent.observed_ip || '',
-                            }),
+                            body: JSON.stringify({ ignored: !isIgnored }),
                         });
-                        statusEl.textContent = '已下发完全接管任务，该存量节点已加入受管清单与客户端订阅！';
+                        statusEl.textContent = isIgnored ? '已恢复显示该扫描记录。' : '已忽略该记录（宿主机原服务未做任何改动）。';
                         await loadAdoptions();
-                        if (typeof ProxyForgeManagedNodes !== 'undefined') ProxyForgeManagedNodes.refresh();
                     } catch (e) {
-                        statusEl.textContent = '接管失败：' + e.message;
-                        adoptBtn.disabled = false;
+                        statusEl.textContent = '更新忽略状态失败：' + e.message;
+                        ignBtn.disabled = false;
                     }
                 };
-                actions.append(adoptBtn);
+                actions.append(ignBtn);
+
+                if (item.service_name) {
+                    const disBtn = document.createElement('button');
+                    disBtn.type = 'button';
+                    disBtn.className = 'btn btn-danger btn-sm';
+                    disBtn.textContent = '🗑️ 停用并清理原服务';
+                    disBtn.onclick = async () => {
+                        const impact = _describeServiceImpact(allItems, item.service_name);
+                        const warnMsg = `确认备份配置并停用禁用宿主机原服务「${item.service_name}」以释放端口？\n\n受该服务影响的监听端口：${impact || (':' + item.listen_port)}\n\n（系统将自动备份原配置至 /var/lib/proxyforge-runtime/adoptions/，后续可随时点「恢复原服务」回滚。）`;
+                        if (!confirm(warnMsg)) return;
+                        disBtn.disabled = true;
+                        try {
+                            await fetchAgentJson(`/agents/${agent.id}/adoptions/${encodeURIComponent(item.source_key)}/disable`, {
+                                method: 'POST',
+                                body: JSON.stringify({ request_id: randomRequestId() }),
+                            });
+                            statusEl.textContent = `已下发停用任务，原服务 ${item.service_name} 备份停用后将释放对应端口！`;
+                            await loadAdoptions();
+                        } catch (e) {
+                            statusEl.textContent = '停用原服务失败：' + e.message;
+                            disBtn.disabled = false;
+                        }
+                    };
+                    actions.append(disBtn);
+                }
             }
             card.append(head, meta, cfg, ...notes);
             if (actions.childNodes && actions.childNodes.length) card.append(actions);
             else if (actions.children && actions.children.length) card.append(actions);
             listEl.append(card);
+        }
+
+        if (auxItems.length) {
+            const auxDetails = document.createElement('details');
+            auxDetails.style.marginTop = '12px';
+            const auxSummary = document.createElement('summary');
+            auxSummary.style.cursor = 'pointer';
+            auxSummary.style.fontWeight = '600';
+            auxSummary.textContent = `🛠️ 辅助 / 分流组件 (${auxItems.length}) — 只读观测，无需单独接管`;
+            auxDetails.append(auxSummary);
+
+            const auxWrap = document.createElement('div');
+            auxWrap.style.marginTop = '8px';
+            for (const item of auxItems) {
+                const card = document.createElement('div');
+                card.className = 'sub-user-card';
+                card.style.marginBottom = '8px';
+                const head = document.createElement('div');
+                head.className = 'sub-user-header';
+                const title = document.createElement('strong');
+                title.textContent = `[${item.core}] ${item.tag || item.service_name} (${item.protocol} ${item.listen}:${item.listen_port})`;
+                const badge = document.createElement('span');
+                const isCaddy = item.core === 'caddy' || item.protocol === 'caddy-site';
+                badge.className = 'status-pill is-online';
+                badge.textContent = isCaddy ? '关联伪装站（运行中，无需单独接管）' : '分流入口组件（只读观测）';
+                head.append(title, badge);
+
+                const meta = document.createElement('div');
+                meta.className = 'hint';
+                meta.textContent = `真实监听: ${item.listen}:${item.listen_port} · TLS: ${item.tls_mode || 'none'}` +
+                    (item.sni ? ` · SNI: ${item.sni}` : '') + (item.service_name ? ` · 原服务: ${item.service_name}` : '');
+                const cfg = document.createElement('div');
+                cfg.className = 'hint';
+                cfg.textContent = `原配置: ${item.config_path}`;
+                const note = document.createElement('div');
+                note.className = 'hint';
+                note.style.marginTop = '4px';
+                note.textContent = isCaddy
+                    ? 'ℹ️ 宿主机回环 TLS / 伪装站辅助服务（如 NodePilot Caddy）。接管上方代理节点时将保持本服务原样运行。'
+                    : 'ℹ️ 宿主机前置端口分流 / SNI 门户组件（如 dokodemo-door），不直接作为客户端代理节点接管。';
+                card.append(head, meta, cfg, note);
+                auxWrap.append(card);
+            }
+            auxDetails.append(auxWrap);
+            listEl.append(auxDetails);
+        }
+        if (typeof window !== 'undefined' && window.twemoji) {
+            window.twemoji.parse(listEl, { folder: 'svg', ext: '.svg' });
         }
     }
 

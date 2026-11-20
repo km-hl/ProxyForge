@@ -114,6 +114,15 @@ class AdoptActionRequest(Payload):
     request_id: Identifier
     custom_name: constr(strict=True, max_length=64) = ""
     server_override: constr(strict=True, max_length=128) = ""
+    replace_manual: StrictBool = True
+
+
+class AdoptIgnoreRequest(Payload):
+    ignored: StrictBool = True
+
+
+class AdoptDisableRequest(Payload):
+    request_id: Identifier
 
 
 class AdoptReturnRequest(Payload):
@@ -158,7 +167,14 @@ class AgentEdit(RegistrationRequest):
     billing_label: constr(strict=True, max_length=64) | None = None
 
 
-def attach_agent_routes(app, management_auth, store_provider):
+def attach_agent_routes(
+    app,
+    management_auth,
+    store_provider,
+    *,
+    manual_nodes_reader=None,
+    replace_manual_node=None,
+):
     admin = APIRouter(prefix="/api/agents", dependencies=[Depends(management_auth)])
     agent = APIRouter(prefix="/api/agent")
     # A bounded, shared unauthenticated enrollment limiter avoids trusting
@@ -313,20 +329,56 @@ def attach_agent_routes(app, management_auth, store_provider):
             store.get_agent(agent_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="Agent not found")
-        return {"adoptions": store.list_adopted_nodes(agent_id)}
+        manual_nodes = manual_nodes_reader() if callable(manual_nodes_reader) else None
+        return {"adoptions": store.list_adopted_nodes(agent_id, manual_nodes=manual_nodes)}
 
     @admin.post("/{agent_id}/adoptions/{source_key}/adopt")
     def adopt_endpoint(agent_id: str, source_key: str, data: AdoptActionRequest):
+        store = store_provider()
+        matched_manual_name = ""
+        if data.replace_manual and callable(manual_nodes_reader):
+            manual_nodes = manual_nodes_reader()
+            items = store.list_adopted_nodes(agent_id, manual_nodes=manual_nodes)
+            matched = next((ep for ep in items if ep["source_key"] == source_key), None)
+            if matched and matched.get("matched_manual_name"):
+                matched_manual_name = matched["matched_manual_name"]
+        effective_name = data.custom_name or matched_manual_name
+        if data.replace_manual and matched_manual_name:
+            effective_name = matched_manual_name
         try:
-            return store_provider().adopt_endpoint(
+            result = store.adopt_endpoint(
                 agent_id,
                 source_key,
                 data.request_id,
-                custom_name=data.custom_name,
+                custom_name=effective_name,
                 server_override=data.server_override,
             )
         except ValueError:
             raise HTTPException(status_code=422, detail="Cannot adopt endpoint without valid extracted credentials") from None
+        if data.replace_manual and matched_manual_name and callable(replace_manual_node):
+            adopted_display = (result or {}).get("adopted_display_name", "")
+            if adopted_display:
+                try:
+                    rep = replace_manual_node(matched_manual_name, adopted_display)
+                    if isinstance(result, dict):
+                        result["manual_replacement"] = rep
+                except Exception:
+                    pass
+        return result
+
+    @admin.post("/{agent_id}/adoptions/{source_key}/ignore")
+    def ignore_adopted_endpoint(agent_id: str, source_key: str, data: AdoptIgnoreRequest):
+        try:
+            return store_provider().set_adoption_ignored(agent_id, source_key, ignored=data.ignored)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Cannot change ignore status for this endpoint") from None
+
+    @admin.post("/{agent_id}/adoptions/{source_key}/disable")
+    def disable_adopted_endpoint(agent_id: str, source_key: str, data: AdoptDisableRequest):
+        try:
+            return store_provider().disable_adopted_endpoint(agent_id, source_key, data.request_id)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Cannot disable host service for this endpoint") from None
 
     @admin.post("/{agent_id}/adoptions/{source_key}/return")
     def return_adopted_endpoint(agent_id: str, source_key: str, data: AdoptReturnRequest):

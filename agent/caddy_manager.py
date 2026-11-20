@@ -1,8 +1,10 @@
 """Isolated Caddy camouflage and TLS reverse-proxy configuration manager."""
+import html
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
+import shutil
 import urllib.parse
 
 from .acme_manager import (
@@ -30,6 +32,13 @@ DEFAULT_CADDY_STATE_DIR = Path('/var/lib/proxyforge-runtime/services/caddy/state
 SITE_ID_PATTERN = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z')
 UNSAFE_CADDYFILE_CHARS = re.compile(r'[\x00-\x1f\x7f{};"\'\\\r\n]')
 ALLOWED_TLS_MODES = frozenset(('none', 'acme_http', 'acme_dns', 'selfsigned', 'caddy_acme', 'custom'))
+CAMOUFLAGE_MODES = ('template', 'proxy', 'static_dir')
+CAMOUFLAGE_TEMPLATES = ('corporate', 'blog', 'status', 'nginx')
+_FORBIDDEN_STATIC_PREFIXES = (
+    '/etc', '/proc', '/sys', '/dev', '/run', '/root', '/boot',
+    '/bin', '/sbin', '/usr', '/lib', '/lib64',
+    '/var/lib/proxyforge-runtime', '/opt/proxyforge-agent',
+)
 
 
 class CaddyError(ValueError):
@@ -40,6 +49,104 @@ def _assert_safe_token(value, label):
     if not isinstance(value, str) or not value or UNSAFE_CADDYFILE_CHARS.search(value) or any(ch.isspace() for ch in value):
         raise CaddyError(f'Unsafe Caddyfile token for {label}')
     return value
+
+
+def validate_camouflage_dir(path):
+    """Validate optional custom static site root directory against traversal and system paths."""
+    if not path:
+        return ''
+    if not isinstance(path, str) or len(path) > 200 or UNSAFE_CADDYFILE_CHARS.search(path) or any(ch.isspace() for ch in path):
+        raise CaddyError('Invalid camouflage static directory')
+    if not path.startswith('/'):
+        raise CaddyError('Camouflage static directory must be an absolute POSIX path')
+    parsed = PurePosixPath(path)
+    if '..' in parsed.parts or len(parsed.parts) < 2:
+        raise CaddyError('Camouflage static directory cannot use root or parent traversal')
+    normalized = parsed.as_posix().rstrip('/')
+    if not normalized or normalized == '/':
+        raise CaddyError('Camouflage static directory cannot be root')
+    for prefix in _FORBIDDEN_STATIC_PREFIXES:
+        if normalized == prefix or normalized.startswith(prefix + '/'):
+            raise CaddyError('Camouflage static directory points to a restricted system path')
+    return normalized
+
+
+def render_camouflage_html(template_name='corporate', domain=''):
+    """Generate a realistic, self-contained HTML5 camouflage page with zero external dependencies."""
+    tpl = template_name if template_name in CAMOUFLAGE_TEMPLATES else 'corporate'
+    safe_host = html.escape(str(domain or 'cloud-edge.local'))
+    brand = html.escape((str(domain or 'Northstar Cloud').split('.')[0] or 'Northstar').replace('-', ' ').title())
+    if tpl == 'nginx':
+        return (
+            '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<title>Welcome</title><style>body{width:35em;margin:4em auto;font-family:system-ui,sans-serif;color:#222;line-height:1.6}</style>'
+            '</head><body><h1>Welcome</h1><p>If you see this page, the web server is successfully installed and working.</p>'
+            f'<p><small>{safe_host}</small></p></body></html>\n'
+        )
+    if tpl == 'status':
+        return (
+            '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>{brand} Status</title>'
+            '<style>body{margin:0;background:#f8fafc;color:#0f172a;font-family:system-ui,-apple-system,sans-serif}'
+            '.wrap{max-width:760px;margin:48px auto;padding:0 20px}.banner{background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;padding:16px 20px;border-radius:10px;font-weight:600}'
+            '.card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;margin-top:20px;overflow:hidden}'
+            '.row{display:flex;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #f1f5f9}.row:last-child{border-bottom:0}'
+            '.ok{color:#059669;font-weight:600;font-size:14px}footer{margin-top:28px;color:#64748b;font-size:13px}</style></head><body>'
+            f'<div class="wrap"><h1>{brand} System Status</h1>'
+            '<div class="banner">All Systems Operational</div>'
+            '<div class="card">'
+            '<div class="row"><span>Edge Routing &amp; CDN</span><span class="ok">Operational</span></div>'
+            '<div class="row"><span>Public API Gateway</span><span class="ok">Operational</span></div>'
+            '<div class="row"><span>Object Storage &amp; Sync</span><span class="ok">Operational</span></div>'
+            '<div class="row"><span>TLS Certificate Automation</span><span class="ok">Operational</span></div>'
+            '</div>'
+            f'<footer>Service host: {safe_host} &middot; 99.98% 30-day uptime</footer></div></body></html>\n'
+        )
+    if tpl == 'blog':
+        return (
+            '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>{brand} Engineering Notes</title>'
+            '<style>body{margin:0;background:#fff;color:#1e293b;font-family:Georgia,serif;line-height:1.75}'
+            'header{border-bottom:1px solid #e2e8f0;padding:24px 20px}main{max-width:720px;margin:32px auto;padding:0 20px}'
+            'h1{margin:0;font-family:system-ui,sans-serif;font-size:26px}article{margin-bottom:28px;padding-bottom:24px;border-bottom:1px solid #f1f5f9}'
+            'h2{font-family:system-ui,sans-serif;font-size:20px;margin:0 0 6px}time{color:#64748b;font-size:13px;font-family:system-ui,sans-serif}'
+            'footer{max-width:720px;margin:32px auto;padding:0 20px;color:#64748b;font-size:13px;font-family:system-ui,sans-serif}</style></head><body>'
+            f'<header><div style="max-width:720px;margin:0 auto"><h1>{brand} Notes</h1></div></header>'
+            '<main>'
+            '<article><time>November 2026</time><h2>Tuning Linux TCP BBR and Socket Buffers for High-BDP Links</h2>'
+            '<p>A practical look at pacing, congestion window growth, and clean sysctl defaults across modern Debian kernels.</p></article>'
+            '<article><time>October 2026</time><h2>Zero-Downtime Configuration Reloads with Atomic Symlinks</h2>'
+            '<p>How staging configuration revisions into immutable directories prevents half-written state during service restarts.</p></article>'
+            '<article><time>September 2026</time><h2>Notes on HTTP/2 Multiplexing and TLS 1.3 Handshake Latency</h2>'
+            '<p>Measuring connection reuse and session resumption across regional points of presence.</p></article>'
+            '</main>'
+            f'<footer>&copy; 2026 {safe_host}</footer></body></html>\n'
+        )
+    # Default: 'corporate'
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        f'<title>{brand} &mdash; Cloud Infrastructure &amp; Telemetry</title>'
+        '<style>body{margin:0;background:#0f172a;color:#e2e8f0;font-family:system-ui,-apple-system,sans-serif}'
+        'nav{max-width:960px;margin:0 auto;padding:20px;display:flex;justify-content:space-between;align-items:center}'
+        '.hero{max-width:960px;margin:48px auto;padding:0 20px}.hero h1{font-size:36px;margin:0 0 12px;color:#f8fafc}'
+        '.hero p{max-width:620px;color:#94a3b8;font-size:17px;line-height:1.65}'
+        '.grid{max-width:960px;margin:36px auto;padding:0 20px;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}'
+        '.card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:20px}.card h3{margin:0 0 8px;color:#f8fafc;font-size:17px}'
+        '.card p{margin:0;color:#94a3b8;font-size:14px;line-height:1.6}footer{max-width:960px;margin:48px auto 32px;padding:0 20px;color:#64748b;font-size:13px}</style></head><body>'
+        f'<nav><strong>{brand}</strong><span style="color:#94a3b8;font-size:14px">{safe_host}</span></nav>'
+        '<section class="hero"><h1>Reliable Edge Compute &amp; Observability</h1>'
+        '<p>Automated TLS lifecycle management, low-latency regional routing, and deterministic configuration delivery for distributed engineering teams.</p></section>'
+        '<section class="grid">'
+        '<div class="card"><h3>Deterministic Deployments</h3><p>Immutable release artifacts with automated health verification and instant rollback.</p></div>'
+        '<div class="card"><h3>Edge Telemetry</h3><p>Lightweight host metrics and encrypted transport diagnostics with minimal overhead.</p></div>'
+        '<div class="card"><h3>Zero-Trust Isolation</h3><p>Least-privilege service boundaries and strict certificate automation out of the box.</p></div>'
+        '</section>'
+        f'<footer>&copy; 2026 {brand} Infrastructure &middot; {safe_host}</footer></body></html>\n'
+    )
 
 
 def validate_camouflage_url(url):
@@ -105,6 +212,25 @@ def validate_site_spec(spec):
         raise CaddyError('Invalid Caddy reverse-proxy backend port')
     ws_path = validate_ws_path(spec.get('ws_path', '/')) if backend_port is not None else ''
     camouflage = validate_camouflage_url(spec.get('camouflage_url', ''))
+    camouflage_dir = validate_camouflage_dir(spec.get('camouflage_dir', ''))
+    raw_mode = spec.get('camouflage_mode', '')
+    if raw_mode:
+        if raw_mode not in CAMOUFLAGE_MODES:
+            raise CaddyError('Unsupported camouflage mode')
+        camouflage_mode = raw_mode
+    elif camouflage_dir:
+        camouflage_mode = 'static_dir'
+    elif camouflage:
+        camouflage_mode = 'proxy'
+    else:
+        camouflage_mode = 'template'
+    if camouflage_mode == 'proxy' and not camouflage:
+        raise CaddyError('Proxy camouflage mode requires camouflage_url')
+    if camouflage_mode == 'static_dir' and not camouflage_dir:
+        raise CaddyError('Static directory camouflage mode requires camouflage_dir')
+    camouflage_template = spec.get('camouflage_template', 'corporate') or 'corporate'
+    if camouflage_template not in CAMOUFLAGE_TEMPLATES:
+        raise CaddyError('Unsupported camouflage template')
     try:
         email = validate_email(spec.get('email', ''))
     except AcmeError as exc:
@@ -117,7 +243,10 @@ def validate_site_spec(spec):
         'tls_mode': tls_mode,
         'backend_port': backend_port,
         'ws_path': ws_path,
-        'camouflage_url': camouflage,
+        'camouflage_mode': camouflage_mode,
+        'camouflage_template': camouflage_template,
+        'camouflage_url': camouflage if camouflage_mode == 'proxy' else '',
+        'camouflage_dir': camouflage_dir if camouflage_mode == 'static_dir' else '',
         'email': email,
     }
     if tls_mode == 'custom':
@@ -138,7 +267,7 @@ def validate_site_spec(spec):
     return normalized
 
 
-def _format_site_block(site, cert_pair=None):
+def _format_site_block(site, cert_pair=None, *, static_root=''):
     try:
         domain = validate_domain(site['domain'])
     except AcmeError as exc:
@@ -158,13 +287,29 @@ def _format_site_block(site, cert_pair=None):
         key_file = _assert_safe_token(str(cert_pair[1]), 'key_file')
         lines.append(f'\ttls {cert_file} {key_file}')
 
+    camouflage_mode = site.get('camouflage_mode') or (
+        'static_dir' if site.get('camouflage_dir') else ('proxy' if site.get('camouflage_url') else 'template')
+    )
     camouflage_url = validate_camouflage_url(site.get('camouflage_url', ''))
-    if camouflage_url:
+    camouflage_dir = validate_camouflage_dir(site.get('camouflage_dir', ''))
+    if camouflage_mode == 'proxy' and camouflage_url:
         upstream_host = urllib.parse.urlsplit(camouflage_url).netloc
         camouflage_lines = [
             f'reverse_proxy {camouflage_url} {{',
             f'\theader_up Host {upstream_host}',
             '}',
+        ]
+    elif camouflage_mode == 'static_dir' and camouflage_dir:
+        safe_dir = _assert_safe_token(camouflage_dir, 'camouflage_dir')
+        camouflage_lines = [
+            f'root * {safe_dir}',
+            'file_server',
+        ]
+    elif static_root:
+        safe_root = _assert_safe_token(str(static_root), 'static_root')
+        camouflage_lines = [
+            f'root * {safe_root}',
+            'file_server',
         ]
     else:
         camouflage_lines = [
@@ -196,6 +341,7 @@ def render_caddyfile(
     sites,
     *,
     cert_pairs=None,
+    static_roots=None,
     admin_socket='',
     storage_dir='',
     email='',
@@ -203,6 +349,7 @@ def render_caddyfile(
 ):
     """Render a deterministic, injection-safe Caddyfile for all managed camouflage sites."""
     cert_pairs = cert_pairs or {}
+    static_roots = static_roots or {}
     normalized_sites = [validate_site_spec(item) for item in sites]
     normalized_sites.sort(key=lambda item: item['site_id'])
     seen_listeners = {}
@@ -242,7 +389,7 @@ def render_caddyfile(
         pair = cert_pairs.get(site['site_id'])
         if pair is None and site['tls_mode'] == 'custom':
             pair = (site['cert_path'], site['key_path'])
-        blocks.append(_format_site_block(site, pair))
+        blocks.append(_format_site_block(site, pair, static_root=static_roots.get(site['site_id'], '')))
     return '\n\n'.join(blocks) + '\n'
 
 
@@ -267,6 +414,33 @@ class CaddyManager:
     @property
     def certs_dir(self):
         return self.state_dir.parent / 'certs'
+
+    @property
+    def www_dir(self):
+        return self.state_dir.parent / 'www'
+
+    def _stage_template_sites(self, sites):
+        roots = {}
+        for site_id, site in sites.items():
+            if site.get('camouflage_mode', 'template') != 'template':
+                continue
+            www_root = _private_dir(self.www_dir)
+            if os.name == 'posix':
+                www_root.chmod(0o750)
+                if self.service_gid is not None:
+                    os.chown(www_root, 0, self.service_gid)
+            site_dir = _private_dir(www_root / site_id)
+            if os.name == 'posix':
+                site_dir.chmod(0o750)
+                if self.service_gid is not None:
+                    os.chown(site_dir, 0, self.service_gid)
+            index_file = site_dir / 'index.html'
+            content = render_camouflage_html(site.get('camouflage_template', 'corporate'), domain=site.get('domain', ''))
+            atomic_write_bytes(index_file, content.encode('utf-8'), mode=0o640)
+            if os.name == 'posix' and self.service_gid is not None:
+                os.chown(index_file, 0, self.service_gid)
+            roots[site_id] = site_dir.as_posix()
+        return roots
 
     def _sites_path(self):
         return self.state_dir / 'sites.json'
@@ -345,18 +519,26 @@ class CaddyManager:
             for site_id, spec in sites.items()
             if spec.get('tls_mode', 'acme_http') not in ('none', 'caddy_acme')
         }
+        placeholder_roots = {
+            site_id: (self.www_dir / site_id).as_posix()
+            for site_id, spec in sites.items()
+            if spec.get('camouflage_mode', 'template') == 'template'
+        }
         preflight_caddyfile = render_caddyfile(
             list(sites.values()),
             cert_pairs=placeholder_pairs,
+            static_roots=placeholder_roots,
             admin_socket=admin_socket,
             storage_dir=storage_dir,
         )
         validate_port_allocation(SERVICE_CADDY, preflight_caddyfile, service_roots=self.service_roots)
 
         cert_pairs = self._resolve_cert_pairs(sites, renew=renew)
+        static_roots = self._stage_template_sites(sites)
         caddyfile = render_caddyfile(
             list(sites.values()),
             cert_pairs=cert_pairs,
+            static_roots=static_roots,
             admin_socket=admin_socket,
             storage_dir=storage_dir,
         )
@@ -402,6 +584,9 @@ class CaddyManager:
         self.save_sites(sites)
         for suffix in ('.crt', '.key'):
             (self.certs_dir / (site_id + suffix)).unlink(missing_ok=True)
+        site_www = self.www_dir / site_id
+        if site_www.exists() and not site_www.is_symlink():
+            shutil.rmtree(site_www, ignore_errors=True)
         if self.certs_dir.exists():
             sync_directory(self.certs_dir)
         return caddyfile

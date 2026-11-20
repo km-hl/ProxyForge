@@ -24,9 +24,10 @@ from .runtime_spec import (
     SERVICE_GOST,
     SERVICE_SINGBOX,
     job_service,
+    revision,
     validate_runtime_job,
 )
-from .deployment_spec import runtime_config
+from .deployment_spec import runtime_config, spec_hash
 from .landing_spec import build_caddy_site_for_landing, deployment_tls_plan, runtime_config as landing_config
 from .chain_spec import CHAIN_ACTIONS, runtime_config as chain_config
 from .gost_manager import GOST_CONFIG_ACTIONS, render_gost_config
@@ -942,6 +943,13 @@ class RuntimeCoordinator:
             return result
 
         spec = job['deployment']
+        for item in spec.get('disabled_adoptions') or []:
+            if item.get('original_service'):
+                adopt_host_service(
+                    item['original_service'],
+                    item.get('original_config_path', ''),
+                    item['source_key'],
+                )
         for item in spec.get('adopted_nodes') or []:
             if item.get('original_service'):
                 try:
@@ -952,6 +960,27 @@ class RuntimeCoordinator:
                     )
                 except Exception:
                     pass
+
+        if spec.get('adopted_only') is True and not (spec.get('adopted_nodes') or []):
+            has_current = bool(getattr(singbox_engine, 'pointer', lambda _k: None)('current'))
+            if has_current:
+                rem_payload = {**job['payload'], 'spec_hash': spec_hash({})}
+                remove_job = {
+                    **job,
+                    'type': 'landing.remove',
+                    'payload': rem_payload,
+                    'deployment': {},
+                    'deployment_revision': revision(job['id'], 'landing.remove', rem_payload),
+                }
+                singbox_result = singbox_engine.apply(remove_job, guard)
+            else:
+                singbox_result = {'status': 'success', 'output': singbox_engine.status(), 'error': None}
+            for sk in spec.get('returned_adoptions') or []:
+                try:
+                    return_host_service(sk)
+                except Exception:
+                    pass
+            return singbox_result
 
         overrides, staged_primary, deferred_primary = self._prepare_node_tls_and_caddy(
             spec, 'landing', caddy_job_id, guard

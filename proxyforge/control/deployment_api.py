@@ -79,8 +79,8 @@ class LandingKeyHelperRequest(Payload):
 
 def attach_deployment_routes(app, admin, store_provider):
     @admin.get('/managed/nodes')
-    def managed_nodes():
-        return {'nodes': store_provider().managed_inventory()}
+    def managed_nodes(include_discovered: bool = False):
+        return {'nodes': store_provider().managed_inventory(include_discovered=include_discovered)}
 
     @admin.get('/deployments/landings')
     def chain_landings():

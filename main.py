@@ -566,7 +566,63 @@ def control_store():
     return ControlStore(Path(DATA_DIR) / "proxyforge.db")
 
 
-attach_agent_routes(app, verify_api_token, control_store)
+def _replace_manual_node_on_adoption(old_name: str, new_name: str) -> Dict[str, Any]:
+    """Atomically remove a matched manual node and re-point template proxy-group references."""
+    old_clean = str(old_name or "").strip()
+    new_clean = str(new_name or "").strip()
+    if not old_clean or not new_clean:
+        return {"replaced": False, "migrated_groups": 0}
+    with configuration_lock():
+        existing_manual = load_manual_nodes()
+        remaining = [
+            n for n in existing_manual
+            if not (isinstance(n, dict) and str(n.get("name") or "").strip() == old_clean)
+        ]
+        if len(remaining) == len(existing_manual):
+            return {"replaced": False, "migrated_groups": 0}
+        updates = {
+            "custom_nodes.yaml": yaml.safe_dump(
+                [strip_internal_proxy_fields(n) for n in remaining],
+                allow_unicode=True,
+                sort_keys=False,
+            )
+        }
+        migrated_groups = 0
+        raw_tpl = load_template_content()
+        if raw_tpl:
+            try:
+                tpl_obj = yaml.safe_load(raw_tpl)
+            except yaml.YAMLError:
+                tpl_obj = None
+            if isinstance(tpl_obj, dict) and isinstance(tpl_obj.get("proxy-groups"), list):
+                changed_tpl = False
+                for grp in tpl_obj["proxy-groups"]:
+                    if not isinstance(grp, dict) or not isinstance(grp.get("proxies"), list):
+                        continue
+                    proxies_list = grp["proxies"]
+                    if old_clean not in proxies_list:
+                        continue
+                    next_proxies = []
+                    for entry in proxies_list:
+                        candidate = new_clean if entry == old_clean else entry
+                        if candidate not in next_proxies:
+                            next_proxies.append(candidate)
+                    grp["proxies"] = next_proxies
+                    migrated_groups += 1
+                    changed_tpl = True
+                if changed_tpl:
+                    updates["template.yaml"] = yaml.safe_dump(tpl_obj, allow_unicode=True, sort_keys=False)
+        template_store().commit(updates, source="adopt_replace_manual")
+        return {"replaced": True, "old_name": old_clean, "new_name": new_clean, "migrated_groups": migrated_groups}
+
+
+attach_agent_routes(
+    app,
+    verify_api_token,
+    control_store,
+    manual_nodes_reader=load_manual_nodes,
+    replace_manual_node=_replace_manual_node_on_adoption,
+)
 app.include_router(create_sub_user_router(verify_management=verify_api_token, store_provider=control_store))
 
 # ================= 后台定时刷新任务 =================

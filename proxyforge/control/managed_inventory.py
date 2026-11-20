@@ -9,6 +9,69 @@ from proxyforge.control.deployment_store import PROJECTABLE_LANDING_PROTOCOLS
 from proxyforge.control.job_store import JobConflict, JobNotFound
 
 _KIND_ORDER = {'direct': 0, 'chain': 1, 'adopted': 2}
+_AUXILIARY_PROTOCOLS = frozenset(('caddy-site', 'dokodemo-door'))
+_LOOPBACK_HOSTS = frozenset(('127.0.0.1', '::1', 'localhost'))
+
+
+def _match_manual_node(row, creds, agent_ips_set, manual_nodes):
+    """Match a discovered/adopted host endpoint against existing manual nodes without leaking secrets."""
+    if not manual_nodes:
+        return '', ''
+    ep_port = int(row['listen_port'] or 0)
+    ep_sni = str(row['sni'] or '').strip().lower()
+    ep_uuid = str((creds or {}).get('uuid') or '').strip().lower()
+    ep_pw = str((creds or {}).get('password') or '').strip()
+    ep_rpub = str((creds or {}).get('reality_public_key') or '').strip()
+    ep_adoptable = bool(row['adoptable'])
+
+    # Pass 1: high-precision credential fingerprint match (works even behind SNI-mux / port-forwarding).
+    if ep_rpub or ep_uuid or len(ep_pw) >= 6:
+        for m in manual_nodes:
+            if not isinstance(m, dict):
+                continue
+            m_name = str(m.get('name') or '').strip()
+            if not m_name:
+                continue
+            m_srv = str(m.get('server') or '').strip().lower()
+            try:
+                m_port = int(m.get('port') or 0)
+            except (TypeError, ValueError):
+                m_port = 0
+            m_uuid = str(m.get('uuid') or '').strip().lower()
+            m_pw = str(m.get('password') or '').strip()
+            m_rpub = str(((m.get('reality-opts') or {}).get('public-key')) or '').strip()
+            m_sni = str(m.get('servername') or m.get('sni') or '').strip().lower()
+            host_or_sni_ok = (
+                (m_srv and m_srv in agent_ips_set)
+                or (ep_sni and (m_sni == ep_sni or m_srv == ep_sni))
+                or (ep_port and m_port == ep_port)
+            )
+            if ep_rpub and m_rpub == ep_rpub and (not ep_uuid or m_uuid == ep_uuid):
+                return m_name, 'credential'
+            if ep_uuid and m_uuid == ep_uuid and host_or_sni_ok:
+                return m_name, 'credential'
+            if len(ep_pw) >= 6 and m_pw == ep_pw and host_or_sni_ok:
+                return m_name, 'credential'
+
+    # Pass 2: endpoint host/SNI + listen_port match for adoptable endpoints.
+    if ep_adoptable and ep_port:
+        for m in manual_nodes:
+            if not isinstance(m, dict):
+                continue
+            m_name = str(m.get('name') or '').strip()
+            if not m_name:
+                continue
+            m_srv = str(m.get('server') or '').strip().lower()
+            try:
+                m_port = int(m.get('port') or 0)
+            except (TypeError, ValueError):
+                continue
+            if m_port != ep_port:
+                continue
+            m_sni = str(m.get('servername') or m.get('sni') or '').strip().lower()
+            if (m_srv and m_srv in agent_ips_set) or (ep_sni and (m_srv == ep_sni or m_sni == ep_sni)):
+                return m_name, 'endpoint'
+    return '', ''
 
 
 def migrate_adoptions(db):
@@ -75,7 +138,7 @@ class ManagedInventoryMixin:
         active_adopted_keys = [
             row['source_key']
             for row in db.execute(
-                "SELECT source_key FROM adopted_node_secrets WHERE agent_id=? AND adopted_status='adopted'",
+                "SELECT source_key FROM adopted_node_secrets WHERE agent_id=? AND adopted_status IN ('adopted','disabled')",
                 (agent_id,),
             )
         ]
@@ -172,6 +235,7 @@ class ManagedInventoryMixin:
             decrypted = self._decrypt_spec(db, sec['secret_spec'])
             if not isinstance(decrypted.get('inbound'), dict) or not decrypted['inbound'].get('listen_port'):
                 raise ValueError('Endpoint inbound configuration cannot be merged into sing-box')
+            final_custom_name = (custom_name or '').strip() or (sec['custom_name'] or '')
             db.execute(
                 '''UPDATE adopted_node_secrets
                    SET adopted_status='adopted',
@@ -182,7 +246,94 @@ class ManagedInventoryMixin:
                 (custom_name, custom_name, server_override, server_override, self.clock(), agent_id, source_key),
             )
             self._audit(db, 'adoption_applied', agent_id)
-            return self._dispatch_aggregated_runtime(db, agent_id, request_id)
+            res = self._dispatch_aggregated_runtime(db, agent_id, request_id)
+            if isinstance(res, dict):
+                res['adopted_display_name'] = self._adopted_node_display_name(ep, final_custom_name)
+            return res
+
+    def set_adoption_ignored(self, agent_id, source_key, *, ignored=True):
+        with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            ep = db.execute(
+                'SELECT * FROM adopted_nodes WHERE agent_id=? AND source_key=?',
+                (agent_id, source_key),
+            ).fetchone()
+            if not ep:
+                raise JobNotFound()
+            existing = db.execute(
+                'SELECT adopted_status,secret_spec,custom_name,server_override FROM adopted_node_secrets WHERE agent_id=? AND source_key=?',
+                (agent_id, source_key),
+            ).fetchone()
+            if existing and existing['adopted_status'] in ('adopted', 'disabled'):
+                raise ValueError('Cannot change ignore state of an adopted or disabled endpoint')
+            next_status = 'ignored' if ignored else 'discovered'
+            now = self.clock()
+            if existing:
+                db.execute(
+                    'UPDATE adopted_node_secrets SET adopted_status=?, updated_at=? WHERE agent_id=? AND source_key=?',
+                    (next_status, now, agent_id, source_key),
+                )
+            else:
+                db.execute(
+                    '''INSERT INTO adopted_node_secrets(
+                           agent_id,source_key,secret_spec,adopted_status,custom_name,server_override,updated_at
+                       ) VALUES(?,?,?,?,?,?,?)''',
+                    (agent_id, source_key, '', next_status, '', '', now),
+                )
+            self._audit(db, 'adoption_ignored' if ignored else 'adoption_unignored', agent_id)
+            return {'status': 'ok', 'source_key': source_key, 'adopted_status': next_status}
+
+    def disable_adopted_endpoint(self, agent_id, source_key, request_id):
+        from agent.adoption import MANAGED_UNIT_PREFIX, SYSTEMD_SERVICE_RE
+        with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            ep = db.execute(
+                'SELECT * FROM adopted_nodes WHERE agent_id=? AND source_key=?',
+                (agent_id, source_key),
+            ).fetchone()
+            if not ep:
+                raise JobNotFound()
+            svc = (ep['service_name'] or '').strip()
+            if (not svc or len(svc) > 100 or not SYSTEMD_SERVICE_RE.fullmatch(svc) or
+                    svc in ('ssh.service', 'sshd.service') or svc.startswith(('systemd-', MANAGED_UNIT_PREFIX))):
+                raise ValueError('Endpoint has no safely stoppable host systemd service')
+            siblings = db.execute(
+                'SELECT source_key FROM adopted_nodes WHERE agent_id=? AND service_name=?',
+                (agent_id, svc),
+            ).fetchall()
+            sibling_keys = list(dict.fromkeys([source_key, *(r['source_key'] for r in siblings)]))
+            for sk in sibling_keys:
+                sec = db.execute(
+                    'SELECT adopted_status FROM adopted_node_secrets WHERE agent_id=? AND source_key=?',
+                    (agent_id, sk),
+                ).fetchone()
+                if sec and sec['adopted_status'] == 'adopted':
+                    raise ValueError('Return the adopted endpoint before disabling its host service')
+            now = self.clock()
+            for sk in sibling_keys:
+                db.execute(
+                    '''INSERT INTO adopted_node_secrets(
+                           agent_id,source_key,secret_spec,adopted_status,custom_name,server_override,updated_at
+                       ) VALUES(?,?,'','disabled','','',?)
+                       ON CONFLICT(agent_id, source_key) DO UPDATE SET
+                           adopted_status='disabled',updated_at=excluded.updated_at''',
+                    (agent_id, sk, now),
+                )
+            self._audit(db, 'adoption_disabled', agent_id)
+            res = self._dispatch_aggregated_runtime(
+                db,
+                agent_id,
+                request_id,
+                disabled_adoptions=[{
+                    'source_key': source_key,
+                    'original_service': svc,
+                    'original_config_path': ep['config_path'] or '',
+                }],
+            )
+            if isinstance(res, dict):
+                res['disabled_service'] = svc
+                res['affected_keys'] = sibling_keys
+            return res
 
     def return_adopted_endpoint(self, agent_id, source_key, request_id):
         with self.connection() as db:
@@ -193,13 +344,27 @@ class ManagedInventoryMixin:
             ).fetchone()
             if not ep:
                 raise JobNotFound()
-            db.execute(
-                "UPDATE adopted_node_secrets SET adopted_status='discovered', updated_at=? WHERE agent_id=? AND source_key=?",
-                (self.clock(), agent_id, source_key),
-            )
+            svc = (ep['service_name'] or '').strip()
+            return_keys = [source_key]
+            if svc:
+                for sib in db.execute(
+                    '''SELECT a.source_key
+                       FROM adopted_nodes a
+                       JOIN adopted_node_secrets s ON s.agent_id=a.agent_id AND s.source_key=a.source_key
+                       WHERE a.agent_id=? AND a.service_name=? AND s.adopted_status='disabled' ''',
+                    (agent_id, svc),
+                ).fetchall():
+                    if sib['source_key'] not in return_keys:
+                        return_keys.append(sib['source_key'])
+            now = self.clock()
+            for sk in return_keys:
+                db.execute(
+                    "UPDATE adopted_node_secrets SET adopted_status='discovered', updated_at=? WHERE agent_id=? AND source_key=?",
+                    (now, agent_id, sk),
+                )
             self._audit(db, 'adoption_returned', agent_id)
             return self._dispatch_aggregated_runtime(
-                db, agent_id, request_id, returned_adoptions=[source_key]
+                db, agent_id, request_id, returned_adoptions=return_keys
             )
 
     @staticmethod
@@ -360,7 +525,7 @@ class ManagedInventoryMixin:
                 })
         return nodes
 
-    def list_adopted_nodes(self, agent_id=None):
+    def list_adopted_nodes(self, agent_id=None, *, manual_nodes=None):
         with self.connection() as db:
             secrets_map = {
                 (r['agent_id'], r['source_key']): dict(r)
@@ -368,6 +533,15 @@ class ManagedInventoryMixin:
                     'SELECT agent_id,source_key,secret_spec,adopted_status,custom_name,server_override FROM adopted_node_secrets'
                 )
             }
+            agent_ip_sets = {}
+            for arow in db.execute('SELECT * FROM agents').fetchall():
+                view = self._view(arow)
+                ips = {
+                    str(v).strip().lower()
+                    for v in (view.get('public_ipv4'), view.get('public_ipv6'), arow['observed_ip'])
+                    if v and str(v).strip()
+                }
+                agent_ip_sets[arow['id']] = ips
             cipher = None
             if any(info.get('secret_spec') for info in secrets_map.values()):
                 try:
@@ -381,14 +555,22 @@ class ManagedInventoryMixin:
             result = []
             for row in rows:
                 s_info = secrets_map.get((row['agent_id'], row['source_key'])) or {}
+                creds = {}
                 has_xray_xver = False
                 if cipher is not None and s_info.get('secret_spec'):
                     try:
                         blob = json.loads(cipher.decrypt(s_info['secret_spec'].encode('utf-8')).decode('utf-8'))
-                        creds = blob.get('credentials') if isinstance(blob, dict) and isinstance(blob.get('credentials'), dict) else blob
+                        creds = blob.get('credentials') if isinstance(blob, dict) and isinstance(blob.get('credentials'), dict) else (blob if isinstance(blob, dict) else {})
                         has_xray_xver = bool((creds or {}).get('xray_xver'))
                     except Exception:
+                        creds = {}
                         has_xray_xver = False
+                is_aux = bool(row['core'] == 'caddy' or row['protocol'] in _AUXILIARY_PROTOCOLS)
+                matched_name, matched_reason = (
+                    _match_manual_node(row, creds, agent_ip_sets.get(row['agent_id'], set()), manual_nodes)
+                    if (manual_nodes and not is_aux)
+                    else ('', '')
+                )
                 result.append({
                     **{k: row[k] for k in (
                         'id', 'agent_id', 'source_key', 'core', 'service_name', 'config_path',
@@ -396,15 +578,18 @@ class ManagedInventoryMixin:
                         'tls_mode', 'sni', 'network', 'ws_path', 'discovered_at', 'updated_at',
                     )},
                     'adoptable': bool(row['adoptable']),
+                    'is_auxiliary': is_aux,
                     'has_credentials': bool(s_info.get('secret_spec')),
                     'has_xray_xver': has_xray_xver,
                     'adopted_status': s_info.get('adopted_status', 'discovered'),
                     'custom_name': s_info.get('custom_name', ''),
                     'server_override': s_info.get('server_override', ''),
+                    'matched_manual_name': matched_name,
+                    'matched_manual_reason': matched_reason,
                 })
             return result
 
-    def managed_inventory(self):
+    def managed_inventory(self, *, include_discovered=True):
         with self.connection() as db:
             db.execute('BEGIN IMMEDIATE')
             for row in db.execute("SELECT DISTINCT agent_id FROM jobs WHERE status IN ('pending','assigned','running')").fetchall():
@@ -485,8 +670,14 @@ class ManagedInventoryMixin:
                 agent = agents[row['agent_id']]
                 s_info = adopted_secrets.get((row['agent_id'], row['source_key'])) or {}
                 is_adopted_active = s_info.get('adopted_status') == 'adopted'
+                if not include_discovered and not is_adopted_active:
+                    continue
                 has_creds = bool(s_info.get('secret_spec'))
-                srv = (s_info.get('server_override') or '').strip() or agent_ips.get(row['agent_id'], '')
+                listen_addr = str(row['listen'] or '').strip()
+                if not is_adopted_active and listen_addr in _LOOPBACK_HOSTS:
+                    srv = listen_addr
+                else:
+                    srv = (s_info.get('server_override') or '').strip() or agent_ips.get(row['agent_id'], '')
                 disp_name = (
                     self._adopted_node_display_name(row, s_info.get('custom_name', ''))
                     if is_adopted_active

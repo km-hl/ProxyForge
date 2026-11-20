@@ -25,18 +25,23 @@ def has_country_flag(name: str) -> bool:
     return False
 
 
+_CASE_SENSITIVE_SHORT_CODES = frozenset({"in", "id", "no", "at", "it"})
+
+
 def keyword_matches_name(name: str, keyword: str) -> bool:
     import re
     if any(ord(char) > 127 for char in keyword):
         return keyword in name
-    return re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", name) is not None
+    if keyword in _CASE_SENSITIVE_SHORT_CODES:
+        return re.search(rf"(?<![A-Za-z0-9]){re.escape(keyword.upper())}(?![A-Za-z0-9])", name) is not None
+    return re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", name.lower()) is not None
 
 
 def add_flag_to_proxy_name(name: str) -> str:
     if not name or has_country_flag(name):
         return name
 
-    lower_name = str(name).lower()
+    raw_name = str(name)
     flag_keywords = [
         ("\U0001F1ED\U0001F1F0", ["hk", "hkg", "hong kong", "hongkong", "香港", "港"]),
         ("\U0001F1F2\U0001F1F4", ["mo", "macau", "macao", "澳门", "澳門"]),
@@ -77,7 +82,7 @@ def add_flag_to_proxy_name(name: str) -> str:
     ]
 
     for flag, keywords in flag_keywords:
-        if any(keyword_matches_name(lower_name, keyword) for keyword in keywords):
+        if any(keyword_matches_name(raw_name, keyword) for keyword in keywords):
             return f"{flag} {name}"
     return name
 

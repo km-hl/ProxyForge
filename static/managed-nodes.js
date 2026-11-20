@@ -29,9 +29,10 @@ const ProxyForgeManagedNodes = (() => {
         const query = document.getElementById('managed-node-search').value;
         const filter = document.getElementById('managed-node-filter').value;
         target.replaceChildren();
-        const visible = rows.filter(node => matches(node, query, filter));
+        const activeRows = rows.filter(node => node.kind !== 'adopted' || node.adopted_status === 'adopted');
+        const visible = activeRows.filter(node => matches(node, query, filter));
         if (!visible.length) {
-            target.textContent = rows.length ? '没有符合条件的托管节点。' : '暂无托管节点。请在 Agent 服务器页面部署直连节点或添加链路。';
+            target.textContent = activeRows.length ? '没有符合条件的托管节点。' : '暂无已生效的 Agent 托管节点。请在「Agent 服务器」部署新节点，或在「接管」中完成存量节点接管。';
             return;
         }
         function text(parent, tag, value, className) {
