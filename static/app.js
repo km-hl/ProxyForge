@@ -1871,6 +1871,12 @@ window.editNode = function(index) {
             let val = document.getElementById('m-node-raw').value.trim();
             const regionRaw = (document.getElementById('m-node-region')?.value || '').trim();
             let parsed;
+            if (typeof ProxyForgeShareLinks !== 'undefined' && !val.includes('\n') && !SHARE_LINK_PATTERN.test(val) && !val.includes(':')) {
+                const expandedSingle = ProxyForgeShareLinks.expandShareLinkInput(val);
+                if (expandedSingle.links.length === 1 && SHARE_LINK_PATTERN.test(expandedSingle.links[0])) {
+                    val = expandedSingle.links[0];
+                }
+            }
             if (SHARE_LINK_PATTERN.test(val)) {
                 const res = await fetchAuth('/parse-links', {
                     method: 'POST',
@@ -1921,9 +1927,19 @@ document.getElementById('btn-import-nodes').addEventListener('click', () => {
         try {
             let text = document.getElementById('m-nodes-import').value;
             const regionRaw = (document.getElementById('m-nodes-import-region')?.value || '').trim();
-            let lines = text.split('\n').map(s=>s.trim()).filter(s=>s);
-            let links = lines.filter(s => SHARE_LINK_PATTERN.test(s));
-            let nonLinksText = lines.filter(s => !SHARE_LINK_PATTERN.test(s)).join('\n');
+            let links = [];
+            let nonLinksText = '';
+            let skippedNotices = [];
+            if (typeof ProxyForgeShareLinks !== 'undefined') {
+                const splitRes = ProxyForgeShareLinks.splitImportInput(text, SHARE_LINK_PATTERN);
+                links = splitRes.links;
+                nonLinksText = splitRes.nonLinksText;
+                skippedNotices = splitRes.skippedNotices;
+            } else {
+                let lines = text.split('\n').map(s=>s.trim()).filter(s=>s);
+                links = lines.filter(s => SHARE_LINK_PATTERN.test(s));
+                nonLinksText = lines.filter(s => !SHARE_LINK_PATTERN.test(s)).join('\n');
+            }
             
             let toAdd = [];
             if(nonLinksText) {
@@ -1953,7 +1969,11 @@ document.getElementById('btn-import-nodes').addEventListener('click', () => {
                 state.nodes = state.nodes.concat(toAdd);
                 closeModal();
                 saveNodesObj();
-                showToast(`成功导入 ${toAdd.length} 个节点`);
+                showToast(
+                    skippedNotices.length
+                        ? `成功导入 ${toAdd.length} 个节点（已跳过 ${skippedNotices.length} 条状态提示行）`
+                        : `成功导入 ${toAdd.length} 个节点`
+                );
             } else {
                 alert('没有解析到任何有效节点');
             }

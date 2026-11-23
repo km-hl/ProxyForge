@@ -165,6 +165,137 @@ function _formatOutboundHopsSummary(settings, ssLandings) {
     return mode;
 }
 
+const SUPPORTED_EXTERNAL_SS_METHODS = [
+    '2022-blake3-aes-256-gcm',
+    '2022-blake3-aes-128-gcm',
+    'aes-256-gcm',
+    'aes-128-gcm',
+    'chacha20-ietf-poly1305',
+];
+
+function _createOutboundLinkRecognizer({ allowedKinds = ['ss', 'socks5'], onApplyNode }) {
+    const parser = typeof ProxyForgeShareLinks !== 'undefined' ? ProxyForgeShareLinks : null;
+    const wrap = document.createElement('div');
+    wrap.className = 'form-group full-width';
+    wrap.style.marginBottom = '6px';
+
+    const labelRow = document.createElement('div');
+    labelRow.style.display = 'flex';
+    labelRow.style.alignItems = 'center';
+    labelRow.style.justifyContent = 'space-between';
+    labelRow.style.gap = '8px';
+
+    const lbl = document.createElement('label');
+    lbl.textContent = '分享链接 / Base64 自动识别';
+    lbl.style.marginBottom = '0';
+
+    const parseBtn = document.createElement('button');
+    parseBtn.type = 'button';
+    parseBtn.className = 'btn btn-sm';
+    parseBtn.textContent = '识别填入';
+    labelRow.append(lbl, parseBtn);
+
+    const textarea = document.createElement('textarea');
+    textarea.rows = 2;
+    textarea.autocomplete = 'off';
+    textarea.className = 'pf-ephemeral-secret';
+    textarea.style.fontFamily = 'monospace';
+    textarea.style.fontSize = '0.82rem';
+    textarea.placeholder = '粘贴 ss:// / socks5:// / Base64 或多行含到期流量提示的内容';
+
+    const nodeSel = document.createElement('select');
+    nodeSel.hidden = true;
+    nodeSel.style.marginTop = '6px';
+
+    const statusEl = document.createElement('div');
+    statusEl.className = 'hint';
+    statusEl.hidden = true;
+    statusEl.style.marginTop = '4px';
+
+    let currentNodes = [];
+
+    function applyChosen(node, result) {
+        const warnings = [];
+        if (node.kind === 'ss' && !SUPPORTED_EXTERNAL_SS_METHODS.includes(node.method)) {
+            warnings.push(`sing-box 出站不支持加密方式 ${node.method}`);
+        }
+        if (node.plugin) {
+            warnings.push(`未兼容 SIP003 plugin (${node.plugin})`);
+        }
+        onApplyNode(node);
+
+        const parts = [`已识别 ${node.kind.toUpperCase()}${node.method ? ' (' + node.method + ')' : ''} · ${node.server}:${node.port}`];
+        if (result.decodedFromBase64) parts.push('Base64 已解码');
+        if (result.notices.length) parts.push(`已过滤信息：${result.notices.join(' · ')}`);
+        if (result.unsupportedSchemes.length) parts.push(`已跳过协议：${result.unsupportedSchemes.join(', ')}`);
+        if (warnings.length) parts.push(`⚠️ ${warnings.join('；')}`);
+        statusEl.hidden = false;
+        statusEl.textContent = parts.join(' | ');
+    }
+
+    function recognize(explicit) {
+        const raw = textarea.value.trim();
+        nodeSel.hidden = true;
+        nodeSel.replaceChildren();
+        currentNodes = [];
+        if (!raw) {
+            statusEl.hidden = true;
+            statusEl.textContent = '';
+            return;
+        }
+        if (!parser) {
+            statusEl.hidden = false;
+            statusEl.textContent = '链接解析模块未加载，请刷新页面重试';
+            return;
+        }
+        const result = parser.parseExternalOutboundInput(raw, { allowedKinds });
+        if (!result.nodes.length) {
+            if (!explicit && !raw.includes('://') && raw.length < 16) {
+                statusEl.hidden = true;
+                return;
+            }
+            const errParts = ['未识别到可用的 SS / Socks5 节点'];
+            if (result.notices.length) errParts.push(`仅包含信息行：${result.notices.join(' · ')}`);
+            if (result.unsupportedSchemes.length) errParts.push(`暂不支持作为外部出站：${result.unsupportedSchemes.join(', ')}`);
+            statusEl.hidden = false;
+            statusEl.textContent = errParts.join(' | ');
+            return;
+        }
+
+        currentNodes = result.nodes;
+        if (result.nodes.length > 1) {
+            result.nodes.forEach((n, idx) => {
+                const opt = document.createElement('option');
+                opt.value = String(idx);
+                opt.textContent = `${n.name} (${n.kind.toUpperCase()} · ${n.server}:${n.port})`;
+                nodeSel.append(opt);
+            });
+            nodeSel.hidden = false;
+            nodeSel.onchange = () => {
+                const picked = currentNodes[Number(nodeSel.value) || 0];
+                if (picked) applyChosen(picked, result);
+            };
+        }
+        applyChosen(result.nodes[0], result);
+    }
+
+    parseBtn.onclick = () => recognize(true);
+    textarea.addEventListener('input', () => recognize(false));
+
+    wrap.append(labelRow, textarea, nodeSel, statusEl);
+    return {
+        el: wrap,
+        clear() {
+            textarea.value = '';
+            nodeSel.hidden = true;
+            nodeSel.replaceChildren();
+            statusEl.hidden = true;
+            statusEl.textContent = '';
+            currentNodes = [];
+        },
+    };
+}
+
 function _createOutboundHopsEditor({ container, initialHops = [], ssLandings = [], currentAgentId = '' }) {
     const availableLandings = (ssLandings || []).filter(item => item.agent_id !== currentAgentId);
     const MAX_HOPS = 4;
@@ -332,32 +463,8 @@ function _createOutboundHopsEditor({ container, initialHops = [], ssLandings = [
                 iPort.oninput = () => { hop.port = Number(iPort.value) || 0; };
                 fgPort.append(lPort, iPort);
 
-                grid.append(fgSrv, fgPort);
-
-                if (hop.kind === 'ss') {
-                    const fgMethod = document.createElement('div');
-                    fgMethod.className = 'form-group';
-                    const lMethod = document.createElement('label'); lMethod.textContent = 'SS 加密方式';
-                    const sMethod = document.createElement('select');
-                    for (const m of ['2022-blake3-aes-256-gcm', '2022-blake3-aes-128-gcm', 'aes-256-gcm', 'chacha20-ietf-poly1305']) {
-                        const o = document.createElement('option'); o.value = m; o.textContent = m; sMethod.append(o);
-                    }
-                    sMethod.value = hop.method || '2022-blake3-aes-256-gcm';
-                    sMethod.onchange = () => { hop.method = sMethod.value; };
-                    fgMethod.append(lMethod, sMethod);
-                    grid.append(fgMethod);
-                } else {
-                    const fgUser = document.createElement('div');
-                    fgUser.className = 'form-group';
-                    const lUser = document.createElement('label'); lUser.textContent = 'Socks5 用户名 (可选)';
-                    const iUser = document.createElement('input');
-                    iUser.placeholder = 'username';
-                    iUser.value = hop.username || '';
-                    iUser.oninput = () => { hop.username = iUser.value.trim(); };
-                    fgUser.append(lUser, iUser);
-                    grid.append(fgUser);
-                }
-
+                let sMethod = null;
+                let iUser = null;
                 const fgPass = document.createElement('div');
                 fgPass.className = 'form-group';
                 const lPass = document.createElement('label'); lPass.textContent = '密码 (仅写入不回显)';
@@ -368,6 +475,62 @@ function _createOutboundHopsEditor({ container, initialHops = [], ssLandings = [
                 iPass.value = hop._password || '';
                 iPass.oninput = () => { hop._password = iPass.value; };
                 fgPass.append(lPass, iPass);
+
+                const linkRecognizer = _createOutboundLinkRecognizer({
+                    allowedKinds: ['ss', 'socks5'],
+                    onApplyNode(parsed) {
+                        const prevKind = hop.kind;
+                        hop.server = parsed.server;
+                        hop.port = parsed.port;
+                        hop._password = parsed.password || '';
+                        if (parsed.kind === 'ss') {
+                            hop.kind = 'ss';
+                            hop.method = SUPPORTED_EXTERNAL_SS_METHODS.includes(parsed.method)
+                                ? parsed.method
+                                : (hop.method || '2022-blake3-aes-256-gcm');
+                            delete hop.username;
+                        } else {
+                            hop.kind = 'socks5';
+                            hop.username = parsed.username || '';
+                            delete hop.method;
+                        }
+                        if (prevKind !== hop.kind) {
+                            renderEditor();
+                            return;
+                        }
+                        iSrv.value = hop.server;
+                        iPort.value = String(hop.port);
+                        iPass.value = hop._password;
+                        if (sMethod) sMethod.value = hop.method;
+                        if (iUser) iUser.value = hop.username || '';
+                    },
+                });
+                grid.append(linkRecognizer.el, fgSrv, fgPort);
+
+                if (hop.kind === 'ss') {
+                    const fgMethod = document.createElement('div');
+                    fgMethod.className = 'form-group';
+                    const lMethod = document.createElement('label'); lMethod.textContent = 'SS 加密方式';
+                    sMethod = document.createElement('select');
+                    for (const m of SUPPORTED_EXTERNAL_SS_METHODS) {
+                        const o = document.createElement('option'); o.value = m; o.textContent = m; sMethod.append(o);
+                    }
+                    sMethod.value = hop.method || '2022-blake3-aes-256-gcm';
+                    sMethod.onchange = () => { hop.method = sMethod.value; };
+                    fgMethod.append(lMethod, sMethod);
+                    grid.append(fgMethod);
+                } else {
+                    const fgUser = document.createElement('div');
+                    fgUser.className = 'form-group';
+                    const lUser = document.createElement('label'); lUser.textContent = 'Socks5 用户名 (可选)';
+                    iUser = document.createElement('input');
+                    iUser.placeholder = 'username';
+                    iUser.value = hop.username || '';
+                    iUser.oninput = () => { hop.username = iUser.value.trim(); };
+                    fgUser.append(lUser, iUser);
+                    grid.append(fgUser);
+                }
+
                 grid.append(fgPass);
             }
             card.append(grid);
@@ -1017,7 +1180,7 @@ async function showAgentDeployment(agent, initialNodeId = null) {
         '<option value="socks5">外部 Socks5 落地出站 (对接第三方住宅家宽)</option>' +
         '<option value="ss">外部 Shadowsocks 落地出站</option></select></div>' +
         '</div>' +
-        '<div id="deployment-outbound-proxy-fields" hidden><div class="form-grid">' +
+        '<div id="deployment-outbound-proxy-fields" hidden><div id="deployment-outbound-link-slot"></div><div class="form-grid">' +
         '<div class="form-group"><label>外部落地服务器地址</label><input id="deployment-out-server" placeholder="isp.example.com 或 IP"></div>' +
         '<div class="form-group"><label>外部落地端口</label><input id="deployment-out-port" type="number" min="1" max="65535" placeholder="1080"></div>' +
         '<div class="form-group" id="deployment-out-user-wrap"><label>Socks5 用户名 (可选)</label><input id="deployment-out-user" placeholder="username"></div>' +
@@ -1025,6 +1188,7 @@ async function showAgentDeployment(agent, initialNodeId = null) {
         '<option value="2022-blake3-aes-256-gcm">2022-blake3-aes-256-gcm</option>' +
         '<option value="2022-blake3-aes-128-gcm">2022-blake3-aes-128-gcm</option>' +
         '<option value="aes-256-gcm">aes-256-gcm</option>' +
+        '<option value="aes-128-gcm">aes-128-gcm</option>' +
         '<option value="chacha20-ietf-poly1305">chacha20-ietf-poly1305</option></select></div>' +
         '<div class="form-group"><label>外部落地密码 (仅写入不回显)</label><input id="deployment-out-pass" type="password" autocomplete="off" class="pf-ephemeral-secret" placeholder="留空保持原密码"></div>' +
         '</div></div>' +
@@ -1056,6 +1220,25 @@ async function showAgentDeployment(agent, initialNodeId = null) {
         ssLandings,
         currentAgentId: agent.id,
     });
+    const outLinkSlot = document.getElementById('deployment-outbound-link-slot');
+    const outLinkRecognizer = _createOutboundLinkRecognizer({
+        allowedKinds: ['ss', 'socks5'],
+        onApplyNode(parsed) {
+            outModeEl.value = parsed.kind;
+            document.getElementById('deployment-out-server').value = parsed.server;
+            document.getElementById('deployment-out-port').value = String(parsed.port);
+            document.getElementById('deployment-out-pass').value = parsed.password || '';
+            if (parsed.kind === 'ss') {
+                if (SUPPORTED_EXTERNAL_SS_METHODS.includes(parsed.method)) {
+                    document.getElementById('deployment-out-method').value = parsed.method;
+                }
+            } else {
+                document.getElementById('deployment-out-user').value = parsed.username || '';
+            }
+            render(false);
+        },
+    });
+    if (outLinkSlot) outLinkSlot.append(outLinkRecognizer.el);
 
     document.querySelectorAll('#deployment-ip-quick button[data-ip-val]').forEach(btn => {
         btn.onclick = () => {
@@ -1156,6 +1339,7 @@ async function showAgentDeployment(agent, initialNodeId = null) {
                 currentNodeId = n.id;
                 generatedKeyRef = null;
                 lastSyncedSharedHostKey = '';
+                outLinkRecognizer.clear();
                 render(true);
             };
             wrap.append(btn);
@@ -1168,6 +1352,7 @@ async function showAgentDeployment(agent, initialNodeId = null) {
             currentNodeId = null;
             generatedKeyRef = null;
             lastSyncedSharedHostKey = '';
+            outLinkRecognizer.clear();
             protocol.value = 'reality';
             syncTlsOptions('reality', 'reality');
             const usedPorts = new Set(agentNodes.map(x => Number(x.settings?.listen_port)));
@@ -1557,6 +1742,7 @@ async function showAgentDeployment(agent, initialNodeId = null) {
                 const outPassField = document.getElementById('deployment-out-pass');
                 if (outPassField) outPassField.value = '';
                 hopEditor.clearSecrets();
+                outLinkRecognizer.clear();
                 generatedKeyRef = null;
             }
             await refresh();
