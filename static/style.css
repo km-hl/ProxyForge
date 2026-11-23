@@ -1647,3 +1647,80 @@ img.emoji { height: 1em; width: 1em; margin: 0 .05em 0 .1em; vertical-align: -0.
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+.node-order-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.node-order-status {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.node-order-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 440px;
+    overflow-y: auto;
+    padding-right: 2px;
+}
+
+.node-order-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--card-bg);
+    transition: border-color var(--transition), background var(--transition);
+}
+
+.node-order-row.drag-over {
+    border-color: var(--primary);
+    background: var(--surface-hover);
+}
+
+.node-order-row.dragging {
+    opacity: 0.45;
+}
+
+.node-order-rank {
+    min-width: 24px;
+    font-size: 12px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    text-align: right;
+}
+
+.node-source-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 500;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    background: var(--surface);
+    white-space: nowrap;
+}
+
+.node-source-pill.is-agent,
+.node-source-pill.is-chain {
+    color: #1d4ed8;
+    border-color: #bfdbfe;
+    background: #eff6ff;
+}
+
+.node-source-pill.is-adopted {
+    color: #b45309;
+    border-color: #fde68a;
+    background: #fffbeb;
+}

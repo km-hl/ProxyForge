@@ -2092,6 +2092,225 @@ async function saveNodesObj() {
     finally { if (locked) { externalTemplateBusy = false; rulesEditor.readOnly = false; } }
 }
 
+async function openNodeOrderModal() {
+    let payload;
+    try {
+        payload = await (await fetchAuth('/nodes/order')).json();
+    } catch (e) {
+        showToast(`读取节点顺序失败：${e.message}`, 'error');
+        return;
+    }
+
+    let items = Array.isArray(payload.items) ? payload.items.slice() : [];
+    let hasCustomOrder = Boolean(payload.has_custom_order);
+    let draggedIndex = -1;
+
+    async function syncOrderedNodesFromServer() {
+        const [nodesRes, proxiesRes] = await Promise.all([
+            fetchAuth('/nodes'),
+            fetchAuth('/proxies'),
+        ]);
+        state.nodes = (await nodesRes.json()).nodes || [];
+        state.allProxies = (await proxiesRes.json()).proxies || [];
+        renderNodes();
+    }
+
+    openModal(
+        '订阅节点排序',
+        '<div id="node-order-toolbar" class="node-order-toolbar"></div>' +
+        '<div id="node-order-list" class="node-order-list"></div>',
+        async () => {
+            modalConfirm.disabled = true;
+            try {
+                await fetchAuth('/nodes/order', {
+                    method: 'PUT',
+                    body: JSON.stringify({ order: items.map(x => x.key) }),
+                });
+                await syncOrderedNodesFromServer();
+                closeModal();
+                showToast('已保存订阅节点排序');
+            } catch (e) {
+                modalConfirm.disabled = false;
+                showToast(`保存排序失败：${e.message}`, 'error');
+            }
+        }
+    );
+
+    const toolbar = document.getElementById('node-order-toolbar');
+    const listEl = document.getElementById('node-order-list');
+    const statusBadge = document.createElement('span');
+    statusBadge.className = 'node-order-status';
+
+    function renderOrderList() {
+        statusBadge.textContent = hasCustomOrder ? `${items.length} 个节点 · 自定义排序` : `${items.length} 个节点 · 默认顺序`;
+        listEl.replaceChildren();
+        if (!items.length) {
+            const empty = document.createElement('div');
+            empty.className = 'empty-state';
+            empty.textContent = '暂无已发布到订阅的节点';
+            listEl.append(empty);
+            return;
+        }
+        const upIcon = typeof ProxyForgeIcons !== 'undefined' ? ProxyForgeIcons.svg('arrowUp', 13) : '↑';
+        const downIcon = typeof ProxyForgeIcons !== 'undefined' ? ProxyForgeIcons.svg('arrowDown', 13) : '↓';
+        items.forEach((item, idx) => {
+            const row = document.createElement('div');
+            row.className = 'node-order-row';
+            row.draggable = true;
+
+            row.addEventListener('dragstart', e => {
+                draggedIndex = idx;
+                e.dataTransfer.effectAllowed = 'move';
+                row.classList.add('dragging');
+            });
+            row.addEventListener('dragover', e => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+            });
+            row.addEventListener('dragenter', e => {
+                e.preventDefault();
+                row.classList.add('drag-over');
+            });
+            row.addEventListener('dragleave', () => {
+                row.classList.remove('drag-over');
+            });
+            row.addEventListener('drop', e => {
+                e.preventDefault();
+                row.classList.remove('drag-over');
+                if (draggedIndex !== -1 && draggedIndex !== idx) {
+                    items = ProxyForgeNodeOrder.moveOrderItem(items, draggedIndex, idx);
+                    hasCustomOrder = true;
+                    renderOrderList();
+                }
+                draggedIndex = -1;
+            });
+            row.addEventListener('dragend', () => {
+                row.classList.remove('dragging');
+                listEl.querySelectorAll('.node-order-row').forEach(el => el.classList.remove('drag-over'));
+                draggedIndex = -1;
+            });
+
+            const handle = document.createElement('span');
+            handle.className = 'drag-handle';
+            handle.style.cursor = 'grab';
+            handle.style.color = 'var(--text-muted)';
+            handle.textContent = '⠿';
+
+            const rank = document.createElement('span');
+            rank.className = 'node-order-rank';
+            rank.textContent = String(idx + 1);
+
+            const sourcePill = document.createElement('span');
+            const src = item.source || 'manual';
+            sourcePill.className = `node-source-pill is-${src}`;
+            sourcePill.textContent = ProxyForgeNodeOrder.SOURCE_LABELS[src] || '节点';
+
+            const protoPill = document.createElement('span');
+            protoPill.className = 'type-badge badge-default';
+            protoPill.textContent = item.type || 'node';
+
+            const info = document.createElement('div');
+            info.className = 'item-info';
+            const title = document.createElement('div');
+            title.className = 'item-name';
+            title.textContent = getFlagEmoji(item.name);
+            const detail = document.createElement('div');
+            detail.className = 'item-detail';
+            detail.textContent = `${item.server || ''}${item.port ? ':' + item.port : ''}`;
+            info.append(title, detail);
+
+            const actions = document.createElement('div');
+            actions.className = 'item-actions';
+
+            const topBtn = document.createElement('button');
+            topBtn.type = 'button';
+            topBtn.className = 'btn btn-sm';
+            topBtn.title = '置顶';
+            topBtn.textContent = '⤒';
+            topBtn.disabled = idx === 0;
+            topBtn.onclick = () => {
+                items = ProxyForgeNodeOrder.moveOrderItem(items, idx, 0);
+                hasCustomOrder = true;
+                renderOrderList();
+            };
+
+            const upBtn = document.createElement('button');
+            upBtn.type = 'button';
+            upBtn.className = 'btn btn-sm';
+            upBtn.title = '上移';
+            upBtn.innerHTML = upIcon;
+            upBtn.disabled = idx === 0;
+            upBtn.onclick = () => {
+                items = ProxyForgeNodeOrder.moveOrderItem(items, idx, idx - 1);
+                hasCustomOrder = true;
+                renderOrderList();
+            };
+
+            const downBtn = document.createElement('button');
+            downBtn.type = 'button';
+            downBtn.className = 'btn btn-sm';
+            downBtn.title = '下移';
+            downBtn.innerHTML = downIcon;
+            downBtn.disabled = idx === items.length - 1;
+            downBtn.onclick = () => {
+                items = ProxyForgeNodeOrder.moveOrderItem(items, idx, idx + 1);
+                hasCustomOrder = true;
+                renderOrderList();
+            };
+
+            actions.append(topBtn, upBtn, downBtn);
+            row.append(handle, rank, sourcePill, protoPill, info, actions);
+            listEl.append(row);
+        });
+        if (window.twemoji) twemoji.parse(listEl, { folder: 'svg', ext: '.svg' });
+    }
+
+    for (const [label, handler] of [
+        ['按地区排序', () => {
+            items = ProxyForgeNodeOrder.sortOrderItemsByRegion(items, ProxyForgeRegions.matchRegion);
+            hasCustomOrder = true;
+            renderOrderList();
+        }],
+        ['按名称排序', () => {
+            items = ProxyForgeNodeOrder.sortOrderItemsByName(items);
+            hasCustomOrder = true;
+            renderOrderList();
+        }],
+        ['托管优先', () => {
+            items = ProxyForgeNodeOrder.sortOrderItemsManagedFirst(items);
+            hasCustomOrder = true;
+            renderOrderList();
+        }],
+        ['恢复默认', async () => {
+            try {
+                const res = await (await fetchAuth('/nodes/order', {
+                    method: 'PUT',
+                    body: JSON.stringify({ order: [] }),
+                })).json();
+                items = Array.isArray(res.items) ? res.items.slice() : [];
+                hasCustomOrder = false;
+                renderOrderList();
+                await syncOrderedNodesFromServer();
+                showToast('已恢复默认节点顺序');
+            } catch (e) {
+                showToast(`重置排序失败：${e.message}`, 'error');
+            }
+        }],
+    ]) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn-sm';
+        btn.textContent = label;
+        btn.onclick = handler;
+        toolbar.append(btn);
+    }
+    toolbar.append(statusBadge);
+
+    renderOrderList();
+}
+
+document.getElementById('node-order-btn')?.addEventListener('click', openNodeOrderModal);
+
 // === Template Save Helper ===
 async function saveTemplateObj(candidate = state.templateObj, source = 'other', raw = null, successMessage = '') {
     try {

@@ -1,6 +1,6 @@
 """节点管理 Router；存储、托管节点边界和机场聚合均由入口显式注入。"""
 from dataclasses import dataclass
-from typing import Any, Callable, ContextManager, Dict, List
+from typing import Any, Callable, ContextManager, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -37,7 +37,8 @@ def create_node_router(*, verify_management: Callable,
                        manual_input: Callable[[list], list],
                        manual_nodes_reader: Callable[[], List[Dict[str, Any]]],
                        template_reader: Callable[[], str],
-                       template_store: Callable[[], TemplateStore]) -> NodeApi:
+                       template_store: Callable[[], TemplateStore],
+                       on_manual_nodes_saved: Optional[Callable[[List[Dict[str, Any]]], None]] = None) -> NodeApi:
     """只装配四个管理接口，不读取文件、数据库或启动网络任务。"""
     router = APIRouter()
 
@@ -102,6 +103,8 @@ def create_node_router(*, verify_management: Callable,
                     updates["template.yaml"] = yaml.safe_dump(template_config, allow_unicode=True, sort_keys=False)
             updates["custom_nodes.yaml"] = yaml.safe_dump([strip_internal_proxy_fields(n) for n in data.nodes], allow_unicode=True, sort_keys=False)
             snapshot = template_store().commit(updates, source="update_nodes")
+            if on_manual_nodes_saved is not None:
+                on_manual_nodes_saved(data.nodes)
             return {"status": "ok", "cleanedReferences": cleanup_result["total"], "template_revision": snapshot["revision"]}
 
     return NodeApi(router, parse_links_api, get_nodes, get_all_proxies, update_nodes)

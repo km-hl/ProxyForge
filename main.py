@@ -5,6 +5,12 @@ from proxyforge.templates.api import (
     TemplateModel, TemplateSaveModel, TemplateRestoreModel, ImportModel, create_template_router,
 )
 from proxyforge.nodes.api import NodesModel, ParseLinksModel, create_node_router
+from proxyforge.nodes.ordering import (
+    apply_node_order, create_node_order_router,
+    load_node_order as read_node_order_file,
+    save_node_order as write_node_order_file,
+    sync_manual_order_in_saved_order,
+)
 from proxyforge.airports.service import AirportService, AirportSourcesChanged
 from proxyforge.airports.api import AirportsModel, check_airport_urls, create_airport_router
 from proxyforge.subscription.links import parse_share_link
@@ -310,9 +316,35 @@ def managed_node_names():
     return control_store().managed_node_names()
 
 
+def _node_order_path() -> Path:
+    return Path(DATA_DIR) / "node_order.json"
+
+
+@configuration_locked
+def load_node_order() -> List[str]:
+    return read_node_order_file(_node_order_path())
+
+
+@configuration_locked
+def save_node_order(order: List[str]) -> List[str]:
+    return write_node_order_file(_node_order_path(), order)
+
+
+@configuration_locked
+def _sync_node_order_on_manual_save(manual_nodes: List[Dict[str, Any]]) -> None:
+    current = read_node_order_file(_node_order_path())
+    if not current:
+        return
+    names = [str(n.get("name") or "") for n in manual_nodes if isinstance(n, dict) and n.get("name")]
+    updated = sync_manual_order_in_saved_order(current, names)
+    if updated != current:
+        write_node_order_file(_node_order_path(), updated)
+
+
 @configuration_locked
 def load_custom_nodes() -> List[Dict[str, Any]]:
-    return load_manual_nodes() + managed_nodes()
+    combined = load_manual_nodes() + managed_nodes()
+    return apply_node_order(combined, load_node_order())
 
 
 def manual_node_input(nodes):
@@ -505,6 +537,7 @@ node_api = create_node_router(
     manual_input=lambda nodes: manual_node_input(nodes),
     manual_nodes_reader=lambda: load_manual_nodes(),
     template_reader=lambda: load_template_content(), template_store=lambda: template_store(),
+    on_manual_nodes_saved=lambda nodes: _sync_node_order_on_manual_save(nodes),
 )
 app.include_router(node_api.router)
 # 同一组实际处理函数，保留既有 Python 工具调用名称。
@@ -512,6 +545,17 @@ parse_links_api = node_api.parse_links_api
 get_nodes = node_api.get_nodes
 get_all_proxies = node_api.get_all_proxies
 update_nodes = node_api.update_nodes
+
+node_order_router = create_node_order_router(
+    verify_management=verify_api_token,
+    configuration_lock=configuration_lock,
+    nodes_reader=lambda: load_custom_nodes(),
+    manual_nodes_reader=lambda: load_manual_nodes(),
+    template_store=lambda: template_store(),
+    order_reader=lambda: load_node_order(),
+    order_writer=lambda order: save_node_order(order),
+)
+app.include_router(node_order_router)
 
 
 def validate_saved_template(content, nodes, airports):
