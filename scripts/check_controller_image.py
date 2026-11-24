@@ -129,7 +129,7 @@ def check():
     actual = fingerprints()
     require(all(actual.get(name) == value for name, value in manifest['files'].items()),
             'Persisted fixture file changed')
-    print('Controller startup/recovery passed: Python ' + sys.version.split()[0] + ', schema 5')
+    print('Controller startup/recovery passed: Python ' + sys.version.split()[0] + ', schema 8')
 
 
 def fresh_check():

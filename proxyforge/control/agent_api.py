@@ -2,7 +2,7 @@
 import json
 import os
 import sqlite3
-from typing import Literal
+from typing import Literal, Optional, Union
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -146,7 +146,7 @@ class AgentMetadata(Payload):
     gost_protocol_version: StrictInt = Field(default=0, ge=0, le=1000)
     self_upgrade_protocol_version: StrictInt = Field(default=0, ge=0, le=1000)
     bundle_sha256: ShortText = ""
-    nftables_capable: StrictBool | None = None
+    nftables_capable: Optional[StrictBool] = None
     uptime: StrictInt = Field(default=0, ge=0)
     addresses: list[ShortText] = Field(default_factory=list, max_length=16)
     supported: StrictBool = False
@@ -164,10 +164,10 @@ class RegistrationRequest(Payload):
 class AgentEdit(RegistrationRequest):
     role: constr(strict=True, pattern=r"^(unassigned|node|landing|both)$") = "unassigned"
     tags: list[constr(strict=True, max_length=32)] = Field(default_factory=list, max_length=16)
-    region: constr(strict=True, max_length=32) | None = None
-    expire_at: float | int | None = Field(default=None, ge=0)
-    quota_bytes: StrictInt | None = Field(default=None, ge=0)
-    billing_label: constr(strict=True, max_length=64) | None = None
+    region: Optional[constr(strict=True, max_length=32)] = None
+    expire_at: Optional[Union[float, int]] = Field(default=None, ge=0)
+    quota_bytes: Optional[StrictInt] = Field(default=None, ge=0)
+    billing_label: Optional[constr(strict=True, max_length=64)] = None
 
 
 def attach_agent_routes(

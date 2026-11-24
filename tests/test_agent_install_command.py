@@ -93,19 +93,15 @@ class AgentInstallCommandTests(unittest.TestCase):
                               server="https://your-controller.example" if mode == "install" else None)
             self.assertEqual(command, expected)
 
-    def test_quick_bundle_script_and_http_routes(self):
+    def test_quick_bundle_and_install_script(self):
         import gzip
-        import os
         import tarfile
-        import tempfile
-        from fastapi.testclient import TestClient
         from proxyforge.control.agent_installation import (
             AGENT_BUNDLE_FILES,
             build_agent_bundle,
             installation_info,
             render_quick_install_script,
         )
-        from test_api_integration import TEST_ADMIN_TOKEN, load_isolated_application
 
         payload, digest = build_agent_bundle()
         payload2, digest2 = build_agent_bundle()
@@ -135,6 +131,17 @@ class AgentInstallCommandTests(unittest.TestCase):
         self.assertEqual(info["package_sha256"], digest)
         self.assertIn("gost", info["release_versions"])
 
+    def test_quick_install_http_routes(self):
+        import os
+        import tempfile
+        try:
+            from fastapi.testclient import TestClient
+            from test_api_integration import TEST_ADMIN_TOKEN, load_isolated_application
+        except ImportError:
+            self.skipTest("FastAPI test dependencies unavailable in stdlib-only environment")
+        from proxyforge.control.agent_installation import build_agent_bundle
+
+        _, digest = build_agent_bundle()
         with tempfile.TemporaryDirectory() as tmp:
             app = load_isolated_application(Path(tmp))
             old_pub = os.environ.get("PROXYFORGE_PUBLIC_URL")

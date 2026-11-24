@@ -3,6 +3,7 @@
 9.2 Per-forward go-gost rewrite_subscription & automatic prefer_relay rewrite compatibility
 9.3 GEOSITE / GEOIP / DOMAIN-REGEX / no-resolve export in Sing-box & Surge
 """
+import base64
 import copy
 import json
 import os
@@ -14,6 +15,7 @@ import uuid
 from fastapi.testclient import TestClient
 import yaml
 
+from agent.deployment_spec import spec_hash
 from agent.runtime_engine import RuntimeEngine
 from agent.runtime_spec import revision
 from proxyforge.control.control_store import ControlStore
@@ -302,35 +304,51 @@ class Phase9RuntimeDiffTest(unittest.TestCase):
                 (directory / 'sing-box').write_bytes(b'bin')
 
             engine = RuntimeEngine(root, backend, 'amd64', download)
+            dep_id = 'a' * 32
             spec = {
-                'protocol': 'ss2022',
                 'name': 'SS-Node',
                 'server': '198.51.100.10',
                 'listen_port': 8388,
                 'method': '2022-blake3-aes-256-gcm',
-                'psk': 'dGVzdHBza3Rlc3Rwc2t0ZXN0cHNrdGVzdHBza3Rlc3Q=',
+                'password': base64.b64encode(b'k' * 32).decode('ascii'),
             }
-            payload = {'node_id': 'n1', 'revision': 1}
+            payload1 = {'deployment_id': dep_id, 'revision': 1, 'spec_hash': spec_hash(spec)}
+            job1_id = uuid.uuid4().hex
             job1 = {
-                'id': uuid.uuid4().hex,
+                'id': job1_id,
                 'type': 'landing.apply',
-                'payload': payload,
+                'payload': payload1,
                 'deployment': spec,
-                'deployment_revision': revision('1' * 32, 'landing.apply', payload),
+                'deployment_revision': revision(job1_id, 'landing.apply', payload1),
             }
             engine.apply(job1)
             self.assertEqual(backend.activate_calls, 1)
 
+            spec2 = {**spec, 'name': 'RenamedOnly', 'server': 'other.example.com'}
+            payload2 = {'deployment_id': dep_id, 'revision': 2, 'spec_hash': spec_hash(spec2)}
             job2_id = uuid.uuid4().hex
             job2 = {
                 'id': job2_id,
                 'type': 'landing.apply',
-                'payload': payload,
-                'deployment': {**spec, 'name': 'RenamedOnly', 'server': 'other.example.com'},
-                'deployment_revision': revision(job2_id, 'landing.apply', payload),
+                'payload': payload2,
+                'deployment': spec2,
+                'deployment_revision': revision(job2_id, 'landing.apply', payload2),
             }
             engine.apply(job2)
             self.assertEqual(backend.activate_calls, 1)
+
+            spec3 = {**spec2, 'listen_port': 8389}
+            payload3 = {'deployment_id': dep_id, 'revision': 3, 'spec_hash': spec_hash(spec3)}
+            job3_id = uuid.uuid4().hex
+            job3 = {
+                'id': job3_id,
+                'type': 'landing.apply',
+                'payload': payload3,
+                'deployment': spec3,
+                'deployment_revision': revision(job3_id, 'landing.apply', payload3),
+            }
+            engine.apply(job3)
+            self.assertEqual(backend.activate_calls, 2)
 
 
 class Phase9ApiIntegrationTest(unittest.TestCase):

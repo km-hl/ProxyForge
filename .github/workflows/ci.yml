@@ -60,7 +60,10 @@ jobs:
       - name: Check frontend JavaScript syntax
         run: |
           node --check static/html-utils.js
+          node --check static/icons.js
           node --check static/rule-utils.js
+          node --check static/node-order-utils.js
+          node --check static/share-link-utils.js
           node --check static/app.js
           node --check static/network-settings.js
           node --check static/subscription-utils.js
@@ -68,9 +71,10 @@ jobs:
           node --check static/template-history.js
           node --check static/agents.js
           node --check static/managed-nodes.js
+          node --check static/sub-users.js
 
       - name: Run frontend behavior tests
-        run: node --test tests/rule_order.test.js tests/html_security.test.js tests/network_settings.test.js tests/template_session.test.js tests/agents.test.js tests/managed_nodes.test.js tests/subscription_export.test.js
+        run: node --test tests/*.test.js
 
       - name: Check pull request whitespace errors
         if: github.event_name == 'pull_request'
@@ -129,6 +133,8 @@ jobs:
           python -S -m unittest discover -s tests -p test_caddy_manager.py -v
           python -S -m unittest discover -s tests -p test_gost_manager.py -v
           python -S -m unittest discover -s tests -p test_traffic_collector.py -v
+          python -S -m unittest discover -s tests -p test_nft_users.py -v
+          python -S -m unittest discover -s tests -p test_agent_self_upgrade.py -v
           python -S -m unittest discover -s tests -p test_agent_artifacts.py -v
           python -S -m unittest discover -s tests -p test_controller_release_metadata.py -v
           python -S -m unittest discover -s tests -p test_release_preparation.py -v

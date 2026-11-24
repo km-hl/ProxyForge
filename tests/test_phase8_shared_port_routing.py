@@ -711,10 +711,28 @@ class Phase8ControlPlaneAndSubscriptionTests(unittest.TestCase):
                 normalize_mirror_prefix(bad)
 
         with tempfile.TemporaryDirectory() as tmp:
+            import os
+            import types
+            from unittest.mock import patch
+
             root = Path(tmp)
             self.assertIsNone(read_configured_mirror(root))
-            (root / MIRROR_CONFIG_FILENAME).write_text('# mirror\nghfast.top\n', encoding='utf-8')
-            self.assertEqual(read_configured_mirror(root), 'https://ghfast.top')
+            cfg_path = root / MIRROR_CONFIG_FILENAME
+            cfg_path.write_text('# mirror\nghfast.top\n', encoding='utf-8')
+            if os.name == 'posix' and os.geteuid() != 0:
+                with self.assertRaises(ValueError):
+                    read_configured_mirror(root)
+
+            real_lstat = Path.lstat
+
+            def _root_owned_lstat(path_obj):
+                st = real_lstat(path_obj)
+                if path_obj == cfg_path:
+                    return types.SimpleNamespace(st_uid=0, st_mode=(st.st_mode & ~0o022))
+                return st
+
+            with patch.object(Path, 'lstat', autospec=True, side_effect=_root_owned_lstat):
+                self.assertEqual(read_configured_mirror(root), 'https://ghfast.top')
 
         script = render_quick_install_script('https://ctrl.example.com', bundle_sha256='a' * 64)
         self.assertIn('MIRROR_CONFIG_FILENAME', script)
