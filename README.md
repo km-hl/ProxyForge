@@ -1,233 +1,80 @@
-# ProxyForge 🛡️
+# ProxyForge
 
-ProxyForge 是一个**全可视化**的专属节点订阅聚合与配置下发中心。它可以作为你个人的后端服务，拉取购买的多个机场节点，无缝混入自建节点，并将它们与自定义的策略组和分流规则智能合并，最终通过 HTTP API 输出完整的 Clash/Mihomo YAML 配置文件。
+一体化节点控制面与多端订阅平台：集成 **五协议落地开荒与存量接管**、**`go-gost` 中转调度**、**多用户独立凭据与 `nftables` 内核态计费**、**多机场聚合清洗** 及 **五端订阅导出**，配套极简 Web 控制台与纯标准库 Linux Agent。
 
-中文文档入口与覆盖范围见[说明索引](docs/DOCUMENTATION.md)。
+> 许可协议：[MIT](LICENSE)（第三方依赖及可选外部内核归属见 [许可证说明](docs/LICENSING.md)）。
 
-自有代码及文档采用 [MIT](LICENSE)，中文许可说明及第三方归属见[许可证说明](docs/LICENSING.md)。外部依赖、Twemoji 图形与可选内核保留各自许可。
+## 核心能力
 
-订阅支持 Clash/Mihomo 与 [Egern 原生格式](docs/EGERN_EXPORT.md)。在概览选择格式后复制链接，最终预览同步切换；Egern 转换节点、代理组和分流，不兼容节点会明确提示，DNS/TUN 在客户端设置。
+- **落地开荒与存量接管**：单机托管 **VLESS Reality**（本机 Caddy 回环“偷自己” / 外部目标）、**Hysteria2**（支持 `mport` 端口跳跃与 `salamander`）、**SS2022**、**AnyTLS** 与 **Trojan**（强制本机 Caddy Fallback）；支持同端口多节点 `auth_user` 分流、ACME（HTTP-01 / DNS-01）自动证书、三模 Caddy 伪装、多跳链式出站、元信息零停机热改，以及宿主机既有 `sing-box` / `xray` 扫描接管与一键归还。
+- **中转调度与多用户配额**：Agent 托管 `go-gost` 实现 TCP/UDP 转发、多跳隧道与延迟优选，并可按转发规则自动重写订阅入口；为每个订阅用户确定性派生独立节点凭据，结合 `sing-box` `routing_mark` 与 `nftables` 内核态计数器统计真实上下行流量，支持每月自动重置、`Subscription-Userinfo` 头与超额自动断流。
+- **多机场聚合与五端导出**：并发拉取上游机场并原子缓存（隔离环境代理、启用 DNS Pinning 与时间预算），与自建/托管/接管节点统一排序混排；原生导出 **Mihomo YAML**、**Sing-box JSON**、**Surge INI**、**Egern** 与 **标准 URI**，支持 `GEOSITE` / `GEOIP` / `DOMAIN-REGEX`、`,no-resolve` 及 DNS/TUN 防泄露预设。
+- **零构建 Web 控制台与平滑运维**：浏览器可视化管理服务器、节点、中转、多用户订阅、代理组、路由规则与模板历史；内置 Komari 风格一键安装脚本与基于心跳校验的 Agent 静默平滑自升级。
 
-## ✨ 核心亮点
+## 快速部署（Docker Compose）
 
-1. **🎨 全可视化 Web 仪表盘 (Web UI)**
-   - 抛弃繁琐的 YAML 文本编辑。只需在浏览器中打开 Web UI，即可通过现代化的界面管理一切。
-   - Web 控制台使用独立管理密钥和 HttpOnly 会话 Cookie；客户端订阅密钥只允许访问 `/sub` 与 `/provider`，不能调用管理 API。
+Controller 镜像基于 **Python 3.12 / Debian Bookworm**，默认以非 root 身份 **UID/GID `10001:10001`** 运行（详见 [容器权限说明](docs/CONTAINER_PERMISSIONS.md)）。
 
-2. **✈️ 多机场聚合与自建节点融合**
-   - 支持添加任意数量的机场订阅。
-   - 每个机场会作为独立的 Mihomo `proxy-provider` 下发，代理组通过 `use` 引用；原始机场订阅地址由 ProxyForge 代理，不会暴露在最终配置里。
-   - 可视化添加并管理您的自建节点，支持直接粘贴 `vmess://`、`vless://`、`trojan://`、`hysteria2://`、`hy2://`、`ss://`、`tuic://`、`anytls://`、`wireguard://` 分享链接自动转换为 Mihomo YAML 节点。
-   - TUIC 支持 v4 `token` 与 v5 `uuid + password`；AnyTLS 按 Mihomo 原生字段输出，不会把不受支持的 AnyTLS+Reality 静默降级。AnyTLS 节点需要客户端使用支持该协议的较新 Mihomo 内核。
-   - WireGuard 支持私钥、公钥、双栈客户端地址、Allowed IPs、预共享密钥、Reserved、MTU、DNS 和 Persistent Keepalive；链接中的 CIDR 地址会转换为 Mihomo 的独立 `ip` / `ipv6` 字段。
-   - 节点名称会根据地区关键词自动显示国旗，并在下发 YAML 时同步加到节点名与代理组引用中；已有国旗的节点不会重复添加。
-
-3. **📁 智能代理组 (Proxy Groups) 引擎**
-   - **智能筛选 (Smart Include)**：告别手动挑选节点！只需勾选地区（如香港、日本）和来源（如某机场、自建节点），ProxyForge 会在后台自动完成交集过滤。
-   - 支持拖拽嵌套、批量操作节点与组。
-
-4. **📏 分流规则 (Rules) 完全可视化**
-   - 支持直观地添加、编辑 `rules` 和 `rule-providers`。
-   - **丝滑拖拽排序**：鼠标按住即可拖拽调整路由规则的优先级，操作即存即用。
-   - 保存模板和生成最终订阅前会执行静态可用性检查，包括节点必填字段、代理组/provider 引用、规则目标、`RULE-SET` 引用和代理组循环，并在错误时返回具体位置。
-   - 删除或重命名自建节点、机场时，会自动清理代理组中对应的 `proxies` / `use` 悬空引用；旧配置在启动时也会自动迁移清理。
-
-5. **⚡ 缓存与后台刷新**
-   - **全自动缓存刷新**：启动等待 300 秒后开始刷新，每轮结束后等待 4 小时；网络和磁盘处理在线程中执行，每批最多 5 个机场并发。
-   - **缓存复用**：命中有效缓存时减少重复拉取；首次请求、缓存失效或强制刷新仍可能等待网络，失败时按已有缓存规则回退。
-
-6. **🔒 持久化备份与故障回退**
-   - 所有配置更改都会持久化到 `data/`。机场服务器暂时不可用时，服务会按机场回退到最近一次成功缓存；如果该机场从未成功缓存，则明确返回错误而不是下发空配置。
-
----
-
-## 🚀 部署教程 (VPS 推荐)
-
-> 推荐使用 Docker Compose。首次部署先准备数据权限，已有安装先按发布流程备份、验证再升级。
-
-Controller 镜像使用 Python 3.12 / Debian Bookworm，源码 CI 覆盖 Python 3.12、3.13；Agent 仍使用独立的系统 Python 3.9+。版本矩阵、升级回滚和隔离恢复命令见 [Python 运行时说明](docs/PYTHON_RUNTIME.md)，锁文件安装与更新见[依赖锁说明](docs/DEPENDENCIES.md)。
-
-### 1. 克隆代码并进入目录
 ```bash
+# 1. 获取代码并创建环境配置
 git clone https://github.com/km-hl/ProxyForge.git
 cd ProxyForge
-```
-
-### 2. 创建环境配置
-```bash
 cp .env.example .env
+
+# 2. 初始化持久化数据目录（首次安装，尚无 ./data）
+mkdir -m 0700 ./data
+docker compose build --pull proxyforge
+docker compose run --rm --no-deps --user 0:0 --entrypoint python \
+  --cap-add CHOWN --cap-add FOWNER --cap-add DAC_OVERRIDE \
+  proxyforge scripts/container_data.py --apply
+
+# 3. 启动服务
+docker compose up -d proxyforge
 ```
 
-您可以编辑 `.env` 修改监听端口。`SECRET_TOKEN` 是客户端订阅密钥；`ADMIN_TOKEN` 是 Web 控制台管理密钥，两者必须分开。留空时系统会分别自动生成：订阅密钥持久化到 `data/config.json`，首次管理密钥写入权限为 `0600` 的 `data/admin_token.txt`。
-
-机场拉取固定连接到每跳已验证的 IP，保留原域名的 Host、SNI 和证书校验；不继承 `HTTP(S)_PROXY`、`ALL_PROXY`、NETRC 或 `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE`。需要私有 CA 时，在 `.env` 显式设置 `PROXYFORGE_AIRPORT_CA_BUNDLE` 为进程可读的可信 CA 文件路径；TLS 验证保持开启。升级兼容性、容器路径和配置示例见[机场 HTTP 请求说明](docs/OUTBOUND_HTTP.md)。单次拉取默认有 60 秒网络总预算，批次共享 180 秒网络预算；慢机场、DNS 容量和超时缓存行为见[出站时间预算](docs/OUTBOUND_BUDGETS.md)。
-
-### 3. 启动服务 (Docker)
-确保您的 VPS 安装了 Docker 和 Docker Compose。镜像以 UID/GID 10001:10001 运行；首次安装必须按[容器权限说明](docs/CONTAINER_PERMISSIONS.md)准备 data，已有安装必须先停机备份并迁移旧数据权限，再执行：
-```bash
-docker compose up -d --build
-```
-
-首次启动或从旧版本升级后，可使用下面的命令读取管理密钥：
+首次启动且未在 `.env` 中指定密钥时，系统会分别自动生成管理密钥与订阅密钥（两者严格隔离）：
 
 ```bash
+# 查看首次生成的 Web 控制台管理密钥（登录后建议在控制台更换）
 docker compose exec proxyforge cat /app/data/admin_token.txt
-```
 
-登录后请在 WebUI 中更换管理密钥；更换后 `admin_token.txt` 会自动删除。需要查看客户端订阅密钥时使用：
-
-```bash
+# 查看主订阅密钥
 docker compose exec proxyforge python -c "import json; print(json.load(open('/app/data/config.json'))['subscription_token'])"
 ```
-启动后请检查服务状态、日志、管理登录和订阅响应。Compose 重启策略可恢复进程，但不替代数据备份、故障排查或恢复演练。
 
----
+访问 `http://<服务器IP>:8000` 登录控制台（生产环境建议前置 HTTPS 反向代理，并在 `.env` 中配置 `PROXYFORGE_PUBLIC_URL="https://your-controller.example"`）。
 
-## 🎮 如何使用 Web 控制台
+## 接入 Agent 节点
 
-手机或平板窄屏下，顶部中文导航可左右滑动切换全部页面。表单和列表操作自动换行，Agent 清单按卡片显示；弹窗正文独立滚动，底部保留确认与取消按钮。桌面端保留侧边导航和 Agent 表格。布局已做浏览器响应式检查，iOS Egern 实机导入与代理握手仍需单独验收。
+支持 **Debian 12/13**、**Ubuntu 22.04/24.04**（`amd64` / `arm64`）、`systemd` 与系统 Python 3.9+（纯标准库，无第三方 Python 依赖）。
 
-控制台首页及静态文件要求浏览器每次使用前重验证缓存，CSS/脚本 URL 已加入版本参数，避免升级后混用旧界面。若旧标签页仍显示只有图标的左侧栏，可关闭旧标签后从控制台地址重新打开；首次也可在地址后加 `?v=mobile-20261021-2` 绕过既有页面缓存，无需清除全站数据或重新生成密钥。概览的 DNS/TUN 状态按字段展示，配置建议和检查说明可展开查看，错误始终直接显示。
+1. 在 `.env` 中配置 `PROXYFORGE_PUBLIC_URL` 后重启 Controller。
+2. 在控制台 **「服务器与节点 → 添加服务器」** 中勾选所需组件（`--runtime`、`--with-gost`、`--adopt-scan`、`--gh-proxy` 等），复制一键命令到目标 VPS 执行。
+3. 上线后的 Agent 会在心跳中比对包 SHA256 自动完成静默平滑升级；老版本 Agent 可在控制台使用 `--upgrade` 命令一次性引导升级。
 
-1. 浏览器访问：`http://<您的VPS公网IP>:8000`，输入上一步获得的管理密钥。生产环境建议使用带 HTTPS 的反向代理。
-2. 登录后，您可以在界面上：
-   - 在 **概览设置** 生成您的专属客户端订阅链接。
-   - 在 **机场订阅** 中批量添加您购买的机场链接。
-   - 在 **自建节点** 中直接添加 YAML 节点，或粘贴分享链接自动解析。
-   - 在 **代理组** 中设计您的多层级分流逻辑，使用**智能筛选**一键匹配节点。
-   - 在 **路由规则** 中拖拽排布分流优先级。
+详细参数、离线固定 Commit 校验安装及故障恢复见 [Agent 安装指南](docs/AGENT_INSTALL.md) 与 [Agent 运维说明](agent/README.zh-CN.md)。
 
-将生成的订阅链接添加到 Mihomo / Clash.Meta 兼容客户端（例如 Clash Verge Rev）即可使用。当前 `/sub` 输出为 Mihomo YAML，不是原生 Sing-box JSON。
+## 订阅接口
 
-## 🛡️ DNS 与网络
+| 入口 | 说明 |
+| --- | --- |
+| `GET /sub?token=<主订阅密钥>` | 主订阅，默认输出 Mihomo YAML；支持 `&format=singbox\|surge\|egern\|uri`、`&name=<名称>` 与 `&prefer_relay=1` |
+| `GET /sub/{user_token}` | 多用户极简国内外分流订阅：按客户端 `User-Agent` 自动输出 Mihomo / Sing-box / Surge / Egern / URI（支持 `?target=` 覆盖），响应 `Subscription-Userinfo` |
+| `GET /provider/{index}?token=<主订阅密钥>` | 上游机场独立 `proxy-provider` 代理出口（隐藏原始机场 URL） |
 
-在侧边栏的 **DNS 与网络** 页面可配置 Mihomo DNS、Fake-IP / Redir-Host、IPv6 DNS、DoH / DoT / UDP / TCP 地址、Bootstrap 和代理节点域名 DNS、Direct Nameserver、DNS 分流策略、Fake-IP Filter，以及 TUN、DNS Hijack 和 Strict Route。
+## 备份、升级与回滚
 
-- **兼容模式**仅关闭订阅内 TUN，保留原有 DNS；**防 DNS 泄露**提供 DNS/TUN 起始配置；**严格防泄露**额外启用 Strict Route。预设先展示实际字段变更，确认后写入草稿，点击“保存网络设置”才持久化。原有自定义字段保留，普通预设不会关闭已有 Strict Route。
-- DNS 服务商快捷选择提供常用地址，用户可以继续修改；国内/国外推荐策略只新增缺失项，不覆盖同名策略。原有 `nameserver-policy` 字符串值和列表值均可读取。
-- 网络页面、底层 YAML 和最终订阅共用 `data/template.yaml`，没有独立 DNS 配置文件。页面切换不会写入默认值。保存成功后刷新相关界面；失败保留草稿，存在另一页未保存草稿时会阻止覆盖。
-- 未知 Mihomo 字段按值保留，包括 `dns` / `tun` 内高级字段。可视化保存会重新序列化 YAML，不保证保留注释、引号、锚点写法或排版。高级 YAML 预览只读，完整编辑仍在“底层配置兜底”。
-- 配置检查区分 **错误**、**建议**和**未验证**：错误阻止保存和最终订阅生成；建议允许保存。新增 `/api/template/validate` 只校验、不写文件、不访问 DNS 服务；使用既有管理鉴权。原有模板 API 请求及成功响应保持不变。
+所有持久化状态均位于 `.env` 与 `data/`（含 `config.json`、`template.yaml`、`custom_nodes.yaml`、`airports.yaml`、模板历史、`proxyforge.db` 及加密密钥 `deployment.key`）。
 
-静态默认值与必填条件以 [Mihomo v1.19.31 配置源码](https://github.com/MetaCubeX/mihomo/blob/v1.19.31/config/config.go) 为基线，版本、默认值及字段定义集中在 `proxyforge/config/mihomo_compat.py`。字段缺失与显式空列表不同，例如缺少 `nameserver` 时内核可采用默认值，但启用 DNS 后显式 `nameserver: []` 会被拒绝；`respect-rules: true` 或非空 `proxy-server-nameserver-policy` 都要求非空的 `proxy-server-nameserver`。
+1. **升级前冷备**：先执行 `docker compose stop proxyforge`，在目录外完整归档 `.env` 与 `data/`（**切勿在运行中仅拷贝 SQLite 主文件**）。
+2. **拉取更新并启动**：`git pull` 后执行 `docker compose up -d --build proxyforge`；Controller 启动时自动在事务内完成数据库迁移（当前 `schema 8`）。
+3. **回滚**：停止新容器，切回旧镜像/代码并恢复配套的整份 `data/` 冷备，切勿混用新旧版本的数据库与 `deployment.key`。
 
-高级 DNS 字段（IPv6 Fake-IP 地址池、TTL、IPv6 超时、缓存与策略 DNS）和 TUN 路由、接口、UID 等字段支持 Raw YAML 保留及基础校验，不要求通过普通 UI 编辑。原有默认值未改写进模板；`fake-ip-ttl` 默认 1、`ipv6-timeout` 默认 100，缓存原始零值与运行时 LRU/4096 回退分开处理。Fake-IP 允许在客户端 IPv6 条件满足时仅使用 IPv6 地址池，两个池不能同时禁用。平台行为、复杂 matcher 和 geodata 仍有未验证范围。
+## 相关文档
 
-更新版本的协议栈或高级 Filter 模式会保留并标注兼容性范围；本服务无法获知每个客户端的内核版本，也不替代 Mihomo 完整配置解析。默认/空值语义参照固定版本源码与 YAML 解码规则，尚不等价于逐版本二进制验收。
-
-开发 CI 另设 Mihomo 兼容性任务：下载固定的官方 **v1.19.31 Linux amd64** 二进制并校验 SHA256，在隔离外网的环境中对配置正反例执行真实 `-t` 解析测试。Python 测试使用同一组 fixtures 验证静态结论，并记录为了保留未来字段而允许的差异。CI 还会在临时应用目录中真实调用 `build_subscription_config()`，将测试模板、自建节点、代理组、DNS 与 TUN 生成的 YAML 交给同一内核解析；不会读取开发者的 `.env` 或运行数据。运行方式与覆盖边界见 [Mihomo 测试说明](tests/mihomo/README.md)。解析通过不代表所有用户配置、客户端平台或实际网络行为均已验证。
-
-这些配置用于降低 DNS 泄露风险，实际结果仍受操作系统、浏览器、客户端覆盖配置及网络环境影响。预设 Bootstrap 包含明文 DNS；配置 DoH 不等于所有查询均加密或经代理。关闭 IPv6 DNS 不等于关闭系统 IPv6。Strict Route 依赖 auto-route，可能影响部分应用；服务器不会修改客户端的路由、防火墙或 TUN 权限。
-
-概览显示的是已保存模板的静态配置状态，最终订阅预览仍来自真实 `/sub` 输出。此功能不进行真实 DNS 泄露检测。模板保存使用 `expected_revision` 检测冲突；全局导入在统一锁和持久事务日志下提交，故障后先完成恢复再读取，见[模板修订与历史](docs/TEMPLATE_REVISIONS.md)。
-
-## 🔄 日常更新代码指南
-
-Agent 提供服务器注册、心跳、在线状态、角色标签与凭据撤销，主动连接 HTTPS 主控，无入站监听。受控任务支持领取、回报、重试和取消；本地可选启用独立 sing-box 运行环境，并从控制台部署直连 VLESS Reality、自动生成客户端节点。参见 [Agent 安装与恢复](agent/README.zh-CN.md)、[B1 注册协议](docs/AGENT_B1.md)、[B2 任务协议](docs/AGENT_B2.md)、[B3 托管运行环境](docs/AGENT_B3.md) 和 [B4 Reality 部署](docs/AGENT_B4.md)。
-
-新主机可直接复制[Agent 完整下载安装命令](docs/AGENT_INSTALL.md)，从固定源码校验到安装，并在隐藏提示输入一次性凭据。另有[中文升级与恢复](agent/README.zh-CN.md)和维护者的[固定安装产物](docs/AGENT_ARTIFACTS.md)说明。部署环境设置 `PROXYFORGE_PUBLIC_URL` 后，可在「添加服务器」复制完整命令；一次性凭据在终端隐藏输入。Ubuntu 22.04/24.04 × amd64/arm64 的安装/HTTPS 心跳纳入独立 CI，Debian 12/13 × amd64/arm64 另有同架构 systemd 容器 CI；完整 Debian VM 四组合已实测，Debian 12 amd64 已通过真实公网注册/心跳/Controller 队列及 helper 验收；来源、同宿主机拓扑与其他平台/公网代理握手限制见安装指南；正式 Release 仍按开发计划推进。
-
-模板编辑现已使用内容版本进行并发保护：保存冲突时保留草稿，并可在底层配置页查看、比较和恢复历史。旧页面升级后需要刷新；API 保存请求须携带 `expected_revision`。全局导入通过统一接口提交节点、机场和模板。接口、存储恢复与回滚说明见 [模板版本与历史](docs/TEMPLATE_REVISIONS.md)。
-
-更新采用固定已验收提交，具体命令见[发布验收与恢复流程第 9 节](docs/RELEASE_ACCEPTANCE.md)。先保存旧提交、镜像和配置，停止写入者、私密备份完整数据并校验，再在副本上验证迁移和恢复；通过后切换目标版本。跨版本升级可能迁移数据库、凭据或清理失效引用，不能承诺“更新绝不影响配置”。
-
-`template.example.yaml` 只是仓库默认模板，Web UI 写入 `data/template.yaml`。Git 忽略运行数据可避免普通拉取直接覆盖这些文件，但应用迁移仍需备份。旧 root-owned 数据还必须按[非 root 容器说明](docs/CONTAINER_PERMISSIONS.md)迁移权限；不要直接用 root 绕过启动检查。
-
-升级到凭据分离版本时，原有 `secret_token` 会原样迁移为客户端订阅密钥，因此现有客户端链接不会变化。系统会另行生成管理密钥，其 PBKDF2 哈希保存在 `data/config.json`，首次明文写入 `data/admin_token.txt`；请用部署章节中的命令读取并登录，然后在 WebUI 中更换。公开示例订阅密钥 `my_secret_token` 仍会自动轮换。
-
-更新完成后，请在 Clash Verge / Mihomo 中重新更新 ProxyForge 订阅，并刷新一次“代理集合”。机场节点由独立的 `proxy-provider` 二次加载，仅更新主订阅但保留旧 provider 缓存时，客户端可能暂时仍显示旧状态。
-
-### 机场 `proxy-provider` 的工作方式
-
-ProxyForge 不会把所有机场节点平铺到顶层 `proxies`。每个机场会生成一个独立 provider，代理组通过 `use` 引用：
-
-```yaml
-proxy-providers:
-  LiangXin:
-    type: http
-    url: https://proxyforge.example/provider/0?token=YOUR_TOKEN
-    path: ./proxy_providers/proxyforge_1.yaml
-
-proxy-groups:
-  - name: "🚀 节点选择"
-    type: select
-    use:
-      - LiangXin
-      - PeiQian
-      - Mitce
-      - SakuraCat
-```
-
-客户端访问 `/provider/{index}` 时，ProxyForge 会拉取对应机场并返回标准 Mihomo provider 文档：
-
-```yaml
-proxies:
-  - name: Example Node
-    type: vless
-    # ...
-```
-
-原始机场订阅 URL 不会出现在最终配置中。需要注意：HTTP provider 响应顶层必须是 `proxies`；`payload` 仅用于 `type: inline`，不能作为 HTTP provider 文件的顶层键。
-
-### 机场组显示 `COMPATIBLE` 且没有节点
-
-这通常表示代理组还在，但 Clash/Mihomo 没有成功下载或解析 provider，并不代表机场已被删除。请按顺序检查：
-
-1. 确认服务器已拉取最新代码并重新构建容器。
-2. 在客户端更新主订阅，再到“代理集合”中强制刷新各机场 provider；必要时重启 Mihomo 内核。
-3. 在服务器或可信终端测试 provider 接口（请勿泄露真实 Token）：
-
-   ```bash
-   curl -fsS "https://<ProxyForge域名>/provider/0?token=<TOKEN>" | head
-   ```
-
-   正常响应第一行应为 `proxies:`。
-4. 检查最终订阅中 `proxy-providers.*.url` 是否是客户端能访问的公网 HTTPS 地址。若使用 Nginx、Caddy 或 Cloudflare 反向代理，请确保正确传递 Host 和原始协议。
-5. 查看服务日志：
-
-   ```bash
-   docker compose logs --tail=200 proxyforge
-   ```
-
-常见状态码：
-
-- `401`：provider URL 中的 Token 不正确。
-- `404`：机场索引不存在，通常需要重新更新主订阅。
-- `422`：机场节点字段未通过 Mihomo 静态校验。
-- `502`：机场当前拉取失败，并且没有该机场的可用缓存。
-
-### 从旧版 `template.yaml` 一次性升级
-
-此节仅针对还把 `template.yaml`、`custom_nodes.yaml` 放在仓库根目录的旧部署；已有 `data/` 的实例不要执行重复覆盖迁移。
-
-1. 停止旧服务及其他写入者，记录旧代码/镜像；将根目录配置、`.env` 和已有运行数据成套私密备份到仓库外，核验备份内容与 SHA256。
-2. 在独立副本准备已验收的新代码；若代码库仍跟踪旧 `template.yaml`，不要在唯一现场副本上直接 `git restore`。只从已核验备份复制配置到新目录的 `data/template.yaml`、`data/custom_nodes.yaml`；目标存在时先核对来源，不能覆盖合并。
-3. 按[容器权限迁移](docs/CONTAINER_PERMISSIONS.md)准备 10001:10001 的数据权限，再按[发布验收](docs/RELEASE_ACCEPTANCE.md)在隔离副本启动并检查模板、规则和订阅。
-4. 验收后切换服务；保留旧数据与回滚镜像到验收窗口结束，不在刚启动成功时删除备份。
-
----
-
-## 📦 数据迁移指南 (如何无损迁移到新 VPS)
-
-ProxyForge 的配置文件和 Agent 控制面 SQLite 数据库保存在运行数据目录。迁移或备份前应停止服务，保存以下文件；不要在运行时只复制 SQLite 主文件：
-
-- `.env`（监听端口和首次迁移参数）
-- `data/` 文件夹（包含 `config.json`、`template.yaml`、`custom_nodes.yaml`、`airports.yaml` 和节点缓存；若尚未在 WebUI 更换首次管理密钥，还包括 `admin_token.txt`）
-- 使用 Agent 部署时，还必须一起保存 `data/proxyforge.db` 及其 WAL/SHM 文件和 `data/deployment.key`；恢复有部署的数据库必须使用同一把 key。备份含敏感凭据，需限制访问。
-
-Agent 已支持直连 VLESS Reality 的配置生成、失败回滚和自动客户端节点。使用和升级边界见 [B4 部署说明](docs/AGENT_B4.md)。
-支持独立 SS2022 落地的密码生成、部署与回滚，参见 [B5a 落地说明](docs/AGENT_B5_LANDING.md)。入口可新增经落地的独立 VLESS Reality 监听，同时保留直连节点；使用方式、依赖保护与迁移见 [B5b 链路说明](docs/AGENT_B5_CHAIN.md)。
-
-自建节点页提供独立的 Agent 托管节点列表，显示入口/落地、任务状态和订阅发布资格，并可直接进入部署、链路和任务管理；失败与已移除记录仍可查看。详见 [B6 托管节点界面](docs/AGENT_B6_NODES_UI.md)。
-
-开发与维护请先阅读[项目目录、模块职责及依赖边界](docs/PROJECT_STRUCTURE.md)。升级到完整控制面前，请按[发布验收与恢复流程](docs/RELEASE_ACCEPTANCE.md)完成冷备、隔离恢复演练和分阶段上线；代码验收与生产部署分别记录。
-
-维护者可按[候选发布准备](docs/RELEASE_AUTOMATION.md)固定 Controller 版本、同提交中文说明和五文件校验清单；只读准备工作流不自动创建 tag、发布或部署。正式版本及未验收项目仍须按计划确认。
-
-**迁移步骤：**
-
-1. 按[发布验收与恢复](docs/RELEASE_ACCEPTANCE.md)停止旧服务写入，记录固定提交、镜像、Compose/覆盖配置；制作完整一致冷备并校验。不能让新旧 Controller 同时向同一批 Agent 下发任务。
-2. 在新 VPS 准备同版本代码/镜像，将核验后的 `.env` 和完整 `data/` 恢复到独立目标目录，避免覆盖现有数据；旧根目录格式先按上一节做副本迁移。私密备份、数据库与 deployment.key 必须配套。
-3. 按[容器权限说明](docs/CONTAINER_PERMISSIONS.md)核对实际挂载路径、10001:10001 所有权与私有权限；Windows/Docker Desktop 等未验证平台不能直接套用 Linux 权限保证。
-4. 先隔离验证恢复、登录、模板历史、订阅和数据库，再切换域名/反向代理及可信 `PROXYFORGE_PUBLIC_URL`。核对 TLS、端口、Agent 心跳、任务和撤销状态后才恢复同步。
-5. 订阅地址是否保持不变取决于原域名、路径和凭据是否保留；使用 IP 或改变地址的客户端需要更新。保留旧环境用于回滚，恢复成功不等于公网节点链路已验收。
+- [Agent 安装指南](docs/AGENT_INSTALL.md) · [Agent 运维与恢复（中文）](agent/README.zh-CN.md) · [Agent README (EN)](agent/README.md)
+- [非 root 容器权限与数据迁移](docs/CONTAINER_PERMISSIONS.md)
+- [机场出站 HTTP、DNS Pinning 与私有 CA](docs/OUTBOUND_HTTP.md)
+- [Egern 订阅导出契约](docs/EGERN_EXPORT.md)
+- [项目目录结构与开发边界](docs/PROJECT_STRUCTURE.md)
+- [依赖锁与构建输入](docs/DEPENDENCIES.md) · [Mihomo 兼容性测试](tests/mihomo/README.md) · [许可证说明](docs/LICENSING.md)

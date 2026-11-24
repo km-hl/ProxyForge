@@ -38,6 +38,6 @@ node --test tests/subscription_export.test.js
 
 测试使用公开样本，验证真实 /sub 默认与 Egern 响应、鉴权、Reality/WS/gRPC 映射、机场命名、过滤/空组、规则顺序/no-resolve、逻辑条件、资源边界和 revision 失效。继续运行完整 Python/Node、Mihomo、容器与 Agent CI。Egern 没有在本仓库可用的官方 CLI parser；结构/接口验证不等于已在 iOS Egern 中完成导入或节点握手。
 
-不新增依赖、数据库 schema、Agent 协议或持久化业务格式。部署前按[发布验收](RELEASE_ACCEPTANCE.md)制作完整冷备并验证副本，旧 root 数据按[权限迁移](CONTAINER_PERMISSIONS.md)准备；恢复原镜像、Compose 与对应数据挂载即可回退。只更新 Controller，无需升级 Agent。
+不新增依赖、数据库 schema、Agent 协议或持久化业务格式。部署前请对完整运行数据制作冷备并验证，旧 root 数据按[容器权限说明](CONTAINER_PERMISSIONS.md)迁移；恢复原镜像、Compose 与对应数据挂载即可回退。只更新 Controller，无需升级 Agent。
 
 格式依据核对于 2026-10-08：[代理](https://egernapp.com/docs/configuration/proxies/)、[策略组及订阅格式](https://egernapp.com/docs/configuration/policy_groups/)、[规则及规则集](https://egernapp.com/docs/configuration/rules/)。后续 Egern 格式变更需同时更新转换器、测试和本页。

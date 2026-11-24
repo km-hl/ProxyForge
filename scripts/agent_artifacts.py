@@ -1,4 +1,4 @@
-"""Build and verify fixed-commit Agent packages. See docs/AGENT_ARTIFACTS.md."""
+"""Build and verify fixed-commit Agent packages."""
 
 import argparse
 import ast
@@ -28,10 +28,10 @@ AGENT_FILES = (
     "system_info.py", "traffic_collector.py", "install-compatibility.json", "LICENSE",
 )
 DOC_FILES = (
-    "AGENT_ARTIFACTS.md", "AGENT_INSTALL.md", "AGENT_INSTALL_HELP.md", "AGENT_INSTALL_DEBIAN_CI.md", "AGENT_B1.md", "AGENT_B2.md", "AGENT_B3.md",
-    "AGENT_B4.md", "AGENT_B5_LANDING.md", "AGENT_B5_CHAIN.md",
-    "RELEASE_ACCEPTANCE.md", "PYTHON_RUNTIME.md", "DEPENDENCIES.md",
-    "CONTAINER_PERMISSIONS.md", "LICENSING.md",
+    "AGENT_INSTALL.md",
+    "CONTAINER_PERMISSIONS.md",
+    "DEPENDENCIES.md",
+    "LICENSING.md",
 )
 FILES = tuple(sorted(["LICENSE"] + ["agent/" + name for name in AGENT_FILES]
                      + ["docs/" + name for name in DOC_FILES]))

@@ -1,4 +1,4 @@
-"""Controller 镜像启动与 Python 跨版本冷恢复演练；见 docs/PYTHON_RUNTIME.md。"""
+"""Controller 镜像启动与 Python 跨版本冷恢复演练。"""
 import argparse
 import hashlib
 import json

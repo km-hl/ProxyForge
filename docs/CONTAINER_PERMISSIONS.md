@@ -1,6 +1,6 @@
 # Controller 非 root 容器与数据迁移
 
-Controller 镜像和 Compose 均固定使用 **UID/GID 10001:10001**，仍监听 8000，持久化目录仍为 `/app/data`。程序文件由 root 所有；服务账号只需写入数据目录。Compose 移除全部 Linux capabilities 并开启 `no-new-privileges`。这不会赋予 Controller Agent/helper 权限，也不改变 API、schema 5 或 Agent 协议。
+Controller 镜像和 Compose 均固定使用 **UID/GID 10001:10001**，监听 8000，持久化目录为 `/app/data`。程序文件由 root 所有；服务账号只需写入数据目录。Compose 移除全部 Linux capabilities 并开启 `no-new-privileges`。这不会赋予 Controller Agent/helper 权限，也不改变 API、SQLite schema 8 或 Agent 协议。
 
 入口先检查身份及数据目录，再以 `exec` 启动 Uvicorn，保留正常信号处理。数据目录及子目录要求 0700、文件要求 0600，所有者为 10001:10001；服务使用 umask 077 创建新文件。身份不符、所有权不符、只读挂载、权限过宽或链接文件会使启动失败，并指向本文。入口不自动 chown，也不以 root 兜底。
 
@@ -27,7 +27,7 @@ docker compose exec proxyforge id
 
 ## 已有 root-owned 数据升级
 
-1. 按[发布验收与恢复流程](RELEASE_ACCEPTANCE.md)记录旧提交、镜像、Compose/覆盖文件和 `.env`，停止所有 Controller 写入者，备份整个 `data/`（含 SQLite/WAL/SHM、部署密钥、模板历史及缓存），核验备份可读取。备份放在数据目录之外。必须先保存旧配置，再切换新提交。
+1. 记录旧提交、镜像、Compose/覆盖文件和 `.env`，停止所有 Controller 写入者，在数据目录外完整备份整个 `data/`（含 SQLite/WAL/SHM、部署密钥、模板历史及缓存）并核验备份可读。必须先保存旧配置，再切换新提交。
 2. 进入实际仓库物理路径，核对挂载源。不得将 `/`、家目录、其他服务目录或符号链接作为 `data`；不允许数据目录内另挂其他文件系统。下面命令不会替代对实际 Compose 覆盖文件的检查。
 
    ```bash

@@ -1,6 +1,6 @@
-# 机场 HTTP 请求：独立 Session、DNS pinning 与显式信任
+# 机场出站 HTTP：Session 隔离、DNS Pinning 与预算边界
 
-本文说明[开发计划](NEXT_STEPS.md)第 5 项已实现的 Session 隔离与 DNS pinning：关闭环境代理、默认凭据和 CA 路径的隐式继承，并将每跳实际 TCP 连接固定到该跳已验证的 IP。单次请求和批次网络预算见[出站时间预算](OUTBOUND_BUDGETS.md)。适用于节点拉取、机场信息及使用相同拉取逻辑的后台刷新；不改变 Agent 网络行为。
+本文说明 Controller 拉取上游机场节点与元信息时的出站安全边界：关闭环境代理、默认凭据和 CA 路径的隐式继承，将每跳实际 TCP 连接固定到该跳已验证的公网 IP，并对单次与批次请求施加时间预算。适用于节点拉取、机场信息及后台刷新；不改变 Agent 网络行为。
 
 ## 请求边界
 
@@ -51,18 +51,9 @@ Requests 在 `allow_redirects=False` 时仍可能为 `Response.next` 预读跳�
 
 DNS pinning 关闭了应用校验后由连接层再次解析到其他 IP 的窗口；它不替代宿主防火墙、路由和出口控制，也不保证公网服务本身可信。操作系统解析器和网络配置仍属于部署的信任边界。
 
-默认保留 30 秒连接/读取等待，并增加 60 秒单次网络总预算、每跳最多 10 秒 DNS 等待、每批 180 秒网络预算和最多 8 个系统解析槽位。截止时间覆盖地址切换、TLS、跳转及持续滴流；停止标志传入活动请求，迟到 DNS 结果不能连接。
+默认保留 30 秒连接/读取等待，并设置 **60 秒单次网络总预算**、**每跳最多 10 秒 DNS 等待**、**每批 180 秒网络预算**和**最多 8 个系统解析槽位**（每批最多 5 个机场并发）。截止时间覆盖地址切换、TLS、跳转及持续滴流；停止标志传入活动请求，迟到 DNS 结果不能连接。这些预算不强杀 CPU 解析、配置锁或磁盘操作，也不是进程退出的硬上限。
 
-这些预算不能强杀 CPU 解析、配置锁或磁盘操作，也不是进程退出的硬上限。内部接口、容量耗尽、过期队列/缓存行为及升级影响见[出站时间预算](OUTBOUND_BUDGETS.md)，后台额外等待仍遵循[生命周期说明](AIRPORT_BACKGROUND.md)。
+## 验证与升级注意事项
 
-## 验证、升级与回滚
-
-`tests/test_outbound_session.py` 使用真实 Requests 请求准备和环境合并，在适配器发送边界拦截外网访问，验证代理/CA/NETRC 隔离、逐跳校验、响应限制与关闭、Cookie 隔离、并发 Session 独立、显式 CA 和两个机场调用方。前三项回归在旧实现复现失败。
-
-`tests/test_outbound_pinning.py` 在受控回环 HTTP 服务记录真实 `socket.connect` 目标；模拟 DNS 第一次返回允许的测试地址、第二次返回另一私有地址，断言只解析一次并连到第一地址。覆盖 IPv4/IPv6、每跳和每次调用的新连接、同源跳转 DNS 变为内网时拒绝、IDNA/Host、地址切换、失败关闭、连接池释放，以及私有/保留/组播/作用域/混合结果拒绝。旧实现会在二次 DNS 解析处使 rebinding 回归失败。
-
-`tests/test_outbound_tls.py` 动态生成临时 CA、域名和 IP 服务器证书，在真实回环 HTTPS 上记录 TCP 目的地、Host 和 SNI，验证域名证书、自定义 CA、环境 CA 隔离及缺失 CA；特别验证“证书匹配固定 IP、却不匹配原域名”必须失败。测试仅局部允许监听器的回环地址，生产地址分类另有拒绝测试；没有模拟 TCP/TLS 成功，也不声称验证了真实公网机场。证书和私钥随临时目录清理，不提交测试私钥。
-
-升级前核对是否依赖环境代理、NETRC 或环境 CA；前两项不再受支持，需要 Controller 能直接连接机场并使用明确的订阅身份。需要私有 CA 时按专用配置迁移。节点已有缓存仍可按原逻辑回退；机场信息的错误结果仍缓存 24 小时，纠正配置并重启后可在控制台强制刷新。
-
-无需数据库或 Agent 升级。本项回滚使用先前完整 Controller 镜像/代码及其匹配依赖锁，保留运行配置及缓存。退回仅有 Session 隔离的版本会重新开放 DNS 校验到连接的窗口；若再退回 Session 隔离之前，旧版还不识别专用 CA 选项，并恢复对环境代理/凭据/CA 的继承，须核对部署设置。发布操作仍遵循[发布验收流程](RELEASE_ACCEPTANCE.md)，本 PR 不包含部署。
+- 测试：`tests/test_outbound_session.py`、`tests/test_outbound_pinning.py`、`tests/test_outbound_tls.py` 与 `tests/test_outbound_budgets.py` 覆盖代理/CA/NETRC 隔离、DNS rebinding 防护、SNI/证书校验与预算中止。
+- 若部署环境依赖私有 CA，请通过 `.env` 的 `PROXYFORGE_AIRPORT_CA_BUNDLE` 显式配置（环境代理和 `REQUESTS_CA_BUNDLE` 不生效）。修改配置后重建容器生效，不影响数据库或 Agent。

@@ -57,9 +57,11 @@ cryptography 的 wheel 还包含编译依赖的许可归属，应保留随 wheel
 
 ## 可选外部内核与测试工具
 
-| 项目 | 固定版本 | 使用及许可边界 |
-| --- | --- | --- |
-| sing-box | 1.14.2 | helper 明确启用后按固定哈希下载，独立进程运行；[该版本许可](https://github.com/SagerNet/sing-box/blob/v1.14.2/LICENSE) 为 GPL v3 或更高版本，并包含名称/关联声明限制。官方源码和发行内容以 [SagerNet/sing-box](https://github.com/SagerNet/sing-box/tree/v1.14.2) 为准 |
-| Mihomo | v1.19.31 | CI/本地兼容测试独立下载使用，不加入最小 Agent 包；[版本许可 GPL v3](https://github.com/MetaCubeX/mihomo/blob/v1.19.31/LICENSE)，源码见 [MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo/tree/v1.19.31) |
+| 项目 | 使用及许可边界 |
+| --- | --- |
+| sing-box | helper 启用后按 `agent/singbox-release.json` 固定哈希下载，独立进程运行；[SagerNet/sing-box](https://github.com/SagerNet/sing-box) 为 GPL v3 或更高版本并含名称/关联声明限制 |
+| Caddy | 启用回环伪装/ACME 站点时按 `agent/caddy-release.json` 固定哈希下载，独立进程运行；[caddyserver/caddy](https://github.com/caddyserver/caddy) 为 Apache-2.0 |
+| go-gost | 启用端口转发/隧道时按 `agent/gost-release.json` 固定哈希下载，独立进程运行；[go-gost/gost](https://github.com/go-gost/gost) 为 MIT |
+| Mihomo | CI/本地兼容测试按 `tests/mihomo/release.json` 独立下载使用，不进入生产镜像或 Agent 包；[MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo) 为 GPL v3 |
 
 当前最小 Agent 包只含本项目 Agent 代码/许可与选定说明，不打包 sing-box、Mihomo 或 Python 第三方 wheel。若未来镜像、离线包或 Release 附件携带外部二进制，发布前必须根据该版本的实际副本保留 LICENSE/NOTICE，并核对相应源码提供义务；不能用本项目 MIT 文本替代这些材料。项目名称不表示获得上述上游的背书。

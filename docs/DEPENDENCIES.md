@@ -27,7 +27,7 @@ python3.12 -m venv .local/runtime
 .local/runtime/bin/python -m pip check
 ```
 
-开发环境使用独立 venv，将最后的输入改为 `requirements-dev.txt`。Windows 使用 `py -3.13 -m venv .local/runtime` 创建环境，Python 路径改为 `.local/runtime/Scripts/python.exe`。不要在包含无关包的旧环境中声称安装结果可复现；切换服务前仍需按[运行时升级说明](PYTHON_RUNTIME.md)备份和验收。
+开发环境使用独立 venv，将最后的输入改为 `requirements-dev.txt`。Windows 使用 `py -3.13 -m venv .local/runtime` 创建环境，Python 路径改为 `.local/runtime/Scripts/python.exe`。不要在包含无关包的旧环境中声称安装结果可复现；切换服务前请先备份数据并完成验证。
 
 Docker 与 CI 同样启用 `--require-hashes --only-binary=:all:`：缺失哈希、内容不符或没有目标平台 wheel 时失败，不临时回退源码构建，也不临时移除哈希限制。首次构建和安装需要联网；索引可用性不由锁文件保证。
 
@@ -62,10 +62,10 @@ python scripts/check_controller_image.py docker
 
 第一条使用当前 3.12/3.13 解释器创建两套临时环境，在每套环境安装生产锁、记录版本，再安装开发锁。每次安装后执行 `pip check`，检查开发锁未改变生产版本，两套环境版本集合一致；比较排除解释器自带的 pip/setuptools。随后实际下载一个篡改哈希的依赖，必须因哈希不匹配失败。临时环境自动清理，不修改当前环境。
 
-CI 在 Linux/Windows × 3.12/3.13 执行上述安装验收；Linux 3.12 还用固定工具重生成全部锁并要求 Git 无差异。完整 Python/Node、真实 Mihomo、sing-box/systemd 及带锁的镜像冷恢复也必须通过。第二条需要 Docker，使用合成数据独立卷，边界见[运行时说明](PYTHON_RUNTIME.md)。
+CI 在 Linux/Windows × 3.12/3.13 执行上述安装验收；Linux 3.12 还用固定工具重生成全部锁并要求 Git 无差异。完整 Python/Node、真实 Mihomo、sing-box/systemd 及带锁的镜像冷恢复也必须通过。第二条需要 Docker，使用合成数据独立卷，不触碰宿主业务数据。
 
 同一提交、同一目标平台可重复得到相同的应用依赖版本与允许的包内容；这**不等于整个镜像逐字节可复现**。安装时间戳、构建工具/宿主环境等仍可影响镜像字节。依赖锁也不替代漏洞审查或数据恢复验收。
 
-回滚采用旧代码提交及其配套锁/镜像，重建独立环境；业务数据按[发布验收与恢复流程](RELEASE_ACCEPTANCE.md)处理。不要只回退 `.in` 而留下新锁，不要将旧版对照锁用于生产。本项不改变 schema 5、业务 API 或 Agent/helper 协议。
+回滚采用旧代码提交及其配套锁/镜像，重建独立环境；业务数据按冷备恢复流程处理。不要只回退 `.in` 而留下新锁，不要将旧版对照锁用于生产。本项不改变数据库 schema、业务 API 或 Agent/helper 协议。
 
 实现依据：[uv 锁定与约束文档](https://docs.astral.sh/uv/pip/compile/)、[pip 哈希安装说明](https://pip.pypa.io/en/stable/topics/secure-installs/)。
