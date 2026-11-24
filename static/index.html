@@ -10,7 +10,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@twemoji/api@14.1.0/dist/twemoji.min.js"
             integrity="sha384-A0m5nIzznesp6GyoeuDVkJ6nUu+of5PywoXYoq3x+KVE2jxUSoHvftqkR5bA9W7Y"
             crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-    <link rel="stylesheet" href="/static/style.css?v=phase9-20261120-1">
+    <link rel="stylesheet" href="/static/style.css?v=phase10-20261124-2">
 </head>
 <body>
 
@@ -64,6 +64,10 @@
                 <button type="button" class="sidebar-item" data-panel="panel-agents" aria-controls="panel-agents">
                     <svg class="pf-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>
                     <span>服务器与节点</span>
+                </button>
+                <button type="button" class="sidebar-item" data-panel="panel-sub-users" aria-controls="panel-sub-users">
+                    <svg class="pf-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    <span>多用户订阅</span>
                 </button>
                 <button type="button" class="sidebar-item" data-panel="panel-airports" aria-controls="panel-airports">
                     <svg class="pf-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2Z"/></svg>
@@ -143,17 +147,6 @@
                 </div>
 
                 <div class="card">
-                    <div class="card-title card-title-split">
-                        <span>多用户订阅</span>
-                        <div class="panel-actions">
-                            <button type="button" class="btn btn-sm" id="btn-refresh-sub-users">刷新</button>
-                            <button type="button" class="btn btn-primary btn-sm" id="btn-add-sub-user">新建用户</button>
-                        </div>
-                    </div>
-                    <div id="sub-users-list" aria-live="polite">正在读取订阅用户…</div>
-                </div>
-
-                <div class="card">
                     <div class="card-title">网络配置状态</div>
                     <div id="network-overview" aria-live="polite">正在读取已保存模板…</div>
                 </div>
@@ -186,7 +179,6 @@
                     <div class="panel-actions">
                         <button type="button" class="btn btn-primary" id="agent-add-btn">添加服务器</button>
                         <button type="button" class="btn" id="node-order-btn">节点排序</button>
-                        <button type="button" class="btn" id="agent-tunnels-btn">多跳隧道 & 流量</button>
                         <button type="button" class="btn" id="agent-refresh-btn">刷新</button>
                     </div>
                 </div>
@@ -207,6 +199,26 @@
                     </div>
                     <div id="nodes-list"></div>
                 </section>
+            </div>
+
+            <!-- 多用户订阅 -->
+            <div class="section-panel" id="panel-sub-users">
+                <div class="panel-header">
+                    <h1 class="panel-title">多用户订阅</h1>
+                    <div class="panel-actions">
+                        <select id="sub-users-format" aria-label="订阅复制格式">
+                            <option value="auto">通用链接 (自动识别)</option>
+                            <option value="clash">Clash / Mihomo</option>
+                            <option value="singbox">Sing-box</option>
+                            <option value="surge">Surge</option>
+                            <option value="egern">Egern</option>
+                            <option value="uri">URI / Base64</option>
+                        </select>
+                        <button type="button" class="btn" id="btn-refresh-sub-users">刷新</button>
+                        <button type="button" class="btn btn-primary" id="btn-add-sub-user">新建用户</button>
+                    </div>
+                </div>
+                <div id="sub-users-list" aria-live="polite">正在读取订阅用户…</div>
             </div>
 
             <!-- 机场订阅 -->
@@ -331,11 +343,12 @@
     <script src="/static/rule-utils.js?v=phase9-20261120-1"></script>
     <script src="/static/template-session.js?v=mobile-20261021-2"></script>
     <script src="/static/network-settings.js?v=phase9-20261120-1"></script>
-    <script src="/static/subscription-utils.js?v=phase4-20261116-1"></script>
+    <script src="/static/subscription-utils.js?v=phase10-20261124-2"></script>
     <script src="/static/share-link-utils.js?v=phase9-20261123-1"></script>
     <script src="/static/node-order-utils.js?v=phase9-20261123-2"></script>
-    <script src="/static/app.js?v=phase9-20261123-2"></script>
+    <script src="/static/app.js?v=phase10-20261124-2"></script>
+    <script src="/static/sub-users.js?v=phase10-20261124-2"></script>
     <script src="/static/template-history.js?v=mobile-20261021-2"></script>
-    <script src="/static/agents.js?v=phase9-20261123-2"></script>
+    <script src="/static/agents.js?v=phase10-20261124-2"></script>
 </body>
 </html>

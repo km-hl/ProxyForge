@@ -1,5 +1,6 @@
 (function (root) {
     const SUPPORTED_FORMATS = new Set(['clash', 'egern', 'singbox', 'surge', 'uri']);
+    const USER_SUPPORTED_FORMATS = new Set(['auto', 'clash', 'egern', 'singbox', 'surge', 'uri']);
 
     function buildUrl(origin, token, name, format = 'clash', options = {}) {
         if (!SUPPORTED_FORMATS.has(format)) throw new Error('不支持的订阅格式');
@@ -12,12 +13,13 @@
         return url.toString();
     }
 
-    function buildUserUrl(origin, userToken, name, format = 'clash', options = {}) {
-        if (!SUPPORTED_FORMATS.has(format)) throw new Error('不支持的订阅格式');
+    function buildUserUrl(origin, userToken, name, format = 'auto', options = {}) {
+        if (!USER_SUPPORTED_FORMATS.has(format)) throw new Error('不支持的订阅格式');
         const url = new URL('/sub/' + encodeURIComponent(String(userToken || '')), origin);
         url.searchParams.set('name', (name || '').trim() || 'ProxyForge');
         if (format === 'egern') url.searchParams.set('format', 'egern');
-        else if (format !== 'clash') url.searchParams.set('target', format);
+        else if (format === 'clash') url.searchParams.set('target', 'mihomo');
+        else if (format !== 'auto') url.searchParams.set('target', format);
         if (options && options.preferRelay) url.searchParams.set('prefer_relay', 'true');
         return url.toString();
     }

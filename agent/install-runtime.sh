@@ -24,7 +24,7 @@ for unit in proxyforge-runtime.socket proxyforge-runtime.service proxyforge-sing
     state=$(systemctl show --property=LoadState --value "$unit")
     [[ $state == not-found ]] || { echo "Existing runtime unit found" >&2; exit 1; }
 done
-for file in runtime_spec.py deployment_spec.py landing_spec.py chain_spec.py gost_manager.py traffic_collector.py runtime_download.py runtime_engine.py runtime_helper.py runtime_client.py acme_manager.py caddy_manager.py adoption.py singbox-release.json caddy-release.json gost-release.json proxyforge-runtime.socket proxyforge-runtime.service proxyforge-singbox.service proxyforge-caddy.service proxyforge-gost.service LICENSE; do
+for file in runtime_spec.py deployment_spec.py landing_spec.py chain_spec.py gost_manager.py traffic_collector.py nft_users.py self_upgrade.py runtime_download.py runtime_engine.py runtime_helper.py runtime_client.py acme_manager.py caddy_manager.py adoption.py singbox-release.json caddy-release.json gost-release.json proxyforge-runtime.socket proxyforge-runtime.service proxyforge-singbox.service proxyforge-caddy.service proxyforge-gost.service LICENSE; do
     [[ -f "$source_dir/$file" ]] || { echo "Incomplete runtime distribution" >&2; exit 1; }
 done
 for account in proxyforge-singbox proxyforge-caddy proxyforge-gost; do
@@ -36,7 +36,7 @@ done
 useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin proxyforge-singbox
 useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin proxyforge-caddy
 useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin proxyforge-gost
-for file in runtime_spec.py deployment_spec.py landing_spec.py chain_spec.py gost_manager.py traffic_collector.py runtime_download.py runtime_engine.py runtime_helper.py runtime_client.py acme_manager.py caddy_manager.py adoption.py singbox-release.json caddy-release.json gost-release.json LICENSE; do
+for file in runtime_spec.py deployment_spec.py landing_spec.py chain_spec.py gost_manager.py traffic_collector.py nft_users.py self_upgrade.py runtime_download.py runtime_engine.py runtime_helper.py runtime_client.py acme_manager.py caddy_manager.py adoption.py singbox-release.json caddy-release.json gost-release.json LICENSE; do
     install -m 0644 "$source_dir/$file" "/opt/proxyforge-agent/agent/$file"
 done
 install -d -m 0755 /var/lib/proxyforge-runtime /var/lib/proxyforge-runtime/releases /var/lib/proxyforge-runtime/services /var/lib/proxyforge-runtime/services/caddy /var/lib/proxyforge-runtime/services/caddy/releases /var/lib/proxyforge-runtime/services/gost /var/lib/proxyforge-runtime/services/gost/releases /opt/proxyforge-agent/bin
@@ -56,6 +56,8 @@ printf '1\n' > /opt/proxyforge-agent/chain-protocol
 chmod 0644 /opt/proxyforge-agent/chain-protocol
 printf '1\n' > /opt/proxyforge-agent/gost-protocol
 chmod 0644 /opt/proxyforge-agent/gost-protocol
+printf '1\n' > /opt/proxyforge-agent/self-upgrade-protocol
+chmod 0644 /opt/proxyforge-agent/self-upgrade-protocol
 systemctl daemon-reload
 systemctl enable proxyforge-singbox.service
 systemctl enable proxyforge-caddy.service

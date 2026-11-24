@@ -107,17 +107,16 @@ test('Phase 8 shared-port helpers identify peers, normalize legacy vless-reality
     assert.equal(h._nodeOutboundRoleText(nodes[1]), '链式×1');
 });
 
-test('Phase 8 static UI exposes shared-port selector in chain modal and shared notice in deployment modal safely', () => {
+test('Phase 8+ static UI exposes shared-port selector and notice in deployment modal safely', () => {
     const agentsSrc = fs.readFileSync(path.join(__dirname, '..', 'static', 'agents.js'), 'utf8');
     const indexHtml = fs.readFileSync(path.join(__dirname, '..', 'static', 'index.html'), 'utf8');
 
-    assert.ok(agentsSrc.includes('chain-listener-mode'), 'Chain modal must include port/listener sharing mode selector');
-    assert.ok(agentsSrc.includes('chain-share-banner'), 'Chain modal must show shared listener banner');
+    assert.ok(agentsSrc.includes('deployment-listener-mode'), 'Deployment modal must include port/listener sharing mode selector');
     assert.ok(agentsSrc.includes('deployment-share-notice'), 'Deployment modal must show shared listener notice');
-    assert.ok(agentsSrc.includes('♻️ 复用已有端口'), 'Chain modal must offer one-click reuse option');
-    assert.ok(agentsSrc.includes('auth_user'), 'UI hints must explain sing-box auth_user split routing');
-    assert.match(indexHtml, /agents\.js\?v=phase(?:8|9)-/, 'index.html must bust cache for Phase 8+ agents.js');
-    assert.match(indexHtml, /app\.js\?v=phase(?:8|9)-/, 'index.html must bust cache for Phase 8+ app.js');
+    assert.ok(agentsSrc.includes('复用已有端口：'), 'Deployment modal must offer one-click port reuse option');
+    assert.ok(agentsSrc.includes('auth_user'), 'UI notice must mention sing-box auth_user split routing');
+    assert.match(indexHtml, /agents\.js\?v=phase(?:8|9|10)-/, 'index.html must bust cache for Phase 8+ agents.js');
+    assert.match(indexHtml, /app\.js\?v=phase(?:8|9|10)-/, 'index.html must bust cache for Phase 8+ app.js');
 });
 
 test('ProxyForgeRegions supports CN / 中国 quick selection without misclassifying CN2 or 深港IX', () => {

@@ -36,6 +36,7 @@ AGENT_BUNDLE_FILES = (
     "jobs.py",
     "landing_spec.py",
     "main.py",
+    "nft_users.py",
     "proxyforge-agent.service",
     "proxyforge-caddy.service",
     "proxyforge-gost.service",
@@ -49,6 +50,7 @@ AGENT_BUNDLE_FILES = (
     "runtime_engine.py",
     "runtime_helper.py",
     "runtime_spec.py",
+    "self_upgrade.py",
     "singbox-release.json",
     "system_info.py",
     "traffic_collector.py",
@@ -423,18 +425,25 @@ if [[ $UPGRADE -eq 1 ]]; then
         for unit in proxyforge-runtime.socket proxyforge-runtime.service proxyforge-singbox.service proxyforge-caddy.service proxyforge-gost.service; do
             install -m 0644 "$STAGE/agent/$unit" "/etc/systemd/system/$unit"
         done
-        for marker in deployment-protocol landing-protocol chain-protocol gost-protocol; do
+        for marker in deployment-protocol landing-protocol chain-protocol gost-protocol self-upgrade-protocol; do
             printf '1\n' > "/opt/proxyforge-agent/$marker"
             chmod 0644 "/opt/proxyforge-agent/$marker"
         done
         systemctl daemon-reload
         systemctl enable proxyforge-singbox.service proxyforge-caddy.service proxyforge-gost.service >/dev/null 2>&1 || true
         systemctl enable --now proxyforge-runtime.socket
+        if systemctl is-active --quiet proxyforge-singbox.service; then
+            systemctl restart proxyforge-singbox.service >/dev/null 2>&1 || true
+        fi
     elif [[ $ENABLE_RUNTIME -eq 1 ]]; then
         systemctl daemon-reload
         bash "$STAGE/agent/install-runtime.sh"
     else
         systemctl daemon-reload
+    fi
+    if [[ -n "$BUNDLE_SHA256" ]]; then
+        printf '%s\n' "$BUNDLE_SHA256" > /opt/proxyforge-agent/bundle-sha256
+        chmod 0644 /opt/proxyforge-agent/bundle-sha256
     fi
     systemctl enable --now proxyforge-agent.service
     systemctl restart proxyforge-agent.service
@@ -454,6 +463,10 @@ else
         install_args+=(--ca-file "$CA_FILE")
     fi
     bash "$STAGE/agent/install.sh" ${install_args[@]+"${install_args[@]}"} "$SERVER"
+    if [[ -n "$BUNDLE_SHA256" ]]; then
+        printf '%s\n' "$BUNDLE_SHA256" > /opt/proxyforge-agent/bundle-sha256
+        chmod 0644 /opt/proxyforge-agent/bundle-sha256
+    fi
     if [[ $ENABLE_RUNTIME -eq 1 ]]; then
         echo "正在启用托管 Runtime 辅助服务 (sing-box / Caddy / go-gost)..."
         bash "$STAGE/agent/install-runtime.sh"

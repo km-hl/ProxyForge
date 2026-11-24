@@ -144,6 +144,9 @@ class AgentMetadata(Payload):
     landing_protocol_version: StrictInt = Field(default=0, ge=0, le=1000)
     chain_protocol_version: StrictInt = Field(default=0, ge=0, le=1000)
     gost_protocol_version: StrictInt = Field(default=0, ge=0, le=1000)
+    self_upgrade_protocol_version: StrictInt = Field(default=0, ge=0, le=1000)
+    bundle_sha256: ShortText = ""
+    nftables_capable: StrictBool | None = None
     uptime: StrictInt = Field(default=0, ge=0)
     addresses: list[ShortText] = Field(default_factory=list, max_length=16)
     supported: StrictBool = False
@@ -211,9 +214,16 @@ def attach_agent_routes(
     def issue_token(data: RegistrationRequest):
         return store_provider().issue_registration(data.name)
 
+    def _latest_bundle_sha256():
+        try:
+            _, digest = build_agent_bundle()
+            return digest
+        except Exception:
+            return ""
+
     @admin.get("")
     def list_agents():
-        return {"agents": store_provider().list_agents()}
+        return {"agents": store_provider().list_agents(), "latest_bundle_sha256": _latest_bundle_sha256()}
 
     @admin.get("/install-command")
     def install_command():
@@ -305,7 +315,11 @@ def attach_agent_routes(
     def heartbeat(data: AgentMetadata, request: Request, authorization: str = Header(default="")):
         if not authorization.startswith("Bearer ") or len(authorization) > 160:
             raise UnauthorizedAgent()
-        return store_provider().heartbeat(authorization[7:], json.loads(data.model_dump_json()), observed_ip(request))
+        res = store_provider().heartbeat(authorization[7:], json.loads(data.model_dump_json()), observed_ip(request))
+        digest = _latest_bundle_sha256()
+        if digest:
+            res["latest_bundle_sha256"] = digest
+        return res
 
     @agent.post("/adoptions")
     def upload_adoptions(data: AdoptScanUpload, authorization: str = Header(default="")):

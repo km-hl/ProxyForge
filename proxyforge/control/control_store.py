@@ -157,6 +157,17 @@ class ControlStore(SubUserStoreMixin, GostStoreMixin, ManagedInventoryMixin, Cha
                 PRIMARY KEY (agent_id, source_key)
             )"""
         )
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS sub_user_profiles (
+                user_id TEXT PRIMARY KEY REFERENCES sub_users(id) ON DELETE CASCADE,
+                mark_id INTEGER NOT NULL UNIQUE,
+                cred_seed_enc TEXT NOT NULL,
+                allowed_nodes TEXT NOT NULL DEFAULT '[]',
+                info_nodes INTEGER NOT NULL DEFAULT 1,
+                reset_day INTEGER NOT NULL DEFAULT 0,
+                last_reset_month TEXT NOT NULL DEFAULT ''
+            )"""
+        )
 
     @contextlib.contextmanager
     def connection(self):

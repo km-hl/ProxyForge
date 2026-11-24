@@ -68,12 +68,14 @@ def receive_job(connection):
     data = b''
     connection.settimeout(5)
     while not data.endswith(b'\n'):
-        block = connection.recv(262145 - len(data))
-        if not block or len(data) + len(block) > 262144:
+        block = connection.recv(1572865 - len(data))
+        if not block or len(data) + len(block) > 1572864:
             raise ValueError('Invalid runtime request')
         data += block
     job = json.loads(data)
-    if isinstance(job, dict) and set(job) == {'type'} and job.get('type') == 'adopt.scan_privileged':
+    if isinstance(job, dict) and set(job) == {'type'} and job.get('type') in ('adopt.scan_privileged', 'nft.read_user_counters'):
+        return job
+    if isinstance(job, dict) and set(job) == {'type', 'sha256', 'bundle_b64'} and job.get('type') == 'agent.self_upgrade':
         return job
     expected = {'id', 'type', 'payload', 'deployment_revision'}
     if isinstance(job, dict) and job.get('type') in CONFIG_ACTIONS:
@@ -123,7 +125,30 @@ def build_coordinator(root, arch, *, backend_factory=SystemBackend, downloaders=
     return RuntimeCoordinator(engines)
 
 
+def _probe_and_record_nft_capable(root=ROOT):
+    """Probe nftables permission once as root and persist a 0644 marker for Agent heartbeats."""
+    import shutil
+    import subprocess
+    nft = shutil.which('nft') or '/usr/sbin/nft'
+    capable = False
+    if Path(nft).is_file():
+        try:
+            proc = subprocess.run([nft, 'list', 'tables'], capture_output=True, text=True, timeout=5)
+            capable = proc.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            capable = False
+    try:
+        marker = Path(root) / 'nft-capable'
+        marker.write_text('1\n' if capable else '0\n', encoding='utf-8')
+        if os.name == 'posix':
+            os.chmod(marker, 0o644)
+    except OSError:
+        pass
+    return capable
+
+
 def serve_connection(connection, engine, agent_uid):
+    restart_after_reply = False
     try:
         _, uid, _ = struct.unpack('3i', connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
         if uid != agent_uid:
@@ -136,6 +161,25 @@ def serve_connection(connection, engine, agent_uid):
                 'status': 'success',
                 'output': scan_out,
                 'credentials': last_extracted_credentials(),
+                'error': None,
+            }
+        elif job.get('type') == 'nft.read_user_counters':
+            from .nft_users import NftUserCounters
+            state_root = (getattr(engine, 'service_roots', None) or {}).get(SERVICE_SINGBOX) or getattr(engine, 'root', None) or ROOT
+            result = {
+                'status': 'success',
+                'output': NftUserCounters(state_root).read(),
+                'error': None,
+            }
+        elif job.get('type') == 'agent.self_upgrade':
+            import base64
+            from .self_upgrade import apply_bundle
+            raw = base64.b64decode(job['bundle_b64'], validate=True)
+            out = apply_bundle(raw, job['sha256'])
+            restart_after_reply = True
+            result = {
+                'status': 'success',
+                'output': out,
                 'error': None,
             }
         else:
@@ -164,6 +208,7 @@ def serve_connection(connection, engine, agent_uid):
         connection.sendall(json.dumps(result).encode() + b'\n')
     except OSError:
         pass
+    return restart_after_reply
 
 
 def main():
@@ -175,6 +220,7 @@ def main():
     if not arch or os.environ.get('LISTEN_PID') != str(os.getpid()) or os.environ.get('LISTEN_FDS') != '1':
         raise SystemExit('Runtime helper requires systemd socket activation')
     trusted_directory(ROOT)
+    _probe_and_record_nft_capable(ROOT)
     services = [SERVICE_SINGBOX]
     for optional_service in (SERVICE_CADDY, SERVICE_GOST):
         try:
@@ -193,4 +239,8 @@ def main():
             while True:
                 connection, _ = listener.accept()
                 with connection:
-                    serve_connection(connection, coordinator, agent_uid)
+                    should_restart = serve_connection(connection, coordinator, agent_uid)
+                if should_restart:
+                    from .self_upgrade import schedule_agent_restart
+                    schedule_agent_restart()
+                    break

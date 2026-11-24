@@ -14,6 +14,7 @@ from .client import Client, AgentConnectionError, CredentialRejected
 from .system_info import collect, warm_public_addresses
 from .adoption import clear_extracted_credentials, last_extracted_credentials, scan_host
 from .jobs import process_job, runner_lock
+from .self_upgrade import maybe_auto_upgrade
 from .traffic_collector import flush_gost_traffic
 
 
@@ -127,6 +128,12 @@ def run_loop(path, once=False):
                     flush_gost_traffic(client, config, path)
                 except (AgentConnectionError, OSError, ValueError):
                     pass
+                if not once:
+                    try:
+                        if maybe_auto_upgrade(client, config, path, result):
+                            return 0
+                    except (AgentConnectionError, OSError, ValueError):
+                        pass
             failures = 0
             if once:
                 return 0

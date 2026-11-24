@@ -19,12 +19,12 @@ AGENT_FILES = (
     "__init__.py", "acme_manager.py", "adoption.py", "caddy-release.json",
     "caddy_manager.py", "chain_spec.py", "client.py", "deployment_spec.py",
     "gost-release.json", "gost_manager.py", "install-runtime.sh", "install.sh",
-    "job_lease.py", "jobs.py", "landing_spec.py", "main.py",
+    "job_lease.py", "jobs.py", "landing_spec.py", "main.py", "nft_users.py",
     "proxyforge-agent.service", "proxyforge-caddy.service", "proxyforge-gost.service",
     "proxyforge-runtime.service", "proxyforge-runtime.socket",
     "proxyforge-singbox.service", "README.md", "README.zh-CN.md",
     "runtime_client.py", "runtime_download.py", "runtime_engine.py",
-    "runtime_helper.py", "runtime_spec.py", "singbox-release.json",
+    "runtime_helper.py", "runtime_spec.py", "self_upgrade.py", "singbox-release.json",
     "system_info.py", "traffic_collector.py", "install-compatibility.json", "LICENSE",
 )
 DOC_FILES = (

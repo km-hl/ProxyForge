@@ -9,7 +9,14 @@ import time
 
 from . import VERSION, PROTOCOL_VERSION
 from .runtime_client import available as runtime_available
-from .runtime_client import deployment_available, gost_available, landing_available, chain_available
+from .runtime_client import (
+    chain_available,
+    deployment_available,
+    gost_available,
+    landing_available,
+    self_upgrade_available,
+)
+from .self_upgrade import read_installed_bundle_sha256
 
 SUPPORTED = {("debian", "12"), ("debian", "13"), ("ubuntu", "22.04"), ("ubuntu", "24.04")}
 _PUBLIC_IP_CACHE = {"at": 0.0, "ipv4": "", "ipv6": ""}
@@ -105,6 +112,19 @@ def warm_public_addresses(*, ip_reader=None, now_fn=time.monotonic):
     return detect_public_addresses(allow_network=True, ip_reader=ip_reader, now_fn=now_fn)
 
 
+def read_nftables_capable(path=Path("/var/lib/proxyforge-runtime/nft-capable")):
+    """Read root helper's cached nftables capability probe (`True`/`False`/`None`)."""
+    try:
+        raw = Path(path).read_text(encoding="utf-8").strip()
+        if raw == "1":
+            return True
+        if raw == "0":
+            return False
+    except OSError:
+        pass
+    return None
+
+
 def collect(instance_id, *, allow_network=False):
     system, version = os_release()
     machine = platform.machine().lower()
@@ -130,6 +150,9 @@ def collect(instance_id, *, allow_network=False):
             "landing_protocol_version": 1 if landing_available() else 0,
             "chain_protocol_version": 1 if chain_available() else 0,
             "gost_protocol_version": 1 if gost_available() else 0,
+            "self_upgrade_protocol_version": 1 if self_upgrade_available() else 0,
+            "bundle_sha256": read_installed_bundle_sha256(),
+            "nftables_capable": read_nftables_capable(),
             "uptime": uptime, "addresses": addresses,
             "supported": (system, version) in SUPPORTED and arch in {"amd64", "arm64"},
             "singbox": singbox_status()}

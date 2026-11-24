@@ -372,6 +372,11 @@ def build_singbox_config(
                     local_srv_entry = {'type': 'udp', 'tag': 'local', 'server': clean_local}
                 break
 
+    dns_rules: List[Dict[str, Any]] = [{'clash_mode': 'direct', 'server': 'local'}]
+    domestic_rule_sets = [tag for tag in ('geosite-private', 'geosite-cn') if tag in rule_sets_by_tag]
+    if domestic_rule_sets:
+        dns_rules.append({'rule_set': domestic_rule_sets, 'server': 'local'})
+
     dns_section: Dict[str, Any] = {
         'servers': [
             {
@@ -382,7 +387,7 @@ def build_singbox_config(
             },
             local_srv_entry,
         ],
-        'rules': [{'clash_mode': 'direct', 'server': 'local'}],
+        'rules': dns_rules,
         'final': 'remote',
     }
     if not ipv6_enabled:

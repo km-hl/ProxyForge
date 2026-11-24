@@ -209,10 +209,11 @@ class TrafficCounterState:
         items = []
         for resource_key in sorted(current_totals):
             sample = current_totals[resource_key]
+            sample_epoch = str(sample.get('epoch') or epoch)
             raw_rx = max(0, int(sample.get('rx_bytes', 0)))
             raw_tx = max(0, int(sample.get('tx_bytes', 0)))
             prev = self.counters.get(resource_key)
-            if prev is None or prev.get('epoch') != epoch:
+            if prev is None or prev.get('epoch') != sample_epoch:
                 rx_delta = raw_rx
                 tx_delta = raw_tx
             else:
@@ -224,7 +225,7 @@ class TrafficCounterState:
             self.counters[resource_key] = {
                 'raw_rx': raw_rx,
                 'raw_tx': raw_tx,
-                'epoch': str(epoch),
+                'epoch': sample_epoch,
             }
             if rx_delta > 0 or tx_delta > 0:
                 items.append({
@@ -234,7 +235,7 @@ class TrafficCounterState:
                     'tx_delta': tx_delta,
                     'raw_rx': raw_rx,
                     'raw_tx': raw_tx,
-                    'epoch': str(epoch),
+                    'epoch': sample_epoch,
                 })
 
         batches = []
@@ -282,17 +283,18 @@ class ReliableTrafficSpool(TrafficCounterState):
         items = []
         for resource_key in sorted(current_totals):
             sample = current_totals[resource_key]
+            sample_epoch = str(sample.get('epoch') or epoch)
             raw_rx = max(0, int(sample.get('rx_bytes', 0)))
             raw_tx = max(0, int(sample.get('tx_bytes', 0)))
             prev = self.counters.get(resource_key)
-            if prev is None or prev.get('epoch') != epoch:
+            if prev is None or prev.get('epoch') != sample_epoch:
                 rx_delta, tx_delta = raw_rx, raw_tx
             else:
                 prev_rx = max(0, int(prev.get('raw_rx', 0)))
                 prev_tx = max(0, int(prev.get('raw_tx', 0)))
                 rx_delta = (raw_rx - prev_rx) if raw_rx >= prev_rx else raw_rx
                 tx_delta = (raw_tx - prev_tx) if raw_tx >= prev_tx else raw_tx
-            self.counters[resource_key] = {'raw_rx': raw_rx, 'raw_tx': raw_tx, 'epoch': str(epoch)}
+            self.counters[resource_key] = {'raw_rx': raw_rx, 'raw_tx': raw_tx, 'epoch': sample_epoch}
             if rx_delta > 0 or tx_delta > 0:
                 items.append({
                     'resource_key': resource_key,
@@ -301,7 +303,7 @@ class ReliableTrafficSpool(TrafficCounterState):
                     'tx_delta': tx_delta,
                     'raw_rx': raw_rx,
                     'raw_tx': raw_tx,
-                    'epoch': str(epoch),
+                    'epoch': sample_epoch,
                 })
         new_batches = []
         chunk_size = max(1, min(int(max_batch_items), 64))
@@ -326,8 +328,9 @@ class ReliableTrafficSpool(TrafficCounterState):
 
 def flush_gost_traffic(client, config, config_path, *,
                        metrics_meta_path=Path('/var/lib/proxyforge-runtime/services/gost/metrics.json'),
-                       include_nftables=False):
-    """Poll loopback go-gost /metrics and upload idempotent byte delta batches."""
+                       include_nftables=False,
+                       nft_user_reader=None):
+    """Poll loopback go-gost /metrics and per-user nftables counters, uploading idempotent delta batches."""
     meta_file = Path(metrics_meta_path)
     totals = {}
     epoch = 'gost-0'
@@ -346,6 +349,21 @@ def flush_gost_traffic(client, config, config_path, *,
                 totals.setdefault(key, item)
         except (OSError, ValueError):
             pass
+    try:
+        if nft_user_reader is None:
+            from .runtime_client import read_nft_user_counters
+            nft_user_reader = read_nft_user_counters
+        nft_data = nft_user_reader()
+        if isinstance(nft_data, dict):
+            nft_epoch = str(nft_data.get('epoch') or 'nft-0')
+            for key, item in (nft_data.get('totals') or {}).items():
+                if not isinstance(item, dict):
+                    continue
+                entry = dict(item)
+                entry.setdefault('epoch', nft_epoch)
+                totals[key] = entry
+    except (OSError, ValueError):
+        pass
     state_path = Path(config_path).with_name('traffic-state.json')
     if not totals and not state_path.exists():
         return 0

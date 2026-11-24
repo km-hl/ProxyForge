@@ -8,6 +8,7 @@ import urllib.parse
 import uuid
 
 from .deployment_spec import host, node_name, validate_endpoint
+from .nft_users import USER_MARK_MAX, user_mark
 
 LANDING_ACTIONS = ('landing.apply', 'landing.remove')
 METHOD = '2022-blake3-aes-256-gcm'
@@ -414,6 +415,61 @@ def shared_user_key(member_id):
     return 'u-primary' if member_id == 'primary' else f'u-{member_id}'
 
 
+def sub_user_auth_key(mark_id, member_id):
+    """Stable ASCII sing-box user name for a subscription user on a specific managed node."""
+    return f'pfu-{mark_id}-primary' if member_id == 'primary' else f'pfu-{mark_id}-{member_id}'
+
+
+def _validate_node_sub_users(protocol, entries):
+    if entries is None:
+        return
+    if not isinstance(entries, list) or len(entries) > 256:
+        raise ValueError('Invalid sub_users list')
+    if entries and normalize_protocol(protocol) not in SHARED_PORT_PROTOCOLS:
+        raise ValueError('Protocol does not support independent sub_users credentials')
+    seen_marks = set()
+    seen_creds = set()
+    cred_field = _SHARED_CREDENTIAL_FIELD.get(normalize_protocol(protocol))
+    for item in entries:
+        if not isinstance(item, dict):
+            raise ValueError('Invalid sub_user entry')
+        if set(item) - {'mark_id', 'uuid', 'password'}:
+            raise ValueError('Unsupported sub_user field')
+        mid = item.get('mark_id')
+        if type(mid) is not int or not 1 <= mid <= USER_MARK_MAX:
+            raise ValueError('Invalid sub_user mark_id')
+        if mid in seen_marks:
+            raise ValueError('Duplicate sub_user mark_id on node')
+        seen_marks.add(mid)
+        if cred_field == 'uuid':
+            val = item.get('uuid', '')
+            if not isinstance(val, str) or str(uuid.UUID(val)) != val:
+                raise ValueError('Invalid sub_user UUID')
+        else:
+            val = item.get('password', '')
+            if not isinstance(val, str) or len(val) < 16 or any(ord(c) < 32 for c in val):
+                raise ValueError('Invalid sub_user password')
+        if val in seen_creds:
+            raise ValueError('Duplicate sub_user credential on node')
+        seen_creds.add(val)
+
+
+def collect_spec_user_marks(spec):
+    """Return sorted sub-user mark_ids that should be metered by host nftables."""
+    if not isinstance(spec, dict) or spec.get('adopted_only') is True or spec.get('no_user_marks') is True:
+        return []
+    marks = set()
+    for _member_id, node in _node_entries(spec):
+        proto = normalize_protocol(_resolved_protocol(node))
+        if proto not in SHARED_PORT_PROTOCOLS:
+            continue
+        for item in node.get('sub_users') or ():
+            mid = item.get('mark_id')
+            if type(mid) is int and 1 <= mid <= USER_MARK_MAX:
+                marks.add(mid)
+    return sorted(marks)
+
+
 def _node_entries(spec):
     entries = [('primary', spec)]
     for idx, extra in enumerate(spec.get('extra_nodes') or [], 1):
@@ -469,7 +525,11 @@ def _validate_shared_listeners(spec):
             }
             if len(obfs) != 1:
                 raise ValueError('Shared Hysteria2 listener nodes must use identical obfuscation')
-        credentials = [node.get(_SHARED_CREDENTIAL_FIELD[protocol]) for node in nodes]
+        credentials = []
+        for node in nodes:
+            credentials.append(node.get(_SHARED_CREDENTIAL_FIELD[protocol]))
+            for su in node.get('sub_users') or ():
+                credentials.append(su.get(_SHARED_CREDENTIAL_FIELD[protocol]))
         if len(set(credentials)) != len(credentials):
             raise ValueError('Shared listener credentials must be unique')
 
@@ -479,8 +539,19 @@ def _merge_shared_users(inbound, protocol, members):
     for member_id, node in members:
         if protocol == 'reality':
             users.append({'name': shared_user_key(member_id), 'uuid': node['uuid'], 'flow': 'xtls-rprx-vision'})
+            for su in node.get('sub_users') or ():
+                users.append({
+                    'name': sub_user_auth_key(su['mark_id'], member_id),
+                    'uuid': su['uuid'],
+                    'flow': 'xtls-rprx-vision',
+                })
         else:
             users.append({'name': shared_user_key(member_id), 'password': node['password']})
+            for su in node.get('sub_users') or ():
+                users.append({
+                    'name': sub_user_auth_key(su['mark_id'], member_id),
+                    'password': su['password'],
+                })
     inbound['users'] = users
     if protocol == 'reality':
         short_ids = []
@@ -609,10 +680,14 @@ def _validate_single_node_spec(spec):
         | {
             'reality_public_key', 'uuid', 'extra_nodes', 'adopted_nodes',
             'returned_adoptions', 'disabled_adoptions', 'hop_passwords', 'resolved_outbound_hops',
+            'sub_users', 'no_user_marks',
         }
     )
     if set(spec) - allowed:
         raise ValueError('Invalid landing specification')
+    if 'no_user_marks' in spec and type(spec['no_user_marks']) is not bool:
+        raise ValueError('Invalid no_user_marks flag')
+    _validate_node_sub_users(resolved, spec.get('sub_users'))
 
     public = {k: v for k, v in spec.items() if k in _PROTOCOL_ALLOWED_SETTINGS[resolved]}
     validate_settings(public, protocol=resolved)
@@ -997,7 +1072,7 @@ def _apply_domain_resolver(out, strategy):
         out['domain_resolver'] = {'server': 'local', 'strategy': strategy}
 
 
-def _build_node_outbound(node_spec, tag):
+def _build_node_outbound(node_spec, tag, *, routing_mark=0):
     mode = node_spec.get('outbound_mode', 'direct')
     strategy = node_spec.get('outbound_strategy')
     if mode == 'socks5':
@@ -1013,6 +1088,8 @@ def _build_node_outbound(node_spec, tag):
         if node_spec.get('outbound_password'):
             out['password'] = node_spec['outbound_password']
         _apply_domain_resolver(out, strategy)
+        if routing_mark:
+            out['routing_mark'] = routing_mark
         return out
     if mode == 'ss':
         out = {
@@ -1024,13 +1101,17 @@ def _build_node_outbound(node_spec, tag):
             'password': node_spec['outbound_password'],
         }
         _apply_domain_resolver(out, strategy)
+        if routing_mark:
+            out['routing_mark'] = routing_mark
         return out
     out = {'type': 'direct', 'tag': tag}
     _apply_domain_resolver(out, strategy)
+    if routing_mark:
+        out['routing_mark'] = routing_mark
     return out
 
 
-def _build_node_outbounds(node_spec, base_tag):
+def _build_node_outbounds(node_spec, base_tag, *, routing_mark=0):
     """Build one or more sing-box outbounds (chained via detour when outbound_mode='chain')."""
     mode = node_spec.get('outbound_mode', 'direct')
     strategy = node_spec.get('outbound_strategy')
@@ -1063,12 +1144,14 @@ def _build_node_outbounds(node_spec, base_tag):
                     out['password'] = hop['password']
             if idx == 1:
                 _apply_domain_resolver(out, strategy)
+                if routing_mark:
+                    out['routing_mark'] = routing_mark
             if prev_tag:
                 out['detour'] = prev_tag
             outs.append(out)
             prev_tag = hop_tag
         return outs, prev_tag
-    return [_build_node_outbound(node_spec, base_tag)], base_tag
+    return [_build_node_outbound(node_spec, base_tag, routing_mark=routing_mark)], base_tag
 
 
 def runtime_config(spec, *, cert_path=None, key_path=None, caddy_port=None, backend_port=None, site_id='landing',
@@ -1104,18 +1187,23 @@ def runtime_config(spec, *, cert_path=None, key_path=None, caddy_port=None, back
     entry_map = dict(entries)
     shared_plan = shared_listener_plan(spec)
     member_group = {member: key for key, group in shared_plan.items() for member in group['members']}
+    no_user_marks = bool(spec.get('no_user_marks'))
 
     inbounds = []
     emitted_groups = set()
     for member_id, node in entries:
         key = member_group.get(member_id)
         if key is None:
-            inbounds.append(render_inbound(member_id, node))
+            rendered = render_inbound(member_id, node)
+            proto = normalize_protocol(_resolved_protocol(node))
+            if proto in SHARED_PORT_PROTOCOLS and (node.get('sub_users') or ()):
+                _merge_shared_users(rendered, proto, [(member_id, node)])
+            inbounds.append(rendered)
             continue
         if key in emitted_groups:
             continue
         # One listener per shared (protocol, port); the host supplies TLS/Caddy and every
-        # member contributes a named user so `auth_user` can route it independently.
+        # member contributes named users so `auth_user` can route each independently.
         emitted_groups.add(key)
         group = shared_plan[key]
         merged = render_inbound(group['host'], entry_map[group['host']])
@@ -1129,11 +1217,15 @@ def runtime_config(spec, *, cert_path=None, key_path=None, caddy_port=None, back
     extra_nodes = spec.get('extra_nodes') or []
     primary_mode = spec.get('outbound_mode', 'direct')
     primary_strategy = spec.get('outbound_strategy')
+    any_marked_sub_users = (not no_user_marks) and any(
+        bool(node.get('sub_users')) and normalize_protocol(_resolved_protocol(node)) in SHARED_PORT_PROTOCOLS
+        for _mid, node in entries
+    )
 
     def has_custom_outbound(node):
         return node.get('outbound_mode', 'direct') != 'direct' or bool(node.get('outbound_strategy'))
 
-    if primary_mode == 'direct' and not any(has_custom_outbound(item) for item in extra_nodes):
+    if primary_mode == 'direct' and not any(has_custom_outbound(item) for item in extra_nodes) and not any_marked_sub_users:
         direct_out = {'type': 'direct', 'tag': 'direct'}
         _apply_domain_resolver(direct_out, primary_strategy)
         cfg = {'log': {'level': 'warn'}, 'inbounds': inbounds, 'outbounds': [direct_out]}
@@ -1144,28 +1236,63 @@ def runtime_config(spec, *, cert_path=None, key_path=None, caddy_port=None, back
     outbounds = []
     route_rules = []
     primary_final_tag = 'direct'
+    shared_direct_user_tags = {}
+
     for member_id, node in entries:
         key = member_group.get(member_id)
+        proto = normalize_protocol(_resolved_protocol(node))
+        sub_users = (node.get('sub_users') or []) if proto in SHARED_PORT_PROTOCOLS else []
+        listener_tag = inbound_tag(shared_plan[key]['host']) if key is not None else inbound_tag(member_id)
+        node_base_tag = 'out-primary' if member_id == 'primary' else f'out-node-{member_id}'
+
         if has_custom_outbound(node):
-            outs, out_tag = _build_node_outbounds(node, 'out-primary' if member_id == 'primary' else f'out-node-{member_id}')
+            outs, out_tag = _build_node_outbounds(node, node_base_tag)
             outbounds.extend(outs)
             if member_id == 'primary':
                 primary_final_tag = out_tag
         elif key is not None:
             out_tag = 'direct'  # Shared listener members are always routed explicitly.
         else:
-            continue
+            out_tag = 'direct'
+
+        # Per-sub-user marked routes must precede generic inbound rules.
+        if sub_users and not no_user_marks:
+            for su in sub_users:
+                mid = su['mark_id']
+                mark_val = user_mark(mid)
+                if not mark_val:
+                    continue
+                if has_custom_outbound(node):
+                    u_outs, u_out_tag = _build_node_outbounds(node, f'{node_base_tag}-u{mid}', routing_mark=mark_val)
+                    outbounds.extend(u_outs)
+                else:
+                    u_out_tag = shared_direct_user_tags.get(mid)
+                    if not u_out_tag:
+                        u_out_tag = f'pf-u-{mid}'
+                        outbounds.append({'type': 'direct', 'tag': u_out_tag, 'routing_mark': mark_val})
+                        shared_direct_user_tags[mid] = u_out_tag
+                route_rules.append({
+                    'inbound': [listener_tag],
+                    'auth_user': [sub_user_auth_key(mid, member_id)],
+                    'action': 'route',
+                    'outbound': u_out_tag,
+                })
+
         if key is None:
-            route_rules.append({'inbound': [inbound_tag(member_id)], 'action': 'route', 'outbound': out_tag})
+            if has_custom_outbound(node):
+                route_rules.append({'inbound': [listener_tag], 'action': 'route', 'outbound': out_tag})
         else:
+            auth_users = [shared_user_key(member_id)]
+            if no_user_marks and sub_users:
+                auth_users.extend(sub_user_auth_key(su['mark_id'], member_id) for su in sub_users)
             route_rules.append({
-                'inbound': [inbound_tag(shared_plan[key]['host'])],
-                'auth_user': [shared_user_key(member_id)],
+                'inbound': [listener_tag],
+                'auth_user': auth_users,
                 'action': 'route',
                 'outbound': out_tag,
             })
     outbounds.append({'type': 'direct', 'tag': 'direct'})
-    final_tag = primary_final_tag if (primary_mode != 'direct' and not extra_nodes) else 'direct'
+    final_tag = primary_final_tag if (primary_mode != 'direct' and not extra_nodes and not any_marked_sub_users) else 'direct'
     cfg = {
         'log': {'level': 'warn'},
         'inbounds': inbounds,

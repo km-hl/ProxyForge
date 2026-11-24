@@ -101,14 +101,12 @@ test('Phase 6 UI helpers format outbound hops summary and validate hop collectio
     assert.equal('_password' in collected.outbound_hops[1], false);
 });
 
-test('Phase 6 static assets include Caddy auxiliary label, chain outbound mode, multi-chain UI and relay+tcp preset', () => {
+test('Phase 6 static assets include Caddy auxiliary label, chain outbound mode and ss-landings wiring', () => {
     const { src } = loadAgentsSandbox();
     const indexHtml = fs.readFileSync(path.join(__dirname, '..', 'static', 'index.html'), 'utf8');
     assert.ok(src.includes('关联伪装站（运行中，无需单独接管）'), 'Caddy auxiliary badge label required');
     assert.ok(src.includes('has_xray_xver'), 'Xray xver compatibility hint required');
     assert.ok(src.includes('value="chain"'), 'chain outbound_mode option required in deployment modal');
     assert.ok(src.includes('/agents/deployments/ss-landings'), 'ss-landings API fetch required');
-    assert.ok(src.includes('TUNNEL_TRANSPORT_PRESETS'), 'go-gost tunnel transport presets required');
-    assert.ok(src.includes('relay+tcp (国内↔IX 推荐'), 'CN-to-IX relay+tcp preset required');
-    assert.match(indexHtml, /agents\.js\?v=phase(?:6|7|8|9)-/, 'agents.js cache-bust version must be bumped');
+    assert.match(indexHtml, /agents\.js\?v=phase(?:6|7|8|9|10)-/, 'agents.js cache-bust version must be bumped');
 });

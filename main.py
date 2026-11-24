@@ -431,6 +431,7 @@ subscription_api = create_subscription_router(
     ca_bundle_reader=lambda: AIRPORT_CA_BUNDLE, logger=logger,
     sub_users_resolver=lambda tok: control_store().authorize_sub_token(tok),
     relay_resolver=lambda: control_store().list_active_relays(),
+    user_credentials_resolver=lambda user_id, node_keys: control_store().derive_user_credentials_for_nodes(user_id, node_keys),
 )
 app.include_router(subscription_api.router)
 get_egern_rule_set = subscription_api.get_egern_rule_set
@@ -688,12 +689,18 @@ def _rename_proxy_references_in_template(old_name: str, new_name: str) -> Dict[s
 attach_agent_routes(
     app,
     verify_api_token,
-    control_store,
-    manual_nodes_reader=load_manual_nodes,
+    lambda: control_store(),
+    manual_nodes_reader=lambda: load_manual_nodes(),
     replace_manual_node=_replace_manual_node_on_adoption,
     rename_template_references=_rename_proxy_references_in_template,
 )
-app.include_router(create_sub_user_router(verify_management=verify_api_token, store_provider=control_store))
+app.include_router(
+    create_sub_user_router(
+        verify_management=verify_api_token,
+        store_provider=lambda: control_store(),
+        manual_nodes_reader=lambda: load_manual_nodes(),
+    )
+)
 
 # ================= 后台定时刷新任务 =================
 
@@ -701,6 +708,7 @@ app.include_router(create_sub_user_router(verify_management=verify_api_token, st
 AIRPORT_REFRESH_START_DELAY = 300
 AIRPORT_REFRESH_INTERVAL = 4 * 3600
 AIRPORT_REFRESH_SHUTDOWN_TIMEOUT = 5
+SUB_USER_RECONCILE_INTERVAL = 60
 
 
 class AirportUpdaterState:
@@ -708,6 +716,7 @@ class AirportUpdaterState:
         self.stop = threading.Event()
         self.task = None
         self.worker = None
+        self.reconcile_thread = None
         self.thread_done = threading.Event()
         self.thread_done.set()
 
@@ -744,6 +753,18 @@ async def background_airport_updater(state):
     finally:
         state.stop.set()
 
+def _sub_user_reconciler_loop(stop_event):
+    while not stop_event.wait(SUB_USER_RECONCILE_INTERVAL):
+        if stop_event.is_set():
+            break
+        if not (Path(DATA_DIR) / "proxyforge.db").exists():
+            continue
+        try:
+            control_store().reconcile_sub_users()
+        except Exception as exc:
+            logger.error("多用户配额与凭据巡检异常（%s）", type(exc).__name__)
+
+
 @app.on_event("startup")
 async def startup_event():
     previous = getattr(app.state, "airport_updater", None)
@@ -756,6 +777,13 @@ async def startup_event():
     state = AirportUpdaterState()
     app.state.airport_updater = state
     state.task = asyncio.create_task(background_airport_updater(state))
+    state.reconcile_thread = threading.Thread(
+        target=_sub_user_reconciler_loop,
+        args=(state.stop,),
+        name="proxyforge-sub-user-reconciler",
+        daemon=True,
+    )
+    state.reconcile_thread.start()
     logger.info("系统启动：已完成配置引用检查并注册后台定时更新任务")
 
 
@@ -765,8 +793,11 @@ async def shutdown_event():
     if state is None:
         return
     state.stop.set()
-    state.task.cancel()
-    await asyncio.gather(state.task, return_exceptions=True)
+    if state.task is not None:
+        state.task.cancel()
+        await asyncio.gather(state.task, return_exceptions=True)
+    if state.reconcile_thread is not None and state.reconcile_thread.is_alive():
+        await asyncio.to_thread(state.reconcile_thread.join, 2)
     if state.worker is not None and not state.worker.done():
         _, pending = await asyncio.wait({state.worker}, timeout=AIRPORT_REFRESH_SHUTDOWN_TIMEOUT)
         if pending:

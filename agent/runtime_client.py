@@ -28,6 +28,10 @@ def gost_available():
     return capability_available('gost-protocol')
 
 
+def self_upgrade_available():
+    return capability_available('self-upgrade-protocol')
+
+
 def capability_available(name):
     marker = Path('/opt/proxyforge-agent') / name
     try:
@@ -110,3 +114,63 @@ def scan_host_privileged():
     except (OSError, ValueError):
         return None
     return None
+
+
+def read_nft_user_counters():
+    """Read per-user nftables byte counters via the privileged local runtime helper."""
+    if not available():
+        return None
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(5)
+            connection.connect(SOCKET)
+            import struct
+            if struct.unpack('3i', connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))[1] != 0:
+                return None
+            connection.sendall(json.dumps({'type': 'nft.read_user_counters'}).encode('utf-8') + b'\n')
+            connection.settimeout(10)
+            data = b''
+            while not data.endswith(b'\n'):
+                block = connection.recv(131073 - len(data))
+                if not block or len(data) + len(block) > 131072:
+                    return None
+                data += block
+            result = json.loads(data)
+            if isinstance(result, dict) and result.get('status') == 'success' and isinstance(result.get('output'), dict):
+                return result['output']
+    except (OSError, ValueError):
+        return None
+    return None
+
+
+def request_self_upgrade(bundle_bytes, expected_sha256):
+    """Send a SHA256-pinned Agent bundle to the root helper for atomic self-upgrade."""
+    if not self_upgrade_available():
+        return {'status': 'failed', 'output': None, 'error': 'runtime_unavailable'}
+    import base64
+    import struct
+    payload = {
+        'type': 'agent.self_upgrade',
+        'sha256': str(expected_sha256 or '').strip().lower(),
+        'bundle_b64': base64.b64encode(bundle_bytes).decode('ascii'),
+    }
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(10)
+            connection.connect(SOCKET)
+            if struct.unpack('3i', connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))[1] != 0:
+                raise ValueError('Invalid runtime helper peer')
+            connection.sendall(json.dumps(payload).encode('utf-8') + b'\n')
+            connection.settimeout(60)
+            data = b''
+            while not data.endswith(b'\n'):
+                block = connection.recv(16385 - len(data))
+                if not block or len(data) + len(block) > 16384:
+                    raise ValueError('Invalid runtime helper response')
+                data += block
+            result = json.loads(data)
+            if isinstance(result, dict) and result.get('status') in ('success', 'failed'):
+                return result
+    except (OSError, ValueError):
+        return {'status': 'failed', 'output': None, 'error': 'runtime_failed'}
+    return {'status': 'failed', 'output': None, 'error': 'runtime_failed'}

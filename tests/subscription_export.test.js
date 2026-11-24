@@ -28,6 +28,15 @@ test('Egern and multi-client formats preserve credentials, prefer_relay and esca
     assert.equal(userUrl.searchParams.get('prefer_relay'), 'true');
     assert.equal(userUrl.searchParams.get('name'), 'Alice');
 
+    const autoUserUrl = new URL(buildUserUrl('https://example.com', 'pfsub_abc', 'Bob', 'auto'));
+    assert.equal(autoUserUrl.pathname, '/sub/pfsub_abc');
+    assert.equal(autoUserUrl.searchParams.has('target'), false);
+    assert.equal(autoUserUrl.searchParams.has('format'), false);
+    assert.equal(autoUserUrl.searchParams.get('name'), 'Bob');
+
+    const clashUserUrl = new URL(buildUserUrl('https://example.com', 'pfsub_abc', 'Bob', 'clash'));
+    assert.equal(clashUserUrl.searchParams.get('target'), 'mihomo');
+
     assert.throws(() => buildUrl(url.origin, 'test', 'test', 'invalid'));
     assert.throws(() => buildUserUrl(url.origin, 'test', 'test', 'invalid'));
 });

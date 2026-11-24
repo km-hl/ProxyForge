@@ -247,10 +247,13 @@ class Phase3MultiUserAndPreferRelayIntegrationTest(unittest.TestCase):
         self.assertIsNotNone(cutoff_job)
         self.assertEqual([f['id'] for f in cutoff_job['deployment']['forwards']], [f2['id']])
 
-        # User subscription /sub/{user_token} now returns 403 Forbidden with updated Subscription-Userinfo
+        # User subscription /sub/{user_token} now returns HTTP 200 placeholder notice (no real nodes) with updated Subscription-Userinfo
         denied = self.client.get(f'/sub/{user_token}')
-        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(denied.status_code, 200)
         self.assertIn('upload=2500; download=3500; total=5000', denied.headers['Subscription-Userinfo'])
+        self.assertIn('流量已用尽', denied.text)
+        self.assertNotIn('198.51.100.7', denied.text)
+        self.assertNotIn('203.0.113.10', denied.text)
 
         # Reset traffic re-enables user cleanly
         reset = self.client.post(f'/api/sub-users/{user_id}/reset-traffic', headers=self.admin)
@@ -258,10 +261,12 @@ class Phase3MultiUserAndPreferRelayIntegrationTest(unittest.TestCase):
         self.assertEqual(reset.json()['used_bytes'], 0)
         self.assertTrue(reset.json()['enabled'])
 
-        # Expiration triggers 403 + port disable on next check
+        # Expiration triggers HTTP 200 expired notice (no real nodes) + port disable on next check
         self.now += 4000
         expired_denied = self.client.get(f'/sub/{user_token}')
-        self.assertEqual(expired_denied.status_code, 403)
+        self.assertEqual(expired_denied.status_code, 200)
+        self.assertIn('订阅已过期', expired_denied.text)
+        self.assertNotIn('198.51.100.7', expired_denied.text)
 
         # Global token still works backward compatibly
         global_res = self.client.get('/sub', params={'token': TEST_SUBSCRIPTION_TOKEN, 'prefer_relay': 'false'})

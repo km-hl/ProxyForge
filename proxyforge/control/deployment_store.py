@@ -502,15 +502,68 @@ class DeploymentStoreMixin:
                 })
         return extra_specs, adopted_specs, list(returned_adoptions or [])
 
-    def _attach_aggregated_nodes(self, db, agent_id, base_spec, *, returned_adoptions=None, disabled_adoptions=None):
+    @staticmethod
+    def _filter_sub_users_for_protocol(protocol, entries):
+        norm = normalize_protocol(protocol)
+        if norm not in SHARED_PORT_PROTOCOLS or not entries:
+            return []
+        if norm == 'reality':
+            return [{'mark_id': item['mark_id'], 'uuid': item['uuid']} for item in entries]
+        return [{'mark_id': item['mark_id'], 'password': item['password']} for item in entries]
+
+    def _attach_aggregated_nodes(
+        self,
+        db,
+        agent_id,
+        base_spec,
+        *,
+        returned_adoptions=None,
+        disabled_adoptions=None,
+        primary_id=None,
+    ):
         cleaned = {
             k: v for k, v in base_spec.items()
-            if k not in ('extra_nodes', 'adopted_nodes', 'returned_adoptions', 'disabled_adoptions')
+            if k not in (
+                'extra_nodes', 'adopted_nodes', 'returned_adoptions', 'disabled_adoptions',
+                'sub_users', 'no_user_marks',
+            )
         }
         spec = self._resolve_node_outbound_hops(db, agent_id, cleaned)
         extras, adopted, returned = self._collect_extra_and_adopted_specs(
             db, agent_id, returned_adoptions=returned_adoptions
         )
+
+        active_sub_map = (
+            self._agent_active_sub_user_map(db, agent_id)
+            if hasattr(self, '_agent_active_sub_user_map')
+            else {}
+        )
+        p_id = primary_id
+        if not p_id:
+            prow = db.execute('SELECT id FROM deployments WHERE agent_id=?', (agent_id,)).fetchone()
+            p_id = prow['id'] if prow else ''
+        any_sub_users = False
+        if p_id and p_id in active_sub_map:
+            p_subs = self._filter_sub_users_for_protocol(spec.get('protocol', 'ss2022'), active_sub_map[p_id])
+            if p_subs:
+                spec['sub_users'] = p_subs
+                any_sub_users = True
+        for extra in extras:
+            extra.pop('sub_users', None)
+            extra.pop('no_user_marks', None)
+            eid = str(extra.get('node_id') or '')
+            if eid and eid in active_sub_map:
+                e_subs = self._filter_sub_users_for_protocol(extra.get('protocol', 'ss2022'), active_sub_map[eid])
+                if e_subs:
+                    extra['sub_users'] = e_subs
+                    any_sub_users = True
+        if any_sub_users:
+            arow = db.execute('SELECT metadata FROM agents WHERE id=?', (agent_id,)).fetchone()
+            if arow:
+                meta = json.loads(arow['metadata'] or '{}')
+                if meta.get('nftables_capable') is False:
+                    spec['no_user_marks'] = True
+
         if extras:
             spec['extra_nodes'] = extras
         if adopted:
@@ -619,7 +672,7 @@ class DeploymentStoreMixin:
                             base_spec = {**base_spec, **settings}
                             self._apply_shared_host_secrets(norm_proto, base_spec, shared_peers[0])
                             self._ensure_unique_shared_credential(norm_proto, base_spec, shared_peers)
-                    spec = self._attach_aggregated_nodes(db, agent_id, base_spec)
+                    spec = self._attach_aggregated_nodes(db, agent_id, base_spec, primary_id=identifier)
                     validate_landing_spec('landing.apply', spec)
                 else:
                     spec = base_spec
@@ -911,7 +964,8 @@ class DeploymentStoreMixin:
         if primary and not primary_removed:
             p_proto, p_settings, base_spec = self._normalize_primary_record(db, primary)
             full_spec = self._attach_aggregated_nodes(
-                db, agent_id, base_spec, returned_adoptions=returned_adoptions, disabled_adoptions=disabled
+                db, agent_id, base_spec, returned_adoptions=returned_adoptions, disabled_adoptions=disabled,
+                primary_id=primary['id'],
             )
             validate_landing_spec('landing.apply', full_spec)
             action = 'landing.apply'
@@ -1162,7 +1216,7 @@ class DeploymentStoreMixin:
                 if shared_peers and already_sharing:
                     self._sync_shared_listener_peers(db, cipher, shared_peers, protocol, clean_settings, base_spec)
 
-                full_spec = self._attach_aggregated_nodes(db, agent_id, base_spec)
+                full_spec = self._attach_aggregated_nodes(db, agent_id, base_spec, primary_id=identifier)
                 validate_landing_spec('landing.apply', full_spec)
                 encrypted_base = cipher.encrypt(json.dumps(base_spec).encode()).decode()
                 if metadata_only:
@@ -1280,6 +1334,27 @@ class DeploymentStoreMixin:
                 view['renamed_to'] = new_name
             return view
 
+    def _rewrite_sub_user_allowed_nodes(self, db, *, remove_keys=(), remap=None):
+        remove_set = set(remove_keys or ())
+        remap_dict = dict(remap or {})
+        if not remove_set and not remap_dict:
+            return
+        rows = db.execute('SELECT user_id, allowed_nodes FROM sub_user_profiles').fetchall()
+        for row in rows:
+            current = json.loads(row['allowed_nodes'] or '[]')
+            updated = []
+            for key in current:
+                if key in remove_set:
+                    continue
+                target = remap_dict.get(key, key)
+                if target not in updated:
+                    updated.append(target)
+            if updated != current:
+                db.execute(
+                    'UPDATE sub_user_profiles SET allowed_nodes=? WHERE user_id=?',
+                    (json.dumps(updated), row['user_id']),
+                )
+
     def delete_agent_node(self, agent_id, node_id, request_id):
         with self.connection() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -1289,6 +1364,7 @@ class DeploymentStoreMixin:
             extra = db.execute('SELECT * FROM agent_nodes WHERE id=? AND agent_id=?', (node_id, agent_id)).fetchone()
             if extra:
                 db.execute('DELETE FROM agent_nodes WHERE id=?', (node_id,))
+                self._rewrite_sub_user_allowed_nodes(db, remove_keys=(f'agent::{agent_id}::{node_id}',))
                 self._audit(db, 'deployment_requested', agent_id)
                 return self._dispatch_aggregated_runtime(db, agent_id, request_id)
 
@@ -1314,10 +1390,16 @@ class DeploymentStoreMixin:
                         primary['id'],
                     ),
                 )
+                self._rewrite_sub_user_allowed_nodes(
+                    db,
+                    remove_keys=(f'agent::{agent_id}::{primary["id"]}',),
+                    remap={f'agent::{agent_id}::{next_extra["id"]}': f'agent::{agent_id}::{primary["id"]}'},
+                )
                 self._audit(db, 'deployment_requested', agent_id)
                 return self._dispatch_aggregated_runtime(db, agent_id, request_id)
 
             # No extra nodes remain; remove primary deployment (or keep adopted_only if adopted nodes exist).
+            self._rewrite_sub_user_allowed_nodes(db, remove_keys=(f'agent::{agent_id}::{primary["id"]}',))
             _, adopted, _ = self._collect_extra_and_adopted_specs(db, agent_id)
             if adopted:
                 cipher = self._cipher(db)

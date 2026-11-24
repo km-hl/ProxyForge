@@ -30,10 +30,12 @@ from .runtime_spec import (
 from .deployment_spec import runtime_config, spec_hash
 from .landing_spec import (
     build_caddy_site_for_landing,
+    collect_spec_user_marks,
     deployment_tls_plan,
     runtime_config as landing_config,
     shared_listener_guests,
 )
+from .nft_users import NftUserCounters
 from .chain_spec import CHAIN_ACTIONS, runtime_config as chain_config
 from .gost_manager import GOST_CONFIG_ACTIONS, render_gost_config
 
@@ -855,13 +857,26 @@ class RuntimeEngine:
 class RuntimeCoordinator:
     """Coordinate multiple isolated RuntimeEngine instances with shared port collision guards."""
 
-    def __init__(self, engines, *, acme_manager=None, caddy_manager=None):
+    def __init__(self, engines, *, acme_manager=None, caddy_manager=None, nft_user_counters=None):
         self.engines = dict(engines)
         self.service_roots = {service: engine.root for service, engine in self.engines.items()}
         for engine in self.engines.values():
             engine.service_roots = self.service_roots
         self._acme_manager = acme_manager
         self._caddy_manager = caddy_manager
+        self._nft_user_counters = nft_user_counters
+
+    def _get_nft_user_counters(self):
+        if self._nft_user_counters is None:
+            sb_root = self.service_roots.get(SERVICE_SINGBOX) or Path('/var/lib/proxyforge-runtime')
+            self._nft_user_counters = NftUserCounters(sb_root)
+        return self._nft_user_counters
+
+    def _sync_nft_user_counters(self, mark_ids):
+        try:
+            self._get_nft_user_counters().sync(mark_ids)
+        except Exception:
+            pass
 
     def _get_acme_manager(self):
         if self._acme_manager is None:
@@ -990,6 +1005,7 @@ class RuntimeCoordinator:
                 for sid in list(caddy_mgr.load_sites()):
                     if sid == 'landing' or sid.startswith('node-'):
                         caddy_mgr.remove_site(sid, job_id=self._derived_caddy_job_id(caddy_job_id + ':' + sid), guard=guard)
+            self._sync_nft_user_counters([])
             return result
 
         spec = job['deployment']
@@ -1030,6 +1046,7 @@ class RuntimeCoordinator:
                     return_host_service(sk)
                 except Exception:
                     pass
+            self._sync_nft_user_counters([])
             return singbox_result
 
         overrides, staged_primary, deferred_primary = self._prepare_node_tls_and_caddy(
@@ -1088,6 +1105,7 @@ class RuntimeCoordinator:
                 caddy_manager.save_sites(sites)
 
         self._prune_landing_sites(active_site_ids, caddy_job_id, guard)
+        self._sync_nft_user_counters(collect_spec_user_marks(spec))
 
         for sk in spec.get('returned_adoptions') or []:
             try:

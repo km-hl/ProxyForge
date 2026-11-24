@@ -39,7 +39,7 @@ class LegacyReleaseTest(unittest.TestCase):
             self.assertFalse((data / 'proxyforge.db').exists())
             headers = {'Authorization': 'Bearer ' + TEST_ADMIN_TOKEN}
             with TestClient(app.app) as client:
-                self.assertEqual(client.get('/api/agents', headers=headers).json(), {'agents': []})
+                self.assertEqual(client.get('/api/agents', headers=headers).json()['agents'], [])
                 self.assertEqual(client.get('/api/agents/managed/nodes', headers=headers).json(), {'nodes': []})
                 self.assertEqual(client.get('/api/nodes', headers=headers).json()['nodes'],
                                  [{**manual, '_airport_name': '_custom_nodes_'}])

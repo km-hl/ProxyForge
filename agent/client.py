@@ -46,6 +46,9 @@ ALLOWED_ENDPOINTS = frozenset((
     "/api/agent/traffic",
     "/api/agent/best-exit",
 ))
+ALLOWED_GET_ENDPOINTS = frozenset((
+    "/api/agent/package.tar.gz",
+))
 
 
 class Client:
@@ -84,6 +87,26 @@ class Client:
                 raise CredentialRejected("Credential rejected; register again with a new token") from None
             if exc.code in (404, 409):
                 raise JobRejected("Job no longer available") from None
+            raise AgentConnectionError("Controller request failed (HTTP %d)" % exc.code) from None
+        except (OSError, ValueError, urllib.error.URLError):
+            raise AgentConnectionError("Unable to contact Controller or invalid response") from None
+
+    def get_bytes(self, path, token=None, max_bytes=1024 * 1024):
+        if path not in ALLOWED_GET_ENDPOINTS:
+            raise ValueError("Unsupported Agent GET endpoint")
+        headers = {}
+        if token:
+            headers["Authorization"] = "Bearer " + token
+        request = urllib.request.Request(self.server + path, headers=headers, method="GET")
+        try:
+            with self.opener.open(request, timeout=30) as response:
+                raw = response.read(max_bytes + 1)
+                if len(raw) > max_bytes:
+                    raise AgentConnectionError("Controller binary response too large")
+                return raw
+        except urllib.error.HTTPError as exc:
+            if exc.code in (401, 403):
+                raise CredentialRejected("Credential rejected; register again with a new token") from None
             raise AgentConnectionError("Controller request failed (HTTP %d)" % exc.code) from None
         except (OSError, ValueError, urllib.error.URLError):
             raise AgentConnectionError("Unable to contact Controller or invalid response") from None

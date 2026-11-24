@@ -731,6 +731,7 @@ class GostStoreMixin:
             now = self.clock()
             accepted = 0
             touched_rules = set()
+            sub_user_deltas = {}
             for item in items:
                 rx_delta = max(0, int(item['rx_delta']))
                 tx_delta = max(0, int(item['tx_delta']))
@@ -738,6 +739,14 @@ class GostStoreMixin:
                 fwd_rule_id = item.get('forward_rule_id', '')
                 if fwd_rule_id:
                     touched_rules.add(fwd_rule_id)
+                rkey = str(item['resource_key'] or '')
+                if rkey.startswith('subuser:'):
+                    mid_text = rkey.split(':', 1)[1]
+                    if mid_text.isdigit():
+                        mid = int(mid_text)
+                        if 1 <= mid <= 65535:
+                            prev_rx, prev_tx = sub_user_deltas.get(mid, (0, 0))
+                            sub_user_deltas[mid] = (prev_rx + rx_delta, prev_tx + tx_delta)
                 db.execute(
                     '''INSERT INTO traffic_counters(
                            id,agent_id,resource_key,forward_rule_id,rx_bytes,tx_bytes,total_bytes,
@@ -771,6 +780,8 @@ class GostStoreMixin:
             )
             if touched_rules and hasattr(self, '_sync_user_forward_usage'):
                 self._sync_user_forward_usage(db, touched_rules)
+            if sub_user_deltas and hasattr(self, '_apply_sub_user_metering_deltas'):
+                self._apply_sub_user_metering_deltas(db, sub_user_deltas, now)
             return {'status': 'ok', 'deduplicated': False, 'accepted': accepted}
 
     def get_agent_traffic(self, agent_id):

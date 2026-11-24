@@ -165,8 +165,7 @@ async function copyTextToClipboard(text, successMsg = '链接已复制到剪贴�
 }
 
 function openSubscriptionQrModal(url, label = '订阅二维码') {
-    openModal('订阅二维码', '<div class="qr-preview-box" id="qr-preview-box"></div>', closeModal);
-    modalConfirm.textContent = '关闭';
+    openModal('订阅二维码', '<div class="qr-preview-box" id="qr-preview-box"></div>', closeModal, { closeOnly: true });
     const box = document.getElementById('qr-preview-box');
     const titleEl = document.createElement('div');
     titleEl.style.fontWeight = '600';
@@ -197,36 +196,71 @@ function openSubscriptionQrModal(url, label = '订阅二维码') {
 }
 
 // === Modal Logic ===
-function openModal(title, htmlContent, onConfirm) {
+function openModal(title, htmlContent, onConfirm, options = {}) {
     if (typeof clearRegistrationToken === 'function') clearRegistrationToken();
-    modalConfirm.disabled = false;
-    modalConfirm.textContent = '确认';
+    globalThis._pfModalCancelAction = null;
     modalReturnFocus = document.activeElement;
     modalTitle.textContent = title;
     modalBody.innerHTML = htmlContent;
     if (typeof window !== 'undefined' && window.twemoji) window.twemoji.parse(modalBody, { folder: 'svg', ext: '.svg' });
-    modalConfirmAction = onConfirm;
+    const closeOnly = Boolean(options && options.closeOnly);
+    setModalFooter({
+        ...(options || {}),
+        onConfirm: closeOnly ? (typeof onConfirm === 'function' ? onConfirm : closeModal) : onConfirm,
+    });
     modalOverlay.classList.add('active');
     setTimeout(() => (modalBody.querySelector('input, select, textarea, button') || modalConfirm).focus(), 0);
+}
+function setModalFooter(options = {}) {
+    const closeOnly = Boolean(options.closeOnly);
+    const confirmText = options.confirmText ?? (closeOnly ? '关闭' : '确认');
+    const cancelText = options.cancelText ?? '取消';
+    const hideCancel = Boolean(options.hideCancel || closeOnly);
+    const hideConfirm = Boolean(options.hideConfirm);
+    const confirmDanger = Boolean(options.confirmDanger);
+    if (typeof modalConfirm !== 'undefined' && modalConfirm) {
+        modalConfirm.hidden = hideConfirm;
+        modalConfirm.disabled = Boolean(options.confirmDisabled);
+        modalConfirm.textContent = confirmText;
+        if (modalConfirm.classList && typeof modalConfirm.classList.toggle === 'function') {
+            modalConfirm.classList.toggle('btn-danger', confirmDanger);
+            modalConfirm.classList.toggle('btn-primary', !closeOnly && !confirmDanger);
+        }
+    }
+    if (typeof modalCancel !== 'undefined' && modalCancel) {
+        modalCancel.hidden = hideCancel;
+        modalCancel.disabled = false;
+        modalCancel.textContent = cancelText;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'onConfirm')) {
+        modalConfirmAction = options.onConfirm;
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'onCancel')) {
+        globalThis._pfModalCancelAction = options.onCancel;
+    }
 }
 function closeModal() {
     if (typeof clearRegistrationToken === 'function') clearRegistrationToken();
     modalOverlay.classList.remove('active');
     modalConfirmAction = null;
+    globalThis._pfModalCancelAction = null;
     if (modalReturnFocus?.isConnected) modalReturnFocus.focus();
     else document.querySelector('.section-panel.active button:not(:disabled)')?.focus();
 }
 modalOverlay.addEventListener('keydown', event => {
     if (event.key === 'Escape') closeModal();
     if (event.key === 'Tab') {
-        const items = [...modalOverlay.querySelectorAll('button, input, select, textarea, [tabindex="0"]')].filter(el => !el.disabled);
+        const items = [...modalOverlay.querySelectorAll('button, input, select, textarea, [tabindex="0"]')].filter(el => !el.disabled && !el.hidden);
         const first = items[0], last = items[items.length - 1];
         if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
     }
 });
 modalClose.addEventListener('click', closeModal);
-modalCancel.addEventListener('click', closeModal);
+modalCancel.addEventListener('click', () => {
+    if (typeof globalThis._pfModalCancelAction === 'function') globalThis._pfModalCancelAction();
+    else closeModal();
+});
 modalConfirm.addEventListener('click', () => {
     if (modalConfirmAction) modalConfirmAction();
 });
@@ -402,7 +436,7 @@ async function loadData() {
         renderAirports();
         renderNodes();
         if (typeof ProxyForgeManagedNodes !== 'undefined') ProxyForgeManagedNodes.refresh();
-        loadSubUsers();
+        if (typeof ProxyForgeSubUsers !== 'undefined') ProxyForgeSubUsers.loadSubUsers();
         // Reauthentication must not erase an unsaved draft.
         if (!rawIsDirty() && !ProxyForgeNetwork.isDirty()) installTemplate(await readTemplate());
 
@@ -416,305 +450,6 @@ async function loadData() {
         console.error("Failed to load data", e);
     }
 }
-
-// === Multi-User Subscriptions & Quota ===
-function formatExpireAt(expireAt) {
-    if (!expireAt || Number(expireAt) <= 0) return '永不过期';
-    const d = new Date(Number(expireAt) * 1000);
-    return Number.isNaN(d.getTime()) ? '永不过期' : d.toLocaleString();
-}
-
-function toLocalDatetimeInputValue(unixSeconds) {
-    if (!unixSeconds || Number(unixSeconds) <= 0) return '';
-    const d = new Date(Number(unixSeconds) * 1000);
-    if (Number.isNaN(d.getTime())) return '';
-    const pad = n => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function buildUserSubUrlForCurrentFormat(token, user) {
-    const baseName = (document.getElementById('sub-name')?.value || '').trim() || 'ProxyForge';
-    const name = user?.username ? `${baseName}-${user.username}` : baseName;
-    const opts = user?.prefer_relay ? { preferRelay: true } : {};
-    return ProxyForgeSubscription.buildUserUrl(window.location.origin, token, name, subscriptionFormat.value, opts);
-}
-
-async function fetchUserTokenAndAct(user, mode) {
-    const res = await fetchAuth(`/sub-users/${encodeURIComponent(user.id)}/token`);
-    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
-    const data = await res.json();
-    const url = buildUserSubUrlForCurrentFormat(data.token, user);
-    if (mode === 'qr') openSubscriptionQrModal(url, `${user.username} 订阅二维码`);
-    else await copyTextToClipboard(url, `已复制 ${user.username} 的订阅链接`);
-}
-
-function renderSubUsers() {
-    const container = document.getElementById('sub-users-list');
-    if (!container) return;
-    container.replaceChildren();
-    const users = Array.isArray(state.subUsers) ? state.subUsers : [];
-    if (!users.length) {
-        const empty = document.createElement('div');
-        empty.className = 'empty-state';
-        empty.textContent = '暂无订阅用户，点击右上角「新建订阅用户」分配独立配额与订阅 Token。';
-        container.appendChild(empty);
-        return;
-    }
-
-    const grid = document.createElement('div');
-    grid.className = 'sub-users-grid';
-    for (const user of users) {
-        const card = document.createElement('div');
-        card.className = 'sub-user-card';
-
-        const header = document.createElement('div');
-        header.className = 'sub-user-header';
-        const titleWrap = document.createElement('div');
-        const nameEl = document.createElement('strong');
-        nameEl.textContent = user.username;
-        titleWrap.appendChild(nameEl);
-        const prefixEl = document.createElement('span');
-        prefixEl.className = 'sub-user-meta';
-        prefixEl.style.marginLeft = '8px';
-        prefixEl.textContent = `${user.token_prefix || ''}…`;
-        titleWrap.appendChild(prefixEl);
-
-        const badge = document.createElement('span');
-        badge.className = `status-pill ${user.enabled ? 'is-online' : 'is-offline'}`;
-        if (user.enabled) {
-            badge.textContent = '启用中';
-        } else {
-            badge.textContent = user.disabled_reason ? `已停用 (${user.disabled_reason})` : '已停用';
-        }
-        header.append(titleWrap, badge);
-        card.appendChild(header);
-
-        const used = Math.max(0, Number(user.used_bytes || 0));
-        const quota = Math.max(0, Number(user.quota_bytes || 0));
-        const pct = quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0;
-
-        const barTrack = document.createElement('div');
-        barTrack.className = 'quota-bar-track';
-        const barFill = document.createElement('div');
-        barFill.className = `quota-bar-fill${(quota > 0 && pct >= 90) ? ' danger' : ''}`;
-        barFill.style.width = quota > 0 ? `${pct}%` : '0%';
-        barTrack.appendChild(barFill);
-        card.appendChild(barTrack);
-
-        const usageLine = document.createElement('div');
-        usageLine.className = 'sub-user-meta';
-        usageLine.textContent = quota > 0
-            ? `已用 ${formatBytes(used)} / ${formatBytes(quota)} (${pct}%) · 上行 ${formatBytes(user.upload_bytes)} / 下行 ${formatBytes(user.download_bytes)}`
-            : `已用 ${formatBytes(used)} / 不限配额 · 上行 ${formatBytes(user.upload_bytes)} / 下行 ${formatBytes(user.download_bytes)}`;
-        card.appendChild(usageLine);
-
-        const metaLine = document.createElement('div');
-        metaLine.className = 'sub-user-meta';
-        const tags = [`到期: ${formatExpireAt(user.expire_at)}`];
-        if (Array.isArray(user.allowed_groups) && user.allowed_groups.length) tags.push(`分组: ${user.allowed_groups.join(', ')}`);
-        if (Array.isArray(user.forward_rule_ids) && user.forward_rule_ids.length) tags.push(`绑定转发: ${user.forward_rule_ids.length} 条`);
-        if (user.max_connections > 0) tags.push(`并发: ${user.max_connections}`);
-        if (user.rate_limit_kbps > 0) tags.push(`限速: ${user.rate_limit_kbps} KB/s`);
-        metaLine.textContent = tags.join(' · ');
-        card.appendChild(metaLine);
-
-        const actions = document.createElement('div');
-        actions.className = 'item-actions';
-        const addActionBtn = (label, cls, handler) => {
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = cls;
-            btn.textContent = label;
-            btn.addEventListener('click', handler);
-            actions.appendChild(btn);
-        };
-        addActionBtn('复制链接', 'btn btn-primary btn-sm', () => fetchUserTokenAndAct(user, 'copy').catch(e => showToast(e.message, 'error')));
-        addActionBtn('二维码', 'btn btn-sm', () => fetchUserTokenAndAct(user, 'qr').catch(e => showToast(e.message, 'error')));
-        addActionBtn('编辑', 'btn btn-sm', () => openSubUserModal(user));
-        addActionBtn(user.enabled ? '停用' : '启用', 'btn btn-sm', () => toggleSubUser(user));
-        addActionBtn('重置流量', 'btn btn-sm', () => resetSubUserTraffic(user));
-        addActionBtn('轮换密钥', 'btn btn-sm', () => rotateSubUser(user));
-        addActionBtn('删除', 'btn btn-danger btn-sm', () => deleteSubUser(user));
-        card.appendChild(actions);
-
-        grid.appendChild(card);
-    }
-    container.appendChild(grid);
-}
-
-async function loadSubUsers() {
-    const container = document.getElementById('sub-users-list');
-    if (!container) return;
-    try {
-        const res = await fetchAuth('/sub-users');
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        state.subUsers = data.users || [];
-        renderSubUsers();
-    } catch (e) {
-        container.textContent = `加载订阅用户失败：${e.message}`;
-    }
-}
-
-function parseListInput(raw) {
-    return String(raw || '').split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
-}
-
-function openSubUserModal(existing = null) {
-    const isNew = !existing;
-    const html = `
-        <div class="form-group">
-            <label>用户名 (字母/数字/._-)</label>
-            <input type="text" id="m-su-username" placeholder="alice">
-        </div>
-        <div class="form-grid">
-            <div class="form-group">
-                <label>总流量配额 (GiB，0 为不限)</label>
-                <input type="number" id="m-su-quota-gb" min="0" step="0.5" value="0">
-            </div>
-            <div class="form-group">
-                <label>到期时间 (留空永不过期)</label>
-                <input type="datetime-local" id="m-su-expire">
-            </div>
-        </div>
-        <div class="form-grid">
-            <div class="form-group">
-                <label>最大连接数 (0 为不限)</label>
-                <input type="number" id="m-su-conns" min="0" value="0">
-            </div>
-            <div class="form-group">
-                <label>速率上限 (KB/s，0 为不限)</label>
-                <input type="number" id="m-su-rate" min="0" value="0">
-            </div>
-        </div>
-        <div class="form-group">
-            <label>允许的代理组 (逗号分隔，留空不限)</label>
-            <input type="text" id="m-su-groups" placeholder="例如: Proxy, HK">
-        </div>
-        <div class="form-group">
-            <label>绑定转发规则 ID (32 位 hex，逗号分隔，可选；超限自动停用)</label>
-            <input type="text" id="m-su-rules" placeholder="留空表示不绑定特定转发端口">
-        </div>
-        <div class="form-grid">
-            <label class="inline-check" style="display:flex; align-items:center; gap:6px;"><input type="checkbox" id="m-su-enabled" checked> 启用该用户</label>
-        </div>
-    `;
-    openModal(isNew ? '新建订阅用户' : '编辑订阅用户', html, async () => {
-        const username = document.getElementById('m-su-username').value.trim();
-        if (isNew && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(username)) {
-            showToast('用户名格式不合法', 'error');
-            return;
-        }
-        const quotaGb = Math.max(0, Number(document.getElementById('m-su-quota-gb').value) || 0);
-        const expireRaw = document.getElementById('m-su-expire').value.trim();
-        const expireAt = expireRaw ? Math.floor(Date.parse(expireRaw) / 1000) : 0;
-        if (expireRaw && (!Number.isFinite(expireAt) || expireAt <= 0)) {
-            showToast('到期时间格式无效', 'error');
-            return;
-        }
-        const payload = {
-            quota_bytes: Math.max(0, Math.round(quotaGb * 1024 * 1024 * 1024)),
-            expire_at: expireAt,
-            enabled: document.getElementById('m-su-enabled').checked,
-            prefer_relay: Boolean(existing?.prefer_relay),
-            allowed_groups: parseListInput(document.getElementById('m-su-groups').value),
-            forward_rule_ids: parseListInput(document.getElementById('m-su-rules').value),
-            max_connections: Math.max(0, Math.round(Number(document.getElementById('m-su-conns').value) || 0)),
-            rate_limit_kbps: Math.max(0, Math.round(Number(document.getElementById('m-su-rate').value) || 0)),
-        };
-        if (isNew) payload.username = username;
-        try {
-            const path = isNew ? '/sub-users' : `/sub-users/${encodeURIComponent(existing.id)}`;
-            const res = await fetchAuth(path, {
-                method: isNew ? 'POST' : 'PATCH',
-                body: JSON.stringify(payload),
-            });
-            if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
-            const result = await res.json();
-            closeModal();
-            await loadSubUsers();
-            if (isNew && result.token) {
-                const url = buildUserSubUrlForCurrentFormat(result.token, result);
-                await copyTextToClipboard(url, `用户 ${result.username} 已创建，订阅链接已复制`);
-            } else {
-                showToast('订阅用户已保存');
-            }
-        } catch (e) {
-            showToast(`保存失败：${e.message}`, 'error');
-        }
-    });
-
-    const userEl = document.getElementById('m-su-username');
-    if (existing) {
-        userEl.value = existing.username || '';
-        userEl.disabled = true;
-        const gb = existing.quota_bytes ? +(existing.quota_bytes / (1024 * 1024 * 1024)).toFixed(2) : 0;
-        document.getElementById('m-su-quota-gb').value = String(gb);
-        document.getElementById('m-su-expire').value = toLocalDatetimeInputValue(existing.expire_at);
-        document.getElementById('m-su-conns').value = String(existing.max_connections || 0);
-        document.getElementById('m-su-rate').value = String(existing.rate_limit_kbps || 0);
-        document.getElementById('m-su-groups').value = (existing.allowed_groups || []).join(', ');
-        document.getElementById('m-su-rules').value = (existing.forward_rule_ids || []).join(', ');
-        document.getElementById('m-su-enabled').checked = Boolean(existing.enabled);
-    }
-}
-
-async function toggleSubUser(user) {
-    try {
-        const res = await fetchAuth(`/sub-users/${encodeURIComponent(user.id)}`, {
-            method: 'PATCH',
-            body: JSON.stringify({ enabled: !user.enabled }),
-        });
-        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
-        showToast(user.enabled ? `已停用 ${user.username}` : `已启用 ${user.username}`);
-        await loadSubUsers();
-    } catch (e) {
-        showToast(`操作失败：${e.message}`, 'error');
-    }
-}
-
-async function resetSubUserTraffic(user) {
-    if (!confirm(`确认将 ${user.username} 的累计上下行流量归零？若因超额停用，归零后可恢复启用。`)) return;
-    try {
-        const res = await fetchAuth(`/sub-users/${encodeURIComponent(user.id)}/reset-traffic`, { method: 'POST' });
-        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
-        showToast(`已重置 ${user.username} 的流量计数`);
-        await loadSubUsers();
-    } catch (e) {
-        showToast(`重置失败：${e.message}`, 'error');
-    }
-}
-
-async function rotateSubUser(user) {
-    if (!confirm(`确认轮换 ${user.username} 的订阅 Token？旧订阅链接将立即失效。`)) return;
-    try {
-        const res = await fetchAuth(`/sub-users/${encodeURIComponent(user.id)}/rotate`, { method: 'POST' });
-        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
-        const data = await res.json();
-        await loadSubUsers();
-        if (data.token) {
-            const url = buildUserSubUrlForCurrentFormat(data.token, user);
-            await copyTextToClipboard(url, `已轮换 ${user.username} 的新订阅链接并复制`);
-        }
-    } catch (e) {
-        showToast(`轮换失败：${e.message}`, 'error');
-    }
-}
-
-async function deleteSubUser(user) {
-    if (!confirm(`确认删除订阅用户 ${user.username}？该操作不可撤销。`)) return;
-    try {
-        const res = await fetchAuth(`/sub-users/${encodeURIComponent(user.id)}`, { method: 'DELETE' });
-        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
-        showToast(`已删除订阅用户 ${user.username}`);
-        await loadSubUsers();
-    } catch (e) {
-        showToast(`删除失败：${e.message}`, 'error');
-    }
-}
-
-document.getElementById('btn-refresh-sub-users')?.addEventListener('click', loadSubUsers);
-document.getElementById('btn-add-sub-user')?.addEventListener('click', () => openSubUserModal(null));
 
 function formatBytes(bytes) {
     if (!bytes || bytes === 0) return '0 B';
